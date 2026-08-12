@@ -85,7 +85,7 @@ windowrulev2 = noanim, class:^(ScreenPin)$
   "updatedAt": "2026-08-11T08:15:00.000Z",
   "image": { "dataUrl": "...", "width": 1920, "height": 1080, "name": "screenshot.png" },
   "annotations": [
-    { "id": "...", "type": "arrow", "x": 120, "y": 80, "endX": 420, "endY": 250, "color": "#e5484d", "strokeWidth": 4, "opacity": 1 }
+    { "id": "...", "type": "arrow", "x": 120, "y": 80, "width": 300, "height": 170, "endX": 420, "endY": 250, "color": "#e5484d", "fill": "transparent", "strokeWidth": 4, "opacity": 1, "fontSize": 28 }
   ]
 }
 ```

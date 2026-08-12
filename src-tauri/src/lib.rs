@@ -71,7 +71,11 @@ async fn native_capture() -> Result<Vec<u8>, String> {
     let path = url
         .to_file_path()
         .map_err(|_| "截图门户返回的不是本地文件".to_string())?;
-    fs::read(path).map_err(|error| format!("无法读取截图文件: {error}"))
+    let bytes = fs::read(&path).map_err(|error| format!("无法读取截图文件: {error}"));
+    // The portal hands the caller a temporary local file. Do not leave captured
+    // pixels behind after importing them into the editor.
+    let _ = fs::remove_file(path);
+    bytes
 }
 
 #[cfg(target_os = "macos")]
@@ -83,11 +87,12 @@ async fn native_capture() -> Result<Vec<u8>, String> {
         .status()
         .map_err(|error| format!("无法启动系统截图: {error}"))?;
     if !status.success() || !path.exists() {
+        let _ = fs::remove_file(&path);
         return Err("截图已取消".to_string());
     }
-    let bytes = fs::read(&path).map_err(|error| format!("无法读取截图: {error}"))?;
+    let bytes = fs::read(&path).map_err(|error| format!("无法读取截图: {error}"));
     let _ = fs::remove_file(path);
-    Ok(bytes)
+    bytes
 }
 
 #[cfg(target_os = "windows")]
@@ -130,11 +135,12 @@ fn capture_windows_virtual_screen() -> Result<Vec<u8>, String> {
         .status()
         .map_err(|error| format!("无法启动系统截图: {error}"))?;
     if !status.success() || !path.exists() {
+        let _ = fs::remove_file(&path);
         return Err("Windows 全屏截图失败".to_string());
     }
-    let bytes = fs::read(&path).map_err(|error| format!("无法读取截图: {error}"))?;
+    let bytes = fs::read(&path).map_err(|error| format!("无法读取截图: {error}"));
     let _ = fs::remove_file(path);
-    Ok(bytes)
+    bytes
 }
 
 #[cfg(target_os = "windows")]
