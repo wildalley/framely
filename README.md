@@ -40,6 +40,21 @@ npm run dev
 npm run tauri -- dev
 ```
 
+构建 Tauri 支持的 Linux 安装包：
+
+```bash
+npm run tauri -- build --bundles deb,rpm
+```
+
+在 Arch Linux 上可以直接构建 pacman 原生包：
+
+```bash
+npm run build:arch
+sudo pacman -U "$(cd packaging/arch && makepkg --packagelist)"
+```
+
+`build:arch` 会从当前工作区编译 release 二进制，并生成适配当前 CPU 架构的 `.pkg.tar.zst`。运行时依赖由 pacman 管理，不会打包一份 WebKitGTK。
+
 在 Wayland 会话中，ScreenPin 检测到 XWayland 后会自动让 WebKitGTK 窗口使用 X11，并关闭 DMA-BUF 渲染，以规避部分合成器上的 GDK protocol error 71。截图本身仍通过 `xdg-desktop-portal` 请求，不会绕过 Wayland 权限模型。
 
 如需测试原生 Wayland 窗口后端，可以显式覆盖：

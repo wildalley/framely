@@ -1,0 +1,32 @@
+pkgname=screenpin
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Non-destructive cross-platform screenshot editor"
+arch=('x86_64' 'aarch64')
+url="https://github.com/wildalley/screenpin"
+license=('MIT')
+depends=('gtk3' 'libayatana-appindicator' 'webkit2gtk-4.1' 'xdg-desktop-portal')
+makedepends=('nodejs' 'npm' 'pkgconf' 'rust')
+options=('!debug' '!lto')
+source=()
+sha256sums=()
+
+_repo_root="$(realpath "$startdir/../..")"
+
+build() {
+  cd "$_repo_root"
+  npm ci --ignore-scripts --no-audit --no-fund
+  npm run tauri -- build --no-bundle
+}
+
+package() {
+  install -Dm755 "$_repo_root/src-tauri/target/release/screenpin" "$pkgdir/usr/bin/screenpin"
+  install -Dm644 "$startdir/screenpin.desktop" "$pkgdir/usr/share/applications/screenpin.desktop"
+  install -Dm644 "$_repo_root/src-tauri/icons/32x32.png" "$pkgdir/usr/share/icons/hicolor/32x32/apps/screenpin.png"
+  install -Dm644 "$_repo_root/src-tauri/icons/64x64.png" "$pkgdir/usr/share/icons/hicolor/64x64/apps/screenpin.png"
+  install -Dm644 "$_repo_root/src-tauri/icons/128x128.png" "$pkgdir/usr/share/icons/hicolor/128x128/apps/screenpin.png"
+  install -Dm644 "$_repo_root/src-tauri/icons/128x128@2x.png" "$pkgdir/usr/share/icons/hicolor/256x256/apps/screenpin.png"
+  install -Dm644 "$_repo_root/src-tauri/icons/icon.png" "$pkgdir/usr/share/icons/hicolor/512x512/apps/screenpin.png"
+  install -Dm644 "$_repo_root/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 "$_repo_root/README.md" "$pkgdir/usr/share/doc/$pkgname/README.md"
+}
