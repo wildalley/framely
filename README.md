@@ -22,9 +22,10 @@ ScreenPin 是一个面向桌面的非破坏性截图编辑器，目标平台为 
   
 - **工作流集成**
   - 复制到剪贴板，导出 PNG / JPEG / WebP（有损格式可调质量），保存/打开 `.screenpin` 工程
+  - 替换当前截图、打开其他工程或从托盘退出前，会提示确认尚未保存的工程修改；导出图片不等同于保存可编辑工程
   - 马赛克处理失败时不会回退到原图，相关工具会被禁用，含马赛克的导出也会被阻止
   - 置顶窗口继续修改，再次点击取消置顶
-  - 桌面级 `Ctrl/Cmd + Shift + A` 全局快捷键
+  - 默认使用桌面级 `Ctrl/Cmd + Shift + A` 全局快捷键，可在设置面板中录制并保存其他组合键
   - 系统托盘菜单：截图、显示主窗口、退出；关闭主窗口隐藏到托盘
 
 ## 开发
@@ -73,7 +74,7 @@ cd src-tauri && cargo check && cargo test
 
 ### Linux 依赖
 
-需要 WebKitGTK、GTK3、DBus 和 `xdg-desktop-portal`。Wayland 下截图权限与交互界面由桌面环境的 portal 后端决定；Hyprland 建议安装并启用 `xdg-desktop-portal-hyprland`。Wayland 全局快捷键使用 `org.freedesktop.portal.GlobalShortcuts`，首次启动可能由桌面门户请求授权。托盘图标使用 AppIndicator/StatusNotifier，Waybar 需要启用 `tray` 模块才能显示。
+需要 WebKitGTK、GTK3、DBus 和 `xdg-desktop-portal`。Wayland 下截图权限与交互界面由桌面环境的 portal 后端决定；Hyprland 建议安装并启用 `xdg-desktop-portal-hyprland`。Wayland 全局快捷键使用 `org.freedesktop.portal.GlobalShortcuts`，首次启动或修改快捷键时可能由桌面门户请求授权。托盘图标使用 AppIndicator/StatusNotifier，Waybar 需要启用 `tray` 模块才能显示。
 
 ### 平铺窗口管理器
 
@@ -105,7 +106,7 @@ windowrulev2 = noanim, class:^(ScreenPin)$
 }
 ```
 
-区域高亮对象使用 `type: "area-highlight"`，并保存选区的 `x`、`y`、`width`、`height`、颜色和压暗强度。工程打开时会校验图片尺寸、时间字段、标注类型、数值范围和对象 ID，非法或损坏的工程会被拒绝加载。
+区域高亮对象使用 `type: "area-highlight"`，并保存选区的 `x`、`y`、`width`、`height`、颜色和压暗强度。工程打开时会校验图片能否解码、真实尺寸、时间字段、标注类型、数值范围和对象 ID，非法、损坏或伪造图片尺寸的工程会被拒绝加载。
 
 后续版本可以在保持原图和对象坐标兼容的前提下增加 OCR、滚动截图、窗口录制、云同步和多图画布。
 
@@ -117,7 +118,7 @@ windowrulev2 = noanim, class:^(ScreenPin)$
 - **平台集成**：
   - Linux：`xdg-desktop-portal` (截图)、`ashpd` (全局快捷键)、`arboard` (剪贴板)
   - macOS：`screencapture` CLI
-  - Windows：`ms-screenclip:` URI + Windows API fallback
+  - Windows：`ms-screenclip:` URI、`arboard`（剪贴板）和 Windows 剪贴板序列号检测
 
 ## 架构
 
