@@ -126,6 +126,10 @@ button:disabled {
   pointer-events: none;
 }
 
+.area-highlight-dimmer {
+  pointer-events: none;
+}
+
 .selection-handle {
   fill: #ffffff;
   stroke: #2383e2;

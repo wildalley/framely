@@ -5,6 +5,7 @@ export type Tool =
   | "arrow"
   | "pen"
   | "highlighter"
+  | "area-highlight"
   | "text"
   | "mosaic";
 
@@ -82,9 +83,9 @@ export interface AnnotationStyle {
 }
 
 export const defaultStyle = (type: Annotation["type"]): AnnotationStyle => ({
-  color: type === "highlighter" ? "#f2c94c" : "#e5484d",
-  strokeWidth: type === "highlighter" ? 18 : 4,
-  opacity: type === "highlighter" ? 0.45 : 1,
+  color: type === "highlighter" || type === "area-highlight" ? "#f2c94c" : "#e5484d",
+  strokeWidth: type === "highlighter" ? 18 : type === "area-highlight" ? 2 : 4,
+  opacity: type === "highlighter" ? 0.45 : type === "area-highlight" ? 0.55 : 1,
   fontSize: 28,
 });
 
@@ -121,13 +122,86 @@ export const normalizeBox = (annotation: Annotation): Annotation => {
 export const isScreenPinProject = (value: unknown): value is ScreenPinProject => {
   if (!value || typeof value !== "object") return false;
   const project = value as Partial<ScreenPinProject>;
-  return (
+  if (!(
     project.format === "screenpin-project" &&
     project.version === 1 &&
     typeof project.title === "string" &&
-    typeof project.image?.dataUrl === "string" &&
-    typeof project.image?.width === "number" &&
-    typeof project.image?.height === "number" &&
+    project.title.length <= 500 &&
+    isIsoDate(project.createdAt) &&
+    isIsoDate(project.updatedAt) &&
+    isImageSource(project.image) &&
     Array.isArray(project.annotations)
-  );
+  )) return false;
+
+  if (project.annotations.length > 10_000) return false;
+  const ids = new Set<string>();
+  let pointCount = 0;
+  for (const annotation of project.annotations) {
+    if (!isAnnotation(annotation) || ids.has(annotation.id)) return false;
+    ids.add(annotation.id);
+    pointCount += annotation.points?.length ?? 0;
+    if (pointCount > 500_000) return false;
+  }
+  return true;
 };
+
+const ANNOTATION_TYPES = new Set<Annotation["type"]>([
+  "rectangle",
+  "ellipse",
+  "arrow",
+  "pen",
+  "highlighter",
+  "area-highlight",
+  "text",
+  "mosaic",
+]);
+
+const isFiniteNumber = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+const isCoordinate = (value: unknown) => isFiniteNumber(value) && Math.abs(value) <= 1_000_000;
+const isHexColor = (value: unknown) => typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value);
+const isIsoDate = (value: unknown) =>
+  typeof value === "string" && value.length <= 64 && Number.isFinite(Date.parse(value));
+
+function isImageSource(value: unknown): value is ImageSource {
+  if (!value || typeof value !== "object") return false;
+  const image = value as Partial<ImageSource>;
+  return (
+    typeof image.dataUrl === "string" &&
+    image.dataUrl.length <= 150_000_000 &&
+    /^data:image\/(?:png|jpeg|webp);base64,/i.test(image.dataUrl) &&
+    isFiniteNumber(image.width) && image.width > 0 && image.width <= 32_768 &&
+    isFiniteNumber(image.height) && image.height > 0 && image.height <= 32_768 &&
+    image.width * image.height <= 100_000_000 &&
+    typeof image.name === "string" && image.name.length <= 500
+  );
+}
+
+function isAnnotation(value: unknown): value is Annotation {
+  if (!value || typeof value !== "object") return false;
+  const annotation = value as Partial<Annotation>;
+  if (
+    typeof annotation.id !== "string" || annotation.id.length === 0 || annotation.id.length > 200 ||
+    !ANNOTATION_TYPES.has(annotation.type as Annotation["type"]) ||
+    !isCoordinate(annotation.x) || !isCoordinate(annotation.y) ||
+    !isCoordinate(annotation.width) || !isCoordinate(annotation.height) ||
+    !isHexColor(annotation.color) ||
+    !(annotation.fill === "transparent" || isHexColor(annotation.fill)) ||
+    !isFiniteNumber(annotation.strokeWidth) || annotation.strokeWidth < 0 || annotation.strokeWidth > 512 ||
+    !isFiniteNumber(annotation.opacity) || annotation.opacity < 0 || annotation.opacity > 1 ||
+    !isFiniteNumber(annotation.fontSize) || annotation.fontSize < 1 || annotation.fontSize > 1_000
+  ) return false;
+
+  if (annotation.endX !== undefined && !isCoordinate(annotation.endX)) return false;
+  if (annotation.endY !== undefined && !isCoordinate(annotation.endY)) return false;
+  if (annotation.type === "arrow" && (!isCoordinate(annotation.endX) || !isCoordinate(annotation.endY))) return false;
+  if (annotation.type === "text" && (typeof annotation.text !== "string" || annotation.text.length > 100_000)) return false;
+  if (annotation.type !== "text" && annotation.text !== undefined) return false;
+  if (annotation.type === "mosaic" && annotation.opacity !== 1) return false;
+  if (annotation.type === "pen" || annotation.type === "highlighter") {
+    if (!Array.isArray(annotation.points) || annotation.points.length === 0 || annotation.points.length > 50_000) return false;
+    if (!annotation.points.every((point) => point && isCoordinate(point.x) && isCoordinate(point.y))) return false;
+  } else if (annotation.points !== undefined) {
+    return false;
+  }
+  return true;
+}

@@ -42,6 +42,30 @@ describe("isScreenPinProject", () => {
     };
     expect(isScreenPinProject(project)).toBe(true);
     expect(isScreenPinProject({ ...project, version: 2 })).toBe(false);
+    expect(isScreenPinProject({ ...project, annotations: [{ ...annotation, points: "invalid" }] })).toBe(false);
+    expect(isScreenPinProject({ ...project, annotations: [{ ...annotation, opacity: 2 }] })).toBe(false);
+    expect(isScreenPinProject({ ...project, annotations: [annotation, { ...annotation }] })).toBe(false);
+    expect(isScreenPinProject({ ...project, annotations: [{ ...annotation, type: "mosaic", opacity: 0.5 }] })).toBe(false);
+  });
+
+  it("accepts an editable area highlight", () => {
+    const areaHighlight: Annotation = {
+      ...annotation,
+      id: "highlight-1",
+      type: "area-highlight",
+      color: "#f2c94c",
+      opacity: 0.35,
+    };
+    const project: ScreenPinProject = {
+      format: "screenpin-project",
+      version: 1,
+      title: "highlight",
+      createdAt: "2026-08-11T00:00:00.000Z",
+      updatedAt: "2026-08-11T00:00:00.000Z",
+      image: { dataUrl: "data:image/png;base64,AA==", width: 100, height: 80, name: "demo" },
+      annotations: [areaHighlight],
+    };
+    expect(isScreenPinProject(project)).toBe(true);
   });
 });
 

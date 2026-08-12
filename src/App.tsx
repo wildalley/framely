@@ -25,6 +25,7 @@ import {
   Redo2,
   ScanLine,
   Square,
+  SquareDashed,
   Trash2,
   Type,
   Undo2,
@@ -71,6 +72,7 @@ const TOOL_ITEMS: { id: Tool; label: string; icon: LucideIcon; key: string }[] =
   { id: "arrow", label: "箭头", icon: MoveUpRight, key: "A" },
   { id: "pen", label: "画笔", icon: Pencil, key: "P" },
   { id: "highlighter", label: "荧光笔", icon: Highlighter, key: "H" },
+  { id: "area-highlight", label: "区域高亮", icon: SquareDashed, key: "G" },
   { id: "text", label: "文字", icon: Type, key: "T" },
   { id: "mosaic", label: "马赛克", icon: Grid3X3, key: "M" },
 ];
@@ -104,7 +106,8 @@ export default function App() {
   const projectInput = useRef<HTMLInputElement>(null);
   const demoCapture = useMemo(() => (new URLSearchParams(window.location.search).has("demo") ? createDemoImage() : null), []);
   const [image, setImage] = useState<ImageSource | null>(() => demoCapture ? { ...demoCapture, name: "交付概览" } : null);
-  const [pixelatedImage, setPixelatedImage] = useState("");
+  const [pixelatedImage, setPixelatedImage] = useState<string | null>(null);
+  const [mosaicStatus, setMosaicStatus] = useState<"loading" | "ready" | "error">("loading");
   const [title, setTitle] = useState(demoCapture ? "交付概览" : "未命名截图");
   const [createdAt, setCreatedAt] = useState(() => new Date().toISOString());
   const [tool, setTool] = useState<Tool>("select");
@@ -126,6 +129,7 @@ export default function App() {
   const area = useRef<{ width: number; height: number } | null>(null);
   const barHeightRef = useRef(barHeight);
   const recenter = useRef(true);
+  const pixelationRequest = useRef(0);
   const history = useEditorHistory();
 
   const selected = useMemo(
@@ -156,8 +160,12 @@ export default function App() {
   }, [refreshArea]);
   const loadCapture = useCallback(
     async (capture: CaptureResult, name = `截图 ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`) => {
+      const request = ++pixelationRequest.current;
+      setPixelatedImage(null);
+      setMosaicStatus("loading");
       const source = { ...capture, name };
       const fitted = zoomToFit(source, await refreshArea(), barHeightRef.current);
+      if (request !== pixelationRequest.current) return;
       setImage(source);
       setTitle(name.replace(/\.[^.]+$/, ""));
       setCreatedAt(new Date().toISOString());
@@ -168,12 +176,18 @@ export default function App() {
       setZoom(fitted);
       recenter.current = true;
       try {
-        setPixelatedImage(await pixelateImage(capture.dataUrl, capture.width, capture.height));
+        const result = await pixelateImage(capture.dataUrl, capture.width, capture.height);
+        if (request !== pixelationRequest.current) return;
+        setPixelatedImage(result);
+        setMosaicStatus("ready");
       } catch {
-        setPixelatedImage(capture.dataUrl);
+        if (request !== pixelationRequest.current) return;
+        setPixelatedImage(null);
+        setMosaicStatus("error");
+        notify("马赛克处理失败，已禁用该工具");
       }
     },
-    [history.reset, refreshArea],
+    [history.reset, notify, refreshArea],
   );
 
   useEffect(() => {
@@ -308,8 +322,8 @@ export default function App() {
     setPanel("none");
     try {
       const quality = isLossyFormat(exportFormat) ? exportQuality : 1;
-      await saveImageAs(await exportImage(exportFormat, quality), title, exportFormat);
-      notify(`${exportFormat.toUpperCase()} 已保存`);
+      const saved = await saveImageAs(await exportImage(exportFormat, quality), title, exportFormat);
+      if (saved) notify(`${exportFormat.toUpperCase()} 已保存`);
     } catch (error) {
       notify(errorMessage(error));
     }
@@ -331,8 +345,7 @@ export default function App() {
   const handleSaveProject = useCallback(async () => {
     setPanel("none");
     try {
-      await saveProject(projectSnapshot());
-      notify("可编辑工程已保存");
+      if (await saveProject(projectSnapshot())) notify("可编辑工程已保存");
     } catch (error) {
       notify(errorMessage(error));
     }
@@ -350,7 +363,11 @@ export default function App() {
   const loadProject = useCallback(
     async (project: ScreenPinProject) => {
       if (!isScreenPinProject(project)) throw new Error("不是有效的 ScreenPin 工程");
+      const request = ++pixelationRequest.current;
+      setPixelatedImage(null);
+      setMosaicStatus("loading");
       const fitted = zoomToFit(project.image, await refreshArea(), barHeightRef.current);
+      if (request !== pixelationRequest.current) return;
       setImage(project.image);
       setTitle(project.title);
       setCreatedAt(project.createdAt);
@@ -360,9 +377,19 @@ export default function App() {
       setPanel("none");
       setZoom(fitted);
       recenter.current = true;
-      setPixelatedImage(await pixelateImage(project.image.dataUrl, project.image.width, project.image.height));
+      try {
+        const result = await pixelateImage(project.image.dataUrl, project.image.width, project.image.height);
+        if (request !== pixelationRequest.current) return;
+        setPixelatedImage(result);
+        setMosaicStatus("ready");
+      } catch {
+        if (request !== pixelationRequest.current) return;
+        setPixelatedImage(null);
+        setMosaicStatus("error");
+        notify("马赛克处理失败，已阻止含马赛克的导出");
+      }
     },
-    [history.reset, refreshArea],
+    [history.reset, notify, refreshArea],
   );
 
   const handleOpenProject = useCallback(async () => {
@@ -404,19 +431,20 @@ export default function App() {
       ? styles[styleTarget]
       : null;
 
-  const changeStyle = (change: Partial<AnnotationStyle>) => {
+  const changeStyle = (change: Partial<AnnotationStyle>, transient = false) => {
     if (!styleTarget) return;
     setStyles((current) => ({ ...current, [styleTarget]: { ...current[styleTarget], ...change } }));
     if (selectedId) {
-      history.commit(
-        history.annotations.map((annotation) => (annotation.id === selectedId ? { ...annotation, ...change } : annotation)),
+      const next = history.annotations.map((annotation) =>
+        annotation.id === selectedId ? { ...annotation, ...change } : annotation,
       );
+      transient ? history.setTransient(next) : history.commit(next);
     }
   };
 
   const updateSelectedText = (text: string) => {
     if (!selectedId) return;
-    history.commit(
+    history.setTransient(
       history.annotations.map((annotation) => (annotation.id === selectedId ? { ...annotation, text } : annotation)),
     );
   };
@@ -476,11 +504,15 @@ export default function App() {
         return;
       }
       const item = TOOL_ITEMS.find((candidate) => candidate.key.toLowerCase() === key);
+      if (item?.id === "mosaic" && mosaicStatus !== "ready") {
+        notify(mosaicStatus === "loading" ? "马赛克正在准备" : "马赛克当前不可用");
+        return;
+      }
       if (item) setTool(item.id);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [applyZoom, handleCopy, handleSaveImage, handleSaveProject, history.redo, history.undo, image, panel, removeSelected, zoom]);
+  }, [applyZoom, handleCopy, handleSaveImage, handleSaveProject, history.redo, history.undo, image, mosaicStatus, notify, panel, removeSelected, zoom]);
 
   // Dragging the picture itself moves the window, the way a pinned note behaves.
   const dragOrigin = useRef<{ x: number; y: number } | null>(null);
@@ -548,10 +580,11 @@ export default function App() {
         <EditorCanvas
           ref={canvasRef}
           image={image}
-          pixelatedImage={pixelatedImage || image.dataUrl}
+          pixelatedImage={pixelatedImage}
           annotations={history.annotations}
           selectedId={selectedId}
           tool={tool}
+          zoom={zoom}
           style={styles[tool === "select" ? "rectangle" : tool]}
           onSelect={setSelectedId}
           onToolChange={setTool}
@@ -570,6 +603,8 @@ export default function App() {
           text={selected?.type === "text" ? selected.text ?? "" : null}
           onChange={changeStyle}
           onText={updateSelectedText}
+          onBeginChange={history.beginTransaction}
+          onEndChange={history.endTransaction}
           onMoveLayer={moveLayer}
           onDelete={removeSelected}
         />
@@ -597,13 +632,15 @@ export default function App() {
         />
       )}
 
-      {panel === "shortcuts" && <ShortcutsPanel />}
+      {panel === "shortcuts" && <ShortcutsPanel exportFormat={exportFormat} />}
       <div ref={barRef} className="pin-bar" aria-label="标注工具" onPointerDown={onBarPointerDown}>
         {TOOL_ITEMS.map((item) => (
           <ToolButton
             key={item.id}
             item={item}
             active={tool === item.id}
+            disabled={item.id === "mosaic" && mosaicStatus !== "ready"}
+            disabledReason={mosaicStatus === "loading" ? "马赛克正在准备" : "马赛克处理失败"}
             onClick={() => {
               setTool(item.id);
               if (item.id === "select") setPanel("none");
@@ -657,10 +694,10 @@ function IconButton({ icon: Icon, label, active, disabled, onClick }: { icon: Lu
   return <button className={`icon-button ${active ? "is-active" : ""}`} title={label} aria-label={label} aria-pressed={active} disabled={disabled} onClick={onClick}><Icon size={17} /></button>;
 }
 
-function ToolButton({ item, active, onClick }: { item: (typeof TOOL_ITEMS)[number]; active: boolean; onClick: () => void }) {
+function ToolButton({ item, active, disabled, disabledReason, onClick }: { item: (typeof TOOL_ITEMS)[number]; active: boolean; disabled?: boolean; disabledReason?: string; onClick: () => void }) {
   const Icon = item.icon;
   return (
-    <button className={`tool-button ${active ? "is-active" : ""}`} title={`${item.label} (${item.key})`} aria-label={item.label} aria-pressed={active} onClick={onClick}>
+    <button className={`tool-button ${active ? "is-active" : ""}`} title={disabled ? disabledReason : `${item.label} (${item.key})`} aria-label={item.label} aria-pressed={active} disabled={disabled} onClick={onClick}>
       <Icon size={17} />
     </button>
   );
@@ -682,6 +719,8 @@ function StylePanel({
   text,
   onChange,
   onText,
+  onBeginChange,
+  onEndChange,
   onMoveLayer,
   onDelete,
 }: {
@@ -689,8 +728,10 @@ function StylePanel({
   target: Annotation["type"];
   hasSelection: boolean;
   text: string | null;
-  onChange: (change: Partial<AnnotationStyle>) => void;
+  onChange: (change: Partial<AnnotationStyle>, transient?: boolean) => void;
   onText: (text: string) => void;
+  onBeginChange: () => void;
+  onEndChange: () => void;
   onMoveLayer: (direction: -1 | 1) => void;
   onDelete: () => void;
 }) {
@@ -720,24 +761,30 @@ function StylePanel({
           min={1}
           max={target === "highlighter" ? 40 : 16}
           suffix="px"
-          onChange={(strokeWidth) => onChange({ strokeWidth })}
+          onChange={(strokeWidth) => onChange({ strokeWidth }, true)}
+          onBegin={onBeginChange}
+          onEnd={onEndChange}
         />
       )}
       {target === "text" && (
-        <Slider label="字号" value={style.fontSize} min={12} max={96} suffix="px" onChange={(fontSize) => onChange({ fontSize })} />
+        <Slider label="字号" value={style.fontSize} min={12} max={96} suffix="px" onChange={(fontSize) => onChange({ fontSize }, true)} onBegin={onBeginChange} onEnd={onEndChange} />
       )}
-      <Slider
-        label="不透明度"
-        value={Math.round(style.opacity * 100)}
-        min={10}
-        max={100}
-        suffix="%"
-        onChange={(value) => onChange({ opacity: value / 100 })}
-      />
+      {target !== "mosaic" && (
+        <Slider
+          label="不透明度"
+          value={Math.round(style.opacity * 100)}
+          min={10}
+          max={100}
+          suffix="%"
+          onChange={(value) => onChange({ opacity: value / 100 }, true)}
+          onBegin={onBeginChange}
+          onEnd={onEndChange}
+        />
+      )}
       {text !== null && (
         <label className="panel-field">
           <span>文字</span>
-          <textarea value={text} rows={2} onChange={(event) => onText(event.target.value)} />
+          <textarea value={text} rows={2} onFocus={onBeginChange} onChange={(event) => onText(event.target.value)} onBlur={() => onEndChange()} />
         </label>
       )}
       {hasSelection && (
@@ -751,12 +798,23 @@ function StylePanel({
   );
 }
 
-function Slider({ label, value, min, max, suffix, onChange }: { label: string; value: number; min: number; max: number; suffix: string; onChange: (value: number) => void }) {
+function Slider({ label, value, min, max, suffix, onChange, onBegin, onEnd }: { label: string; value: number; min: number; max: number; suffix: string; onChange: (value: number) => void; onBegin?: () => void; onEnd?: () => void }) {
   return (
     <label className="panel-slider">
       <span>{label}</span>
       <output>{value}{suffix}</output>
-      <input type="range" min={min} max={max} value={value} onChange={(event) => onChange(Number(event.target.value))} />
+      <input
+        type="range"
+        min={min}
+        max={max}
+        value={value}
+        onFocus={() => onBegin?.()}
+        onPointerDown={() => onBegin?.()}
+        onChange={(event) => onChange(Number(event.target.value))}
+        onPointerUp={() => onEnd?.()}
+        onPointerCancel={() => onEnd?.()}
+        onBlur={() => onEnd?.()}
+      />
     </label>
   );
 }
@@ -934,7 +992,7 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
-function ShortcutsPanel() {
+function ShortcutsPanel({ exportFormat }: { exportFormat: ExportFormat }) {
   const shortcuts = [
     { keys: ["V"], action: "选择工具" },
     { keys: ["R"], action: "矩形" },
@@ -942,13 +1000,14 @@ function ShortcutsPanel() {
     { keys: ["A"], action: "箭头" },
     { keys: ["P"], action: "画笔" },
     { keys: ["H"], action: "荧光笔" },
+    { keys: ["G"], action: "区域高亮" },
     { keys: ["T"], action: "文字" },
     { keys: ["M"], action: "马赛克" },
     { keys: ["Ctrl", "Z"], action: "撤销" },
     { keys: ["Ctrl", "Shift", "Z"], action: "重做" },
     { keys: ["Ctrl", "Y"], action: "重做" },
     { keys: ["Ctrl", "C"], action: "复制到剪贴板" },
-    { keys: ["Ctrl", "S"], action: "导出 PNG" },
+    { keys: ["Ctrl", "S"], action: `导出 ${exportFormat.toUpperCase()}` },
     { keys: ["Ctrl", "Shift", "S"], action: "保存工程" },
     { keys: ["Ctrl", "+"], action: "放大" },
     { keys: ["Ctrl", "-"], action: "缩小" },

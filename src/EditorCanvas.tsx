@@ -10,10 +10,11 @@ export interface EditorCanvasHandle {
 
 interface EditorCanvasProps {
   image: ImageSource;
-  pixelatedImage: string;
+  pixelatedImage: string | null;
   annotations: Annotation[];
   selectedId: string | null;
   tool: Tool;
+  zoom: number;
   /** Style applied to the next annotation drawn with the active tool. */
   style: AnnotationStyle;
   onSelect: (id: string | null) => void;
@@ -39,6 +40,7 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
     annotations,
     selectedId,
     tool,
+    zoom,
     style,
     onSelect,
     onToolChange,
@@ -64,6 +66,9 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
   const renderToDataUrl = async (format: ExportFormat, quality: number) => {
     const svg = svgRef.current;
     if (!svg) throw new Error("编辑画布尚未就绪");
+    if (annotations.some((annotation) => annotation.type === "mosaic") && !pixelatedImage) {
+      throw new Error("马赛克处理失败，已阻止导出以保护原图");
+    }
     const clone = svg.cloneNode(true) as SVGSVGElement;
     clone.querySelectorAll(".editor-selection").forEach((node) => node.remove());
     clone.querySelectorAll(".editor-text-editor").forEach((node) => node.remove());
@@ -122,6 +127,7 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
       onSelect(null);
       return;
     }
+    if (tool === "mosaic" && !pixelatedImage) return;
     event.currentTarget.setPointerCapture(event.pointerId);
     const start = pointFromEvent(event);
     const annotation = createAnnotation(tool, start, style);
@@ -219,7 +225,7 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
     interaction.current = null;
     let next = liveAnnotations.current.map((annotation) => {
       if (annotation.id !== active.id) return annotation;
-      if (["rectangle", "ellipse", "mosaic"].includes(annotation.type)) return normalizeBox(annotation);
+      if (["rectangle", "ellipse", "area-highlight", "mosaic"].includes(annotation.type)) return normalizeBox(annotation);
       return annotation;
     });
     const created = next.find((annotation) => annotation.id === active.id);
@@ -256,6 +262,24 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
       onPointerCancel={finishInteraction}
     >
       <defs>
+        {annotations.some((annotation) => annotation.type === "area-highlight") && (
+          <mask id="area-highlight-mask" maskUnits="userSpaceOnUse" x="0" y="0" width={image.width} height={image.height}>
+            <rect width={image.width} height={image.height} fill="white" />
+            {annotations
+              .filter((annotation) => annotation.type === "area-highlight")
+              .map((annotation) => (
+                <rect
+                  key={annotation.id}
+                  x={annotation.x}
+                  y={annotation.y}
+                  width={annotation.width}
+                  height={annotation.height}
+                  rx="3"
+                  fill="black"
+                />
+              ))}
+          </mask>
+        )}
         {annotations
           .filter((annotation) => annotation.type === "mosaic")
           .map((annotation) => (
@@ -280,6 +304,17 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
           }}
         />
       ))}
+      {annotations.some((annotation) => annotation.type === "area-highlight") && (
+        <rect
+          className="area-highlight-dimmer"
+          width={image.width}
+          height={image.height}
+          fill="#000000"
+          opacity={Math.max(...annotations.filter((annotation) => annotation.type === "area-highlight").map((annotation) => annotation.opacity))}
+          mask="url(#area-highlight-mask)"
+          pointerEvents="none"
+        />
+      )}
       {editingTextId && (
         <TextEditor
           ref={textEditorRef}
@@ -295,6 +330,7 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
       {selected && (
         <Selection
           annotation={selected}
+          zoom={zoom}
           onResizePointerDown={handleResizePointerDown}
         />
       )}
@@ -350,7 +386,7 @@ function AnnotationElement({
 }: {
   annotation: Annotation;
   image: ImageSource;
-  pixelatedImage: string;
+  pixelatedImage: string | null;
   selected: boolean;
   onPointerDown: (event: ReactPointerEvent<SVGElement>, annotation: Annotation) => void;
   onDoubleClick: (event: ReactMouseEvent<SVGElement>, annotation: Annotation) => void;
@@ -428,12 +464,30 @@ function AnnotationElement({
           fontFamily="Inter, 'Noto Sans CJK SC', sans-serif"
           style={{ userSelect: "none" }}
         >
-          {annotation.text}
+          {textLines(annotation.text).map((line, index) => (
+            <tspan key={index} x={annotation.x} dy={index === 0 ? 0 : annotation.fontSize * 1.3}>
+              {line || "\u00a0"}
+            </tspan>
+          ))}
         </text>
       );
-    case "mosaic":
+    case "area-highlight":
       return (
-        <g {...common}>
+        <rect
+          {...common}
+          x={annotation.x}
+          y={annotation.y}
+          width={annotation.width}
+          height={annotation.height}
+          rx="3"
+          fill="transparent"
+          stroke="transparent"
+          pointerEvents="all"
+        />
+      );
+    case "mosaic":
+      return pixelatedImage ? (
+        <g {...common} opacity={1}>
           <image
             href={pixelatedImage}
             width={image.width}
@@ -444,15 +498,27 @@ function AnnotationElement({
           />
           <rect x={annotation.x} y={annotation.y} width={annotation.width} height={annotation.height} fill="transparent" />
         </g>
+      ) : (
+        <rect
+          {...common}
+          opacity={1}
+          x={annotation.x}
+          y={annotation.y}
+          width={annotation.width}
+          height={annotation.height}
+          fill="#202326"
+        />
       );
   }
 }
 
 function Selection({
   annotation,
+  zoom,
   onResizePointerDown,
 }: {
   annotation: Annotation;
+  zoom: number;
   onResizePointerDown: (event: ReactPointerEvent<SVGElement>, annotation: Annotation, handle: ResizeHandle) => void;
 }) {
   if (annotation.type === "arrow") {
@@ -460,25 +526,25 @@ function Selection({
     const endY = annotation.endY ?? annotation.y;
     return (
       <g className="editor-selection">
-        <Handle x={annotation.x} y={annotation.y} cursor="move" onPointerDown={(event) => onResizePointerDown(event, annotation, "start")} />
-        <Handle x={endX} y={endY} cursor="move" onPointerDown={(event) => onResizePointerDown(event, annotation, "end")} />
+        <Handle x={annotation.x} y={annotation.y} zoom={zoom} cursor="move" onPointerDown={(event) => onResizePointerDown(event, annotation, "start")} />
+        <Handle x={endX} y={endY} zoom={zoom} cursor="move" onPointerDown={(event) => onResizePointerDown(event, annotation, "end")} />
       </g>
     );
   }
   const bounds = annotationBounds(annotation);
   return (
     <g className="editor-selection">
-      <rect className="selection-outline" x={bounds.x} y={bounds.y} width={bounds.width} height={bounds.height} />
-      <Handle x={bounds.x} y={bounds.y} cursor="nwse-resize" onPointerDown={(event) => onResizePointerDown(event, annotation, "nw")} />
-      <Handle x={bounds.x + bounds.width} y={bounds.y} cursor="nesw-resize" onPointerDown={(event) => onResizePointerDown(event, annotation, "ne")} />
-      <Handle x={bounds.x} y={bounds.y + bounds.height} cursor="nesw-resize" onPointerDown={(event) => onResizePointerDown(event, annotation, "sw")} />
-      <Handle x={bounds.x + bounds.width} y={bounds.y + bounds.height} cursor="nwse-resize" onPointerDown={(event) => onResizePointerDown(event, annotation, "se")} />
+      <rect className="selection-outline" x={bounds.x} y={bounds.y} width={bounds.width} height={bounds.height} vectorEffect="non-scaling-stroke" />
+      <Handle x={bounds.x} y={bounds.y} zoom={zoom} cursor="nwse-resize" onPointerDown={(event) => onResizePointerDown(event, annotation, "nw")} />
+      <Handle x={bounds.x + bounds.width} y={bounds.y} zoom={zoom} cursor="nesw-resize" onPointerDown={(event) => onResizePointerDown(event, annotation, "ne")} />
+      <Handle x={bounds.x} y={bounds.y + bounds.height} zoom={zoom} cursor="nesw-resize" onPointerDown={(event) => onResizePointerDown(event, annotation, "sw")} />
+      <Handle x={bounds.x + bounds.width} y={bounds.y + bounds.height} zoom={zoom} cursor="nwse-resize" onPointerDown={(event) => onResizePointerDown(event, annotation, "se")} />
     </g>
   );
 }
 
-function Handle({ x, y, cursor, onPointerDown }: { x: number; y: number; cursor: string; onPointerDown: (event: ReactPointerEvent<SVGCircleElement>) => void }) {
-  return <circle className="selection-handle" cx={x} cy={y} r="7" style={{ cursor }} onPointerDown={onPointerDown} />;
+function Handle({ x, y, zoom, cursor, onPointerDown }: { x: number; y: number; zoom: number; cursor: string; onPointerDown: (event: ReactPointerEvent<SVGCircleElement>) => void }) {
+  return <circle className="selection-handle" cx={x} cy={y} r={7 / zoom} style={{ cursor }} vectorEffect="non-scaling-stroke" onPointerDown={onPointerDown} />;
 }
 
 function annotationBounds(annotation: Annotation) {
@@ -490,14 +556,19 @@ function annotationBounds(annotation: Annotation) {
     return { x, y, width: Math.max(MIN_SIZE, Math.max(...xs) - x), height: Math.max(MIN_SIZE, Math.max(...ys) - y) };
   }
   if (annotation.type === "text") {
+    const lines = textLines(annotation.text);
     return {
       x: annotation.x,
       y: annotation.y,
-      width: Math.max(annotation.width, (annotation.text?.length ?? 1) * annotation.fontSize),
-      height: Math.max(annotation.height, annotation.fontSize * 1.3),
+      width: Math.max(annotation.width, Math.max(...lines.map((line) => Math.max(1, line.length))) * annotation.fontSize),
+      height: Math.max(annotation.height, lines.length * annotation.fontSize * 1.3),
     };
   }
   return { x: annotation.x, y: annotation.y, width: Math.max(MIN_SIZE, annotation.width), height: Math.max(MIN_SIZE, annotation.height) };
+}
+
+function textLines(text: string | undefined) {
+  return (text ?? "").split(/\r?\n/);
 }
 
 function moveAnnotation(annotation: Annotation, dx: number, dy: number): Annotation {

@@ -22,33 +22,37 @@ export const startWindowDrag = () => invoke<void>("start_drag");
 
 export const hideWindow = () => invoke<void>("hide_window");
 
-export async function saveImageAs(dataUrl: string, baseName: string, format: ExportFormat) {
+export async function saveImageAs(dataUrl: string, baseName: string, format: ExportFormat): Promise<boolean> {
   const extension = extensionForFormat(format);
   const suggestedName = `${safeFileName(baseName)}.${extension}`;
   if (!isTauri()) {
     download(dataUrl, suggestedName);
-    return;
+    return true;
   }
   const label = EXPORT_FORMATS.find((entry) => entry.id === format)?.label ?? format.toUpperCase();
   const path = await save({
     defaultPath: suggestedName,
     filters: [{ name: `${label} 图片`, extensions: [extension] }],
   });
-  if (path) await invoke("save_image", { path, dataUrl });
+  if (!path) return false;
+  await invoke("save_image", { path, dataUrl });
+  return true;
 }
 
-export async function saveProject(project: ScreenPinProject) {
+export async function saveProject(project: ScreenPinProject): Promise<boolean> {
   const contents = JSON.stringify(project);
   const fileName = `${safeFileName(project.title)}.screenpin`;
   if (!isTauri()) {
     download(`data:application/json;charset=utf-8,${encodeURIComponent(contents)}`, fileName);
-    return;
+    return true;
   }
   const path = await save({
     defaultPath: fileName,
     filters: [{ name: "ScreenPin 工程", extensions: ["screenpin"] }],
   });
-  if (path) await invoke("write_project", { path, contents });
+  if (!path) return false;
+  await invoke("write_project", { path, contents });
+  return true;
 }
 
 export async function openProject(): Promise<ScreenPinProject | null> {
@@ -83,19 +87,18 @@ export function pixelateImage(dataUrl: string, width: number, height: number): P
     const image = new Image();
     image.onerror = () => reject(new Error("无法生成马赛克预览"));
     image.onload = () => {
+      if (image.naturalWidth !== width || image.naturalHeight !== height) {
+        reject(new Error("图片尺寸与工程数据不一致"));
+        return;
+      }
       const block = Math.max(8, Math.round(Math.min(width, height) / 90));
       const small = document.createElement("canvas");
       small.width = Math.max(1, Math.ceil(width / block));
       small.height = Math.max(1, Math.ceil(height / block));
-      small.getContext("2d")?.drawImage(image, 0, 0, small.width, small.height);
-      const output = document.createElement("canvas");
-      output.width = width;
-      output.height = height;
-      const context = output.getContext("2d");
+      const context = small.getContext("2d");
       if (!context) return reject(new Error("浏览器画布不可用"));
-      context.imageSmoothingEnabled = false;
-      context.drawImage(small, 0, 0, width, height);
-      resolve(output.toDataURL("image/png"));
+      context.drawImage(image, 0, 0, small.width, small.height);
+      resolve(small.toDataURL("image/png"));
     };
     image.src = dataUrl;
   });
@@ -133,7 +136,7 @@ export function createDemoImage(): CaptureResult {
   return { dataUrl: canvas.toDataURL("image/png"), width: 1280, height: 760 };
 }
 
-const safeFileName = (name: string) => name.replace(/[\\/:*?"<>|]/g, "-");
+const safeFileName = (name: string) => name.replace(/[\\/:*?"<>|]/g, "-").trim() || "screenpin";
 
 const download = (href: string, name: string) => {
   const anchor = document.createElement("a");
