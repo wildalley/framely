@@ -394,6 +394,91 @@ button:disabled {
   font-size: 10px;
   font-variant-numeric: tabular-nums;
 }
+
+.panel-export {
+  display: grid;
+  gap: 6px;
+  padding-top: 3px;
+  border-top: 1px solid #ebedec;
+}
+
+.panel-export-label {
+  color: #5e6669;
+  font-size: 11px;
+}
+
+.format-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+}
+
+.format-button {
+  height: 28px;
+  padding: 0 6px;
+  color: #34393b;
+  font-size: 11px;
+  font-weight: 600;
+  background: #ffffff;
+  border: 1px solid #ced2d2;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.format-button:hover {
+  background: #f3f5f4;
+}
+
+.format-button.is-selected {
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.pin-panel.is-shortcuts {
+  width: min(340px, calc(100% - 16px));
+  max-height: calc(100vh - var(--bar-height, 46px) - 24px);
+  overflow-y: auto;
+}
+
+.shortcuts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.shortcut-item {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  align-items: center;
+  font-size: 11px;
+}
+
+.shortcut-keys {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px;
+  justify-content: flex-end;
+}
+
+.shortcut-keys kbd {
+  min-width: 20px;
+  padding: 2px 5px;
+  font-size: 10px;
+}
+
+.shortcut-plus {
+  padding: 0 2px;
+  color: #9aa1a2;
+  font-size: 10px;
+}
+
+.shortcut-action {
+  color: #34393b;
+  font-size: 11px;
+}
 .pin-window.is-empty {
   background: var(--surface);
 }

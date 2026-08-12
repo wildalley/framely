@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import type { CaptureResult, ScreenPinProject } from "./types";
+import type { CaptureResult, ExportFormat, ScreenPinProject } from "./types";
+import { EXPORT_FORMATS, extensionForFormat } from "./types";
 
 export const isTauri = () => "__TAURI_INTERNALS__" in window;
 
@@ -21,14 +22,17 @@ export const startWindowDrag = () => invoke<void>("start_drag");
 
 export const hideWindow = () => invoke<void>("hide_window");
 
-export async function savePng(dataUrl: string, suggestedName: string) {
+export async function saveImageAs(dataUrl: string, baseName: string, format: ExportFormat) {
+  const extension = extensionForFormat(format);
+  const suggestedName = `${safeFileName(baseName)}.${extension}`;
   if (!isTauri()) {
     download(dataUrl, suggestedName);
     return;
   }
+  const label = EXPORT_FORMATS.find((entry) => entry.id === format)?.label ?? format.toUpperCase();
   const path = await save({
     defaultPath: suggestedName,
-    filters: [{ name: "PNG 图片", extensions: ["png"] }],
+    filters: [{ name: `${label} 图片`, extensions: [extension] }],
   });
   if (path) await invoke("save_image", { path, dataUrl });
 }

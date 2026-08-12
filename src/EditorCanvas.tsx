@@ -1,10 +1,11 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
-import type { Annotation, AnnotationStyle, ImageSource, Point, Tool } from "./types";
-import { createAnnotation, normalizeBox } from "./types";
+import type { Annotation, AnnotationStyle, ExportFormat, ImageSource, Point, Tool } from "./types";
+import { createAnnotation, mimeForFormat, normalizeBox } from "./types";
 
 export interface EditorCanvasHandle {
   exportPng: () => Promise<string>;
+  exportImage: (format: ExportFormat, quality: number) => Promise<string>;
 }
 
 interface EditorCanvasProps {
@@ -60,31 +61,45 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
     [annotations, selectedId],
   );
 
-  useImperativeHandle(ref, () => ({
-    exportPng: async () => {
-      const svg = svgRef.current;
-      if (!svg) throw new Error("编辑画布尚未就绪");
-      const clone = svg.cloneNode(true) as SVGSVGElement;
-      clone.querySelectorAll(".editor-selection").forEach((node) => node.remove());
-      clone.querySelectorAll(".editor-text-editor").forEach((node) => node.remove());
-      clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
-      clone.setAttribute("width", String(image.width));
-      clone.setAttribute("height", String(image.height));
-      const blob = new Blob([new XMLSerializer().serializeToString(clone)], { type: "image/svg+xml" });
-      const url = URL.createObjectURL(blob);
-      try {
-        const rendered = await loadImage(url);
-        const canvas = document.createElement("canvas");
-        canvas.width = image.width;
-        canvas.height = image.height;
-        const context = canvas.getContext("2d");
-        if (!context) throw new Error("浏览器画布不可用");
-        context.drawImage(rendered, 0, 0);
-        return canvas.toDataURL("image/png");
-      } finally {
-        URL.revokeObjectURL(url);
+  const renderToDataUrl = async (format: ExportFormat, quality: number) => {
+    const svg = svgRef.current;
+    if (!svg) throw new Error("编辑画布尚未就绪");
+    const clone = svg.cloneNode(true) as SVGSVGElement;
+    clone.querySelectorAll(".editor-selection").forEach((node) => node.remove());
+    clone.querySelectorAll(".editor-text-editor").forEach((node) => node.remove());
+    clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+    clone.setAttribute("width", String(image.width));
+    clone.setAttribute("height", String(image.height));
+    const blob = new Blob([new XMLSerializer().serializeToString(clone)], { type: "image/svg+xml" });
+    const url = URL.createObjectURL(blob);
+    try {
+      const rendered = await loadImage(url);
+      const canvas = document.createElement("canvas");
+      canvas.width = image.width;
+      canvas.height = image.height;
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("浏览器画布不可用");
+      // JPEG has no alpha channel, so transparent pixels would turn black.
+      if (format === "jpeg") {
+        context.fillStyle = "#ffffff";
+        context.fillRect(0, 0, canvas.width, canvas.height);
       }
-    },
+      context.drawImage(rendered, 0, 0);
+      const mime = mimeForFormat(format);
+      const dataUrl = canvas.toDataURL(mime, quality);
+      // Browsers silently fall back to PNG for formats they cannot encode.
+      if (format !== "png" && !dataUrl.startsWith(`data:${mime}`)) {
+        throw new Error(`当前系统不支持导出 ${format.toUpperCase()}`);
+      }
+      return dataUrl;
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  };
+
+  useImperativeHandle(ref, () => ({
+    exportPng: () => renderToDataUrl("png", 1),
+    exportImage: (format: ExportFormat, quality: number) => renderToDataUrl(format, quality),
   }));
 
   const pointFromEvent = (event: ReactPointerEvent<SVGElement>): Point => {

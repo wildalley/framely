@@ -11,6 +11,7 @@ import {
   FileArchive,
   FolderOpen,
   Grid3X3,
+  HelpCircle,
   Highlighter,
   ImagePlus,
   Maximize2,
@@ -45,7 +46,7 @@ import {
   openProject,
   pasteImage,
   pixelateImage,
-  savePng,
+  saveImageAs,
   saveProject,
   setMainPinned,
   startWindowDrag,
@@ -55,11 +56,12 @@ import type {
   Annotation,
   AnnotationStyle,
   CaptureResult,
+  ExportFormat,
   ImageSource,
   ScreenPinProject,
   Tool,
 } from "./types";
-import { COLORS, defaultStyle, isScreenPinProject } from "./types";
+import { COLORS, EXPORT_FORMATS, defaultStyle, isLossyFormat, isScreenPinProject } from "./types";
 import { useEditorHistory } from "./useEditorHistory";
 
 const TOOL_ITEMS: { id: Tool; label: string; icon: LucideIcon; key: string }[] = [
@@ -111,13 +113,15 @@ export default function App() {
   const [isPinned, setIsPinned] = useState(false);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
-  const [panel, setPanel] = useState<"none" | "style" | "menu">("none");
+  const [panel, setPanel] = useState<"none" | "style" | "menu" | "shortcuts">("none");
   const [styles, setStyles] = useState<Record<Annotation["type"], AnnotationStyle>>(() =>
     DRAW_TOOLS.reduce(
       (all, id) => ({ ...all, [id]: defaultStyle(id) }),
       {} as Record<Annotation["type"], AnnotationStyle>,
     ),
   );
+  const [exportFormat, setExportFormat] = useState<ExportFormat>("png");
+  const [exportQuality, setExportQuality] = useState(0.92);
   const [barHeight, setBarHeight] = useState(ASSUMED_BAR_HEIGHT);
   const area = useRef<{ width: number; height: number } | null>(null);
   const barHeightRef = useRef(barHeight);
@@ -264,10 +268,13 @@ export default function App() {
       setBusy(false);
     }
   }, [loadCapture, notify]);
-  const exportImage = useCallback(async () => {
-    if (!canvasRef.current || !image) throw new Error("还没有可导出的截图");
-    return canvasRef.current.exportPng();
-  }, [image]);
+  const exportImage = useCallback(
+    async (format: ExportFormat = "png", quality = 1) => {
+      if (!canvasRef.current || !image) throw new Error("还没有可导出的截图");
+      return canvasRef.current.exportImage(format, quality);
+    },
+    [image],
+  );
 
   const handleCopy = useCallback(async () => {
     try {
@@ -300,12 +307,13 @@ export default function App() {
   const handleSaveImage = useCallback(async () => {
     setPanel("none");
     try {
-      await savePng(await exportImage(), `${title}.png`);
-      notify("PNG 已保存");
+      const quality = isLossyFormat(exportFormat) ? exportQuality : 1;
+      await saveImageAs(await exportImage(exportFormat, quality), title, exportFormat);
+      notify(`${exportFormat.toUpperCase()} 已保存`);
     } catch (error) {
       notify(errorMessage(error));
     }
-  }, [exportImage, notify, title]);
+  }, [exportFormat, exportQuality, exportImage, notify, title]);
 
   const projectSnapshot = useCallback((): ScreenPinProject => {
     if (!image) throw new Error("还没有可保存的工程");
@@ -463,6 +471,10 @@ export default function App() {
         setSelectedId(null);
         setTool("select");
       }
+      if (key === "?") {
+        setPanel((current) => (current === "shortcuts" ? "none" : "shortcuts"));
+        return;
+      }
       const item = TOOL_ITEMS.find((candidate) => candidate.key.toLowerCase() === key);
       if (item) setTool(item.id);
     };
@@ -577,8 +589,15 @@ export default function App() {
           onSaveProject={handleSaveProject}
           onZoom={applyZoom}
           onZoomToScreen={zoomToScreen}
+          exportFormat={exportFormat}
+          exportQuality={exportQuality}
+          onExportFormat={setExportFormat}
+          onExportQuality={setExportQuality}
+          onSaveImage={handleSaveImage}
         />
       )}
+
+      {panel === "shortcuts" && <ShortcutsPanel />}
       <div ref={barRef} className="pin-bar" aria-label="标注工具" onPointerDown={onBarPointerDown}>
         {TOOL_ITEMS.map((item) => (
           <ToolButton
@@ -605,8 +624,14 @@ export default function App() {
         <IconButton icon={Undo2} label="撤销" disabled={!history.canUndo} onClick={history.undo} />
         <IconButton icon={Redo2} label="重做" disabled={!history.canRedo} onClick={history.redo} />
         <span className="bar-divider" />
+        <IconButton
+          icon={HelpCircle}
+          label="快捷键 (?)"
+          active={panel === "shortcuts"}
+          onClick={() => setPanel((current) => (current === "shortcuts" ? "none" : "shortcuts"))}
+        />
         <IconButton icon={isPinned ? PinOff : Pin} label={isPinned ? "取消置顶" : "置顶"} active={isPinned} onClick={handlePin} />
-        <IconButton icon={Download} label="导出 PNG (Ctrl+S)" onClick={handleSaveImage} />
+        <IconButton icon={Download} label={`导出 ${exportFormat.toUpperCase()} (Ctrl+S)`} onClick={handleSaveImage} />
         <IconButton
           icon={MoreHorizontal}
           label="更多"
@@ -748,6 +773,11 @@ function MenuPanel({
   onSaveProject,
   onZoom,
   onZoomToScreen,
+  exportFormat,
+  exportQuality,
+  onExportFormat,
+  onExportQuality,
+  onSaveImage,
 }: {
   title: string;
   image: ImageSource;
@@ -761,6 +791,11 @@ function MenuPanel({
   onSaveProject: () => void;
   onZoom: (zoom: number) => void;
   onZoomToScreen: () => void;
+  exportFormat: ExportFormat;
+  exportQuality: number;
+  onExportFormat: (format: ExportFormat) => void;
+  onExportQuality: (quality: number) => void;
+  onSaveImage: () => void;
 }) {
   return (
     <div className="pin-panel is-menu" role="dialog" aria-label="更多">
@@ -774,7 +809,33 @@ function MenuPanel({
         <button title="放大 (Ctrl++)" onClick={() => onZoom(zoom + 0.1)}><ZoomIn size={15} /></button>
         <button title="适应屏幕" onClick={onZoomToScreen}><Maximize2 size={15} /></button>
       </div>
+      <div className="panel-export">
+        <span className="panel-export-label">导出格式</span>
+        <div className="format-row">
+          {EXPORT_FORMATS.map((entry) => (
+            <button
+              key={entry.id}
+              className={`format-button ${exportFormat === entry.id ? "is-selected" : ""}`}
+              aria-pressed={exportFormat === entry.id}
+              onClick={() => onExportFormat(entry.id)}
+            >
+              {entry.label}
+            </button>
+          ))}
+        </div>
+        {isLossyFormat(exportFormat) && (
+          <Slider
+            label="质量"
+            value={Math.round(exportQuality * 100)}
+            min={40}
+            max={100}
+            suffix="%"
+            onChange={(value) => onExportQuality(value / 100)}
+          />
+        )}
+      </div>
       <div className="panel-menu">
+        <button onClick={onSaveImage}><Download size={15} />导出 {exportFormat.toUpperCase()} (Ctrl+S)</button>
         <button disabled={busy} onClick={onCapture}><ScanLine size={15} />重新截图</button>
         <button disabled={busy} onClick={onPaste}><Clipboard size={15} />粘贴剪贴板</button>
         <button onClick={onOpenImage}><ImagePlus size={15} />打开图片</button>
@@ -871,4 +932,53 @@ function toolName(tool: Annotation["type"]) {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function ShortcutsPanel() {
+  const shortcuts = [
+    { keys: ["V"], action: "选择工具" },
+    { keys: ["R"], action: "矩形" },
+    { keys: ["O"], action: "椭圆" },
+    { keys: ["A"], action: "箭头" },
+    { keys: ["P"], action: "画笔" },
+    { keys: ["H"], action: "荧光笔" },
+    { keys: ["T"], action: "文字" },
+    { keys: ["M"], action: "马赛克" },
+    { keys: ["Ctrl", "Z"], action: "撤销" },
+    { keys: ["Ctrl", "Shift", "Z"], action: "重做" },
+    { keys: ["Ctrl", "Y"], action: "重做" },
+    { keys: ["Ctrl", "C"], action: "复制到剪贴板" },
+    { keys: ["Ctrl", "S"], action: "导出 PNG" },
+    { keys: ["Ctrl", "Shift", "S"], action: "保存工程" },
+    { keys: ["Ctrl", "+"], action: "放大" },
+    { keys: ["Ctrl", "-"], action: "缩小" },
+    { keys: ["Ctrl", "0"], action: "重置缩放" },
+    { keys: ["Delete"], action: "删除所选" },
+    { keys: ["Backspace"], action: "删除所选" },
+    { keys: ["Esc"], action: "取消选择/关闭面板" },
+    { keys: ["?"], action: "显示/隐藏快捷键" },
+  ];
+
+  return (
+    <div className="pin-panel is-shortcuts" role="dialog" aria-label="快捷键">
+      <div className="panel-title">
+        <span>键盘快捷键</span>
+      </div>
+      <div className="shortcuts-list">
+        {shortcuts.map((shortcut, index) => (
+          <div key={index} className="shortcut-item">
+            <div className="shortcut-keys">
+              {shortcut.keys.map((key, i) => (
+                <span key={i}>
+                  <kbd>{key}</kbd>
+                  {i < shortcut.keys.length - 1 && <span className="shortcut-plus">+</span>}
+                </span>
+              ))}
+            </div>
+            <div className="shortcut-action">{shortcut.action}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }

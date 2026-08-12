@@ -56,6 +56,23 @@ export interface CaptureResult {
 
 export const COLORS = ["#e5484d", "#ff8a3d", "#f2c94c", "#1f9d73", "#2383e2", "#7c5cff", "#171717", "#ffffff"];
 
+/** Formats the editor can export to. PNG stays lossless, the others take a quality. */
+export type ExportFormat = "png" | "jpeg" | "webp";
+
+export const EXPORT_FORMATS: { id: ExportFormat; label: string; extension: string; lossy: boolean }[] = [
+  { id: "png", label: "PNG", extension: "png", lossy: false },
+  { id: "jpeg", label: "JPEG", extension: "jpg", lossy: true },
+  { id: "webp", label: "WebP", extension: "webp", lossy: true },
+];
+
+export const mimeForFormat = (format: ExportFormat) => `image/${format}` as const;
+
+export const extensionForFormat = (format: ExportFormat) =>
+  EXPORT_FORMATS.find((entry) => entry.id === format)?.extension ?? format;
+
+export const isLossyFormat = (format: ExportFormat) =>
+  EXPORT_FORMATS.find((entry) => entry.id === format)?.lossy ?? false;
+
 /** The editable look of an annotation, kept per tool so each tool remembers its own setup. */
 export interface AnnotationStyle {
   color: string;

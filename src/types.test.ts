@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { isScreenPinProject, normalizeBox, type Annotation, type ScreenPinProject } from "./types";
+import {
+  extensionForFormat,
+  isLossyFormat,
+  isScreenPinProject,
+  mimeForFormat,
+  normalizeBox,
+  type Annotation,
+  type ScreenPinProject,
+} from "./types";
 
 const annotation: Annotation = {
   id: "shape-1",
@@ -34,5 +42,25 @@ describe("isScreenPinProject", () => {
     };
     expect(isScreenPinProject(project)).toBe(true);
     expect(isScreenPinProject({ ...project, version: 2 })).toBe(false);
+  });
+});
+
+describe("export formats", () => {
+  it("maps formats to canvas mime types", () => {
+    expect(mimeForFormat("png")).toBe("image/png");
+    expect(mimeForFormat("jpeg")).toBe("image/jpeg");
+    expect(mimeForFormat("webp")).toBe("image/webp");
+  });
+
+  it("uses the conventional jpg extension for jpeg", () => {
+    expect(extensionForFormat("png")).toBe("png");
+    expect(extensionForFormat("jpeg")).toBe("jpg");
+    expect(extensionForFormat("webp")).toBe("webp");
+  });
+
+  it("only offers a quality slider for lossy formats", () => {
+    expect(isLossyFormat("png")).toBe(false);
+    expect(isLossyFormat("jpeg")).toBe(true);
+    expect(isLossyFormat("webp")).toBe(true);
   });
 });
