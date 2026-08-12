@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
-import { open, save } from "@tauri-apps/plugin-dialog";
-import type { CaptureResult, ExportFormat, ScreenPinProject } from "./types";
+import { confirm, open, save } from "@tauri-apps/plugin-dialog";
+import type { CaptureResult, ExportFormat, ImageSource, ScreenPinProject } from "./types";
 import { EXPORT_FORMATS, extensionForFormat } from "./types";
 
 export interface AppConfig {
@@ -26,9 +26,21 @@ export const startWindowDrag = () => invoke<void>("start_drag");
 
 export const hideWindow = () => invoke<void>("hide_window");
 
+export const quitApp = () => invoke<void>("quit_app");
+
 export const getConfig = () => invoke<AppConfig>("get_config");
 
 export const saveConfig = (config: AppConfig) => invoke<void>("save_config", { newConfig: config });
+
+export const confirmDiscardChanges = () =>
+  isTauri()
+    ? confirm("当前工程有未保存的修改，继续将丢失这些修改。", {
+        title: "放弃未保存的修改？",
+        kind: "warning",
+        okLabel: "继续",
+        cancelLabel: "取消",
+      })
+    : Promise.resolve(window.confirm("当前工程有未保存的修改，继续将丢失这些修改。"));
 
 export async function saveImageAs(dataUrl: string, baseName: string, format: ExportFormat): Promise<boolean> {
   const extension = extensionForFormat(format);
@@ -109,6 +121,21 @@ export function pixelateImage(dataUrl: string, width: number, height: number): P
       resolve(small.toDataURL("image/png"));
     };
     image.src = dataUrl;
+  });
+}
+
+export function validateProjectImage(imageSource: ImageSource): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onerror = () => reject(new Error("工程中的原图已损坏或格式不受支持"));
+    image.onload = () => {
+      if (image.naturalWidth !== imageSource.width || image.naturalHeight !== imageSource.height) {
+        reject(new Error("工程中的原图尺寸与工程数据不一致"));
+        return;
+      }
+      resolve();
+    };
+    image.src = imageSource.dataUrl;
   });
 }
 

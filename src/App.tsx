@@ -39,6 +39,7 @@ import { listen } from "@tauri-apps/api/event";
 import { EditorCanvas, type EditorCanvasHandle } from "./EditorCanvas";
 import {
   captureScreen,
+  confirmDiscardChanges,
   copyImage,
   createDemoImage,
   fitWindow,
@@ -49,11 +50,13 @@ import {
   openProject,
   pasteImage,
   pixelateImage,
+  quitApp,
   saveConfig,
   saveImageAs,
   saveProject,
   setMainPinned,
   startWindowDrag,
+  validateProjectImage,
   workArea,
   type AppConfig,
 } from "./platform";
@@ -63,10 +66,11 @@ import type {
   CaptureResult,
   ExportFormat,
   ImageSource,
+  SavedDocument,
   ScreenPinProject,
   Tool,
 } from "./types";
-import { COLORS, EXPORT_FORMATS, defaultStyle, isLossyFormat, isScreenPinProject } from "./types";
+import { COLORS, EXPORT_FORMATS, defaultStyle, isDocumentDirty, isLossyFormat, isScreenPinProject } from "./types";
 import { useEditorHistory } from "./useEditorHistory";
 
 const TOOL_ITEMS: { id: Tool; label: string; icon: LucideIcon; key: string }[] = [
@@ -136,11 +140,18 @@ export default function App() {
   const recenter = useRef(true);
   const pixelationRequest = useRef(0);
   const history = useEditorHistory();
+  const [savedDocument, setSavedDocument] = useState<SavedDocument | null>(null);
 
   const selected = useMemo(
     () => history.annotations.find((annotation) => annotation.id === selectedId) ?? null,
     [history.annotations, selectedId],
   );
+  const hasUnsavedChanges = isDocumentDirty(image, title, createdAt, history.annotations, savedDocument);
+
+  const confirmReplace = useCallback(async () => {
+    if (!hasUnsavedChanges) return true;
+    return confirmDiscardChanges();
+  }, [hasUnsavedChanges]);
 
   const notify = useCallback((message: string) => {
     setToast(message);
@@ -181,6 +192,7 @@ export default function App() {
       setTool("select");
       setPanel("none");
       history.reset();
+      setSavedDocument(null);
       setZoom(fitted);
       recenter.current = true;
       try {
@@ -253,6 +265,7 @@ export default function App() {
       imageInput.current?.click();
       return;
     }
+    if (!(await confirmReplace())) return;
     setBusy(true);
     try {
       await loadCapture(await captureScreen());
@@ -261,7 +274,7 @@ export default function App() {
     } finally {
       setBusy(false);
     }
-  }, [loadCapture, notify]);
+  }, [confirmReplace, loadCapture, notify]);
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -273,6 +286,7 @@ export default function App() {
 
   const handlePaste = useCallback(async () => {
     setPanel("none");
+    if (!(await confirmReplace())) return;
     setBusy(true);
     try {
       if (isTauri()) {
@@ -289,7 +303,7 @@ export default function App() {
     } finally {
       setBusy(false);
     }
-  }, [loadCapture, notify]);
+  }, [confirmReplace, loadCapture, notify]);
   const exportImage = useCallback(
     async (format: ExportFormat = "png", quality = 1) => {
       if (!canvasRef.current || !image) throw new Error("还没有可导出的截图");
@@ -353,7 +367,16 @@ export default function App() {
   const handleSaveProject = useCallback(async () => {
     setPanel("none");
     try {
-      if (await saveProject(projectSnapshot())) notify("可编辑工程已保存");
+      const project = projectSnapshot();
+      if (await saveProject(project)) {
+        setSavedDocument({
+          imageDataUrl: project.image.dataUrl,
+          title: project.title,
+          createdAt: project.createdAt,
+          annotations: JSON.stringify(project.annotations),
+        });
+        notify("可编辑工程已保存");
+      }
     } catch (error) {
       notify(errorMessage(error));
     }
@@ -371,6 +394,7 @@ export default function App() {
   const loadProject = useCallback(
     async (project: ScreenPinProject) => {
       if (!isScreenPinProject(project)) throw new Error("不是有效的 ScreenPin 工程");
+      await validateProjectImage(project.image);
       const request = ++pixelationRequest.current;
       setPixelatedImage(null);
       setMosaicStatus("loading");
@@ -380,6 +404,12 @@ export default function App() {
       setTitle(project.title);
       setCreatedAt(project.createdAt);
       history.reset(project.annotations);
+      setSavedDocument({
+        imageDataUrl: project.image.dataUrl,
+        title: project.title,
+        createdAt: project.createdAt,
+        annotations: JSON.stringify(project.annotations),
+      });
       setSelectedId(null);
       setTool("select");
       setPanel("none");
@@ -408,11 +438,21 @@ export default function App() {
     }
     try {
       const project = await openProject();
-      if (project) await loadProject(project);
+      if (project && (await confirmReplace())) await loadProject(project);
     } catch (error) {
       notify(errorMessage(error));
     }
-  }, [loadProject, notify]);
+  }, [confirmReplace, loadProject, notify]);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    const unlisten = listen("quit-requested", async () => {
+      if (await confirmReplace()) await quitApp();
+    });
+    return () => {
+      void unlisten.then((dispose) => dispose());
+    };
+  }, [confirmReplace]);
 
   const removeSelected = useCallback(() => {
     if (!selectedId) return;
@@ -567,6 +607,7 @@ export default function App() {
           projectInput={projectInput}
           onImage={loadCapture}
           onProject={loadProject}
+          onBeforeReplace={confirmReplace}
           onError={notify}
         />
         {toast && <Toast message={toast} onDismiss={() => setToast(null)} />}
@@ -718,6 +759,7 @@ export default function App() {
         projectInput={projectInput}
         onImage={loadCapture}
         onProject={loadProject}
+        onBeforeReplace={confirmReplace}
         onError={notify}
       />
     </div>
@@ -972,12 +1014,14 @@ function FilePickers({
   projectInput,
   onImage,
   onProject,
+  onBeforeReplace,
   onError,
 }: {
   imageInput: React.RefObject<HTMLInputElement | null>;
   projectInput: React.RefObject<HTMLInputElement | null>;
   onImage: (capture: CaptureResult, name?: string) => Promise<void>;
   onProject: (project: ScreenPinProject) => Promise<void>;
+  onBeforeReplace: () => Promise<boolean>;
   onError: (message: string) => void;
 }) {
   return (
@@ -992,6 +1036,7 @@ function FilePickers({
           event.target.value = "";
           if (!file) return;
           try {
+            if (!(await onBeforeReplace())) return;
             await onImage(await imageFromFile(file), file.name);
           } catch (error) {
             onError(errorMessage(error));
@@ -1008,6 +1053,7 @@ function FilePickers({
           event.target.value = "";
           if (!file) return;
           try {
+            if (!(await onBeforeReplace())) return;
             await onProject(JSON.parse(await file.text()));
           } catch (error) {
             onError(errorMessage(error));
@@ -1093,6 +1139,7 @@ function SettingsPanel({
   const handleKeyDown = (event: React.KeyboardEvent) => {
     if (!isRecording) return;
     event.preventDefault();
+    event.stopPropagation();
 
     const parts: string[] = [];
     if (event.ctrlKey || event.metaKey) parts.push("CommandOrControl");
@@ -1112,7 +1159,7 @@ function SettingsPanel({
   };
 
   return (
-    <div className="pin-panel is-settings" role="dialog" aria-label="设置">
+    <div className="pin-panel is-settings" role="dialog" aria-label="设置" onKeyDown={handleKeyDown}>
       <div className="panel-title">
         <span>设置</span>
       </div>
@@ -1124,7 +1171,6 @@ function SettingsPanel({
             value={shortcut.replace("CommandOrControl", "Ctrl")}
             readOnly
             placeholder="点击录制按钮设置快捷键"
-            onKeyDown={handleKeyDown}
           />
           <button
             className={isRecording ? "is-recording" : ""}

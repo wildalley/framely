@@ -10,17 +10,36 @@ use tauri::{
     AppHandle, Emitter, Manager, Monitor, PhysicalPosition, PhysicalSize, State, WebviewWindow,
     WindowEvent,
 };
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 mod config;
 use config::AppConfig;
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(target_os = "macos")]
 use std::{
     path::PathBuf,
     process::Command,
     time::{SystemTime, UNIX_EPOCH},
 };
+
+#[cfg(target_os = "windows")]
+use std::process::Command;
+
+const DEFAULT_CAPTURE_SHORTCUT: &str = "CommandOrControl+Shift+A";
+
+#[derive(Default)]
+struct ShortcutRuntime {
+    #[cfg(target_os = "linux")]
+    wayland: Mutex<WaylandShortcutRuntime>,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Default)]
+struct WaylandShortcutRuntime {
+    task: Option<tauri::async_runtime::JoinHandle<()>>,
+    fallback: Option<String>,
+    generation: u64,
+}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -100,72 +119,50 @@ async fn native_capture() -> Result<Vec<u8>, String> {
 
 #[cfg(target_os = "windows")]
 async fn native_capture() -> Result<Vec<u8>, String> {
-    let before = clipboard_fingerprint();
-    let _ = Command::new("explorer.exe").arg("ms-screenclip:").spawn();
+    let before = clipboard_sequence_number();
+    Command::new("explorer.exe")
+        .arg("ms-screenclip:")
+        .spawn()
+        .map_err(|error| format!("无法启动系统截图: {error}"))?;
     for _ in 0..300 {
         std::thread::sleep(std::time::Duration::from_millis(100));
-        if let Some((fingerprint, bytes)) = clipboard_image_with_fingerprint() {
-            if before.as_ref() != Some(&fingerprint) {
-                let image = RgbaImage::from_raw(bytes.0 as u32, bytes.1 as u32, bytes.2)
-                    .ok_or_else(|| "Windows 截图数据无效".to_string())?;
-                let mut png = Cursor::new(Vec::new());
-                DynamicImage::ImageRgba8(image)
-                    .write_to(&mut png, ImageFormat::Png)
-                    .map_err(|error| format!("无法编码 Windows 截图: {error}"))?;
-                return Ok(png.into_inner());
-            }
+        if clipboard_sequence_number() == before {
+            continue;
+        }
+        if let Some(bytes) = clipboard_image() {
+            let image = RgbaImage::from_raw(bytes.0 as u32, bytes.1 as u32, bytes.2)
+                .ok_or_else(|| "Windows 截图数据无效".to_string())?;
+            let mut png = Cursor::new(Vec::new());
+            DynamicImage::ImageRgba8(image)
+                .write_to(&mut png, ImageFormat::Png)
+                .map_err(|error| format!("无法编码 Windows 截图: {error}"))?;
+            return Ok(png.into_inner());
         }
     }
 
-    capture_windows_virtual_screen()
+    Err("截图已取消或等待超时".to_string())
 }
 
 #[cfg(target_os = "windows")]
-fn capture_windows_virtual_screen() -> Result<Vec<u8>, String> {
-    let path = temporary_capture_path();
-    let output_path = path.to_string_lossy().replace('\'', "''");
-    let script = format!(
-        "Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; \
-         $r=[System.Windows.Forms.SystemInformation]::VirtualScreen; \
-         $b=New-Object System.Drawing.Bitmap $r.Width,$r.Height; \
-         $g=[System.Drawing.Graphics]::FromImage($b); \
-         $g.CopyFromScreen($r.Left,$r.Top,0,0,$b.Size); \
-         $b.Save('{output_path}',[System.Drawing.Imaging.ImageFormat]::Png); \
-         $g.Dispose(); $b.Dispose();"
-    );
-    let status = Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-        .status()
-        .map_err(|error| format!("无法启动系统截图: {error}"))?;
-    if !status.success() || !path.exists() {
-        let _ = fs::remove_file(&path);
-        return Err("Windows 全屏截图失败".to_string());
+fn clipboard_sequence_number() -> u32 {
+    #[link(name = "user32")]
+    extern "system" {
+        fn GetClipboardSequenceNumber() -> u32;
     }
-    let bytes = fs::read(&path).map_err(|error| format!("无法读取截图: {error}"));
-    let _ = fs::remove_file(path);
-    bytes
+
+    // The sequence number changes even when new clipboard pixels are identical
+    // to the previous screenshot, unlike a content fingerprint.
+    unsafe { GetClipboardSequenceNumber() }
 }
 
 #[cfg(target_os = "windows")]
-fn clipboard_image_with_fingerprint() -> Option<((usize, usize, u64), (usize, usize, Vec<u8>))> {
-    use std::hash::{Hash, Hasher};
+fn clipboard_image() -> Option<(usize, usize, Vec<u8>)> {
     let mut clipboard = Clipboard::new().ok()?;
     let image = clipboard.get_image().ok()?;
-    let bytes = image.bytes.into_owned();
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    bytes.hash(&mut hasher);
-    Some((
-        (image.width, image.height, hasher.finish()),
-        (image.width, image.height, bytes),
-    ))
+    Some((image.width, image.height, image.bytes.into_owned()))
 }
 
-#[cfg(target_os = "windows")]
-fn clipboard_fingerprint() -> Option<(usize, usize, u64)> {
-    clipboard_image_with_fingerprint().map(|(fingerprint, _)| fingerprint)
-}
-
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(target_os = "macos")]
 fn temporary_capture_path() -> PathBuf {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -347,32 +344,57 @@ fn save_config(
     config: State<Mutex<AppConfig>>,
     app: AppHandle,
 ) -> Result<(), String> {
-    new_config.save()?;
+    validate_shortcut(&new_config.capture_shortcut)?;
+    let old_shortcut = config
+        .lock()
+        .map_err(|e| format!("锁定配置失败: {e}"))?
+        .capture_shortcut
+        .clone();
 
-    let mut locked = config.lock().map_err(|e| format!("锁定配置失败: {e}"))?;
-    let old_shortcut = locked.capture_shortcut.clone();
-    *locked = new_config.clone();
-    drop(locked);
-
-    // Re-register global shortcut if it changed
-    if old_shortcut != new_config.capture_shortcut {
-        let _ = app.global_shortcut().unregister(old_shortcut.as_str());
-
-        #[cfg(not(target_os = "linux"))]
-        {
-            app.global_shortcut()
-                .register(new_config.capture_shortcut.as_str())
-                .map_err(|e| format!("注册快捷键失败: {e}"))?;
-        }
-
-        #[cfg(target_os = "linux")]
-        if std::env::var("XDG_SESSION_TYPE").as_deref() != Ok("wayland") {
-            app.global_shortcut()
-                .register(new_config.capture_shortcut.as_str())
-                .map_err(|e| format!("注册快捷键失败: {e}"))?;
-        }
+    if old_shortcut == new_config.capture_shortcut {
+        return new_config.save();
     }
 
+    #[cfg(target_os = "linux")]
+    if is_wayland_session() {
+        new_config.save()?;
+        config
+            .lock()
+            .map_err(|e| format!("锁定配置失败: {e}"))?
+            .clone_from(&new_config);
+        restart_wayland_shortcut(&app, new_config.capture_shortcut.clone())?;
+        return Ok(());
+    }
+
+    // Keep the old shortcut registered until both the new registration and
+    // persistence have succeeded. This makes a failed update non-destructive.
+    app.global_shortcut()
+        .register(new_config.capture_shortcut.as_str())
+        .map_err(|e| format!("注册快捷键失败，旧快捷键仍然有效: {e}"))?;
+    if let Err(error) = new_config.save() {
+        let _ = app
+            .global_shortcut()
+            .unregister(new_config.capture_shortcut.as_str());
+        return Err(error);
+    }
+    config
+        .lock()
+        .map_err(|e| format!("锁定配置失败: {e}"))?
+        .clone_from(&new_config);
+    let _ = app.global_shortcut().unregister(old_shortcut.as_str());
+    Ok(())
+}
+
+fn validate_shortcut(shortcut: &str) -> Result<(), String> {
+    if shortcut.len() > 100 {
+        return Err("快捷键格式无效或包含不受支持的按键".to_string());
+    }
+    let parsed = shortcut
+        .parse::<Shortcut>()
+        .map_err(|_| "快捷键格式无效或包含不受支持的按键".to_string())?;
+    if parsed.mods.is_empty() {
+        return Err("快捷键必须包含修饰键和普通按键".to_string());
+    }
     Ok(())
 }
 
@@ -431,7 +453,8 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
         } else if event.id() == "show" {
             show_main_window(app);
         } else if event.id() == "quit" {
-            app.exit(0);
+            show_main_window(app);
+            let _ = app.emit("quit-requested", ());
         }
     })
     .on_tray_icon_event(|tray, event| {
@@ -450,7 +473,7 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
 }
 
 #[cfg(target_os = "linux")]
-async fn run_wayland_shortcut(app: AppHandle) -> Result<(), String> {
+async fn run_wayland_shortcut(app: AppHandle, configured_shortcut: String) -> Result<(), String> {
     use ashpd::desktop::{
         global_shortcuts::{BindShortcutsOptions, GlobalShortcuts, NewShortcut},
         CreateSessionOptions,
@@ -468,7 +491,9 @@ async fn run_wayland_shortcut(app: AppHandle) -> Result<(), String> {
         .create_session(CreateSessionOptions::default())
         .await
         .map_err(|error| format!("无法创建全局快捷键会话: {error}"))?;
-    let shortcut = NewShortcut::new("capture", "截取屏幕").preferred_trigger(Some("CTRL+SHIFT+A"));
+    let trigger = portal_shortcut(&configured_shortcut)?;
+    let shortcut =
+        NewShortcut::new("capture", "截取屏幕").preferred_trigger(Some(trigger.as_str()));
     let response = portal
         .bind_shortcuts(&session, &[shortcut], None, BindShortcutsOptions::default())
         .await
@@ -494,30 +519,130 @@ async fn run_wayland_shortcut(app: AppHandle) -> Result<(), String> {
     Err("全局快捷键门户会话已结束".to_string())
 }
 
+#[cfg(target_os = "linux")]
+fn is_wayland_session() -> bool {
+    std::env::var("XDG_SESSION_TYPE").as_deref() == Ok("wayland")
+}
+
+#[cfg(target_os = "linux")]
+fn portal_shortcut(shortcut: &str) -> Result<String, String> {
+    validate_shortcut(shortcut)?;
+    Ok(shortcut
+        .replace("CommandOrControl", "CTRL")
+        .replace("Control", "CTRL")
+        .replace("Ctrl", "CTRL")
+        .to_uppercase())
+}
+
+#[cfg(target_os = "linux")]
+fn restart_wayland_shortcut(app: &AppHandle, shortcut: String) -> Result<(), String> {
+    let runtime = app.state::<ShortcutRuntime>();
+    let mut wayland = runtime
+        .wayland
+        .lock()
+        .map_err(|error| format!("锁定快捷键任务失败: {error}"))?;
+    wayland.generation = wayland.generation.wrapping_add(1);
+    let generation = wayland.generation;
+    if let Some(previous) = wayland.task.take() {
+        previous.abort();
+    }
+    if let Some(previous) = wayland.fallback.take() {
+        let _ = app.global_shortcut().unregister(previous.as_str());
+    }
+
+    let app_handle = app.clone();
+    let fallback_shortcut = shortcut.clone();
+    wayland.task = Some(tauri::async_runtime::spawn(async move {
+        if let Err(error) = run_wayland_shortcut(app_handle.clone(), shortcut).await {
+            eprintln!("ScreenPin: {error}; falling back to X11 shortcut registration");
+            let registered_shortcut = match app_handle
+                .global_shortcut()
+                .register(fallback_shortcut.as_str())
+            {
+                Ok(()) => fallback_shortcut,
+                Err(error) if fallback_shortcut != DEFAULT_CAPTURE_SHORTCUT => {
+                    eprintln!("ScreenPin: fallback shortcut registration failed: {error}");
+                    match app_handle
+                        .global_shortcut()
+                        .register(DEFAULT_CAPTURE_SHORTCUT)
+                    {
+                        Ok(()) => {
+                            repair_shortcut_config(&app_handle);
+                            DEFAULT_CAPTURE_SHORTCUT.to_string()
+                        }
+                        Err(default_error) => {
+                            eprintln!(
+                                "ScreenPin: default shortcut registration failed: {default_error}"
+                            );
+                            return;
+                        }
+                    }
+                }
+                Err(error) => {
+                    eprintln!("ScreenPin: fallback shortcut registration failed: {error}");
+                    return;
+                }
+            };
+
+            let runtime = app_handle.state::<ShortcutRuntime>();
+            match runtime.wayland.lock() {
+                Ok(mut wayland) if wayland.generation == generation => {
+                    wayland.fallback = Some(registered_shortcut);
+                }
+                _ => {
+                    let _ = app_handle
+                        .global_shortcut()
+                        .unregister(registered_shortcut.as_str());
+                }
+            };
+        }
+    }));
+    Ok(())
+}
+
 fn setup_global_shortcut(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let config = app.state::<Mutex<AppConfig>>();
     let shortcut = config
         .lock()
         .map(|c| c.capture_shortcut.clone())
-        .unwrap_or_else(|_| "CommandOrControl+Shift+A".to_string());
+        .unwrap_or_else(|_| DEFAULT_CAPTURE_SHORTCUT.to_string());
 
     #[cfg(target_os = "linux")]
-    if std::env::var("XDG_SESSION_TYPE").as_deref() == Ok("wayland") {
-        let app_handle = app.handle().clone();
-        let shortcut_clone = shortcut.clone();
-        tauri::async_runtime::spawn(async move {
-            if let Err(error) = run_wayland_shortcut(app_handle.clone()).await {
-                eprintln!("ScreenPin: {error}; falling back to X11 shortcut registration");
-                if let Err(error) = app_handle.global_shortcut().register(shortcut_clone.as_str()) {
-                    eprintln!("ScreenPin: fallback shortcut registration failed: {error}");
-                }
-            }
-        });
+    if is_wayland_session() {
+        restart_wayland_shortcut(app.handle(), shortcut)?;
         return Ok(());
     }
 
-    app.global_shortcut().register(shortcut.as_str())?;
+    if let Err(error) = app.global_shortcut().register(shortcut.as_str()) {
+        eprintln!("ScreenPin: global shortcut registration failed: {error}");
+        if shortcut != DEFAULT_CAPTURE_SHORTCUT {
+            match app.global_shortcut().register(DEFAULT_CAPTURE_SHORTCUT) {
+                Ok(()) => repair_shortcut_config(app.handle()),
+                Err(fallback_error) => {
+                    eprintln!("ScreenPin: default shortcut registration failed: {fallback_error}")
+                }
+            }
+        }
+    }
     Ok(())
+}
+
+fn repair_shortcut_config(app: &AppHandle) {
+    let default_config = AppConfig::default();
+    match app.state::<Mutex<AppConfig>>().lock() {
+        Ok(mut config) => config.clone_from(&default_config),
+        Err(error) => {
+            eprintln!("ScreenPin: failed to repair in-memory shortcut configuration: {error}")
+        }
+    }
+    if let Err(error) = default_config.save() {
+        eprintln!("ScreenPin: failed to repair shortcut configuration: {error}");
+    }
+}
+
+#[tauri::command]
+fn quit_app(app: AppHandle) {
+    app.exit(0);
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -525,7 +650,14 @@ pub fn run() {
     #[cfg(target_os = "linux")]
     configure_linux_webview_backend();
 
-    let config = AppConfig::load();
+    let mut config = AppConfig::load();
+    if let Err(error) = validate_shortcut(&config.capture_shortcut) {
+        eprintln!("ScreenPin: invalid saved shortcut ({error}); using the default");
+        config = AppConfig::default();
+        if let Err(error) = config.save() {
+            eprintln!("ScreenPin: failed to repair shortcut configuration: {error}");
+        }
+    }
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -539,6 +671,7 @@ pub fn run() {
                 .build(),
         )
         .manage(Mutex::new(config))
+        .manage(ShortcutRuntime::default())
         .setup(|app| {
             setup_tray(app)?;
             setup_global_shortcut(app)?;
@@ -564,6 +697,7 @@ pub fn run() {
             fit_window,
             start_drag,
             hide_window,
+            quit_app,
             get_config,
             save_config
         ])
@@ -579,5 +713,29 @@ mod tests {
     fn decodes_a_data_url() {
         let bytes = decode_data_url("data:image/png;base64,aGVsbG8=").unwrap();
         assert_eq!(bytes, b"hello");
+    }
+
+    #[test]
+    fn validates_shortcuts_with_a_modifier_and_key() {
+        assert!(validate_shortcut("CommandOrControl+Shift+A").is_ok());
+        assert!(validate_shortcut("Alt+PrintScreen").is_ok());
+        assert!(validate_shortcut("Ctrl+Frobnozzle").is_err());
+        assert!(validate_shortcut("Ctrl+A+B").is_err());
+        assert!(validate_shortcut("Shift").is_err());
+        assert!(validate_shortcut("A").is_err());
+        assert!(validate_shortcut("").is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn converts_configured_shortcuts_for_the_wayland_portal() {
+        assert_eq!(
+            portal_shortcut("CommandOrControl+Shift+S").unwrap(),
+            "CTRL+SHIFT+S"
+        );
+        assert_eq!(
+            portal_shortcut("Alt+PrintScreen").unwrap(),
+            "ALT+PRINTSCREEN"
+        );
     }
 }

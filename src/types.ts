@@ -49,6 +49,13 @@ export interface ScreenPinProject {
   annotations: Annotation[];
 }
 
+export interface SavedDocument {
+  imageDataUrl: string;
+  title: string;
+  createdAt: string;
+  annotations: string;
+}
+
 export interface CaptureResult {
   dataUrl: string;
   width: number;
@@ -118,6 +125,23 @@ export const normalizeBox = (annotation: Annotation): Annotation => {
     height: Math.abs(annotation.height),
   };
 };
+
+export function isDocumentDirty(
+  image: ImageSource | null,
+  title: string,
+  createdAt: string,
+  annotations: Annotation[],
+  saved: SavedDocument | null,
+) {
+  if (!image) return false;
+  if (!saved) return true;
+  return (
+    saved.imageDataUrl !== image.dataUrl ||
+    saved.title !== title ||
+    saved.createdAt !== createdAt ||
+    saved.annotations !== JSON.stringify(annotations)
+  );
+}
 
 export const isScreenPinProject = (value: unknown): value is ScreenPinProject => {
   if (!value || typeof value !== "object") return false;

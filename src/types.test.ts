@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   extensionForFormat,
+  isDocumentDirty,
   isLossyFormat,
   isScreenPinProject,
   mimeForFormat,
@@ -66,6 +67,27 @@ describe("isScreenPinProject", () => {
       annotations: [areaHighlight],
     };
     expect(isScreenPinProject(project)).toBe(true);
+  });
+});
+
+describe("isDocumentDirty", () => {
+  const image = { dataUrl: "data:image/png;base64,AA==", width: 100, height: 80, name: "demo" };
+  const saved = {
+    imageDataUrl: image.dataUrl,
+    title: "demo",
+    createdAt: "2026-08-11T00:00:00.000Z",
+    annotations: JSON.stringify([annotation]),
+  };
+
+  it("treats a new capture as unsaved and an empty editor as clean", () => {
+    expect(isDocumentDirty(null, "demo", saved.createdAt, [], null)).toBe(false);
+    expect(isDocumentDirty(image, "demo", saved.createdAt, [], null)).toBe(true);
+  });
+
+  it("tracks editable project fields against the saved snapshot", () => {
+    expect(isDocumentDirty(image, "demo", saved.createdAt, [annotation], saved)).toBe(false);
+    expect(isDocumentDirty(image, "renamed", saved.createdAt, [annotation], saved)).toBe(true);
+    expect(isDocumentDirty(image, "demo", saved.createdAt, [{ ...annotation, x: 101 }], saved)).toBe(true);
   });
 });
 
