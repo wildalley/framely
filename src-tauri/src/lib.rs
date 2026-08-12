@@ -1,4 +1,4 @@
-use std::{borrow::Cow, fs, io::Cursor, path::Path};
+use std::{borrow::Cow, fs, io::Cursor, path::Path, sync::Mutex};
 
 use arboard::{Clipboard, ImageData};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
@@ -7,10 +7,13 @@ use serde::Serialize;
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager, Monitor, PhysicalPosition, PhysicalSize, WebviewWindow,
+    AppHandle, Emitter, Manager, Monitor, PhysicalPosition, PhysicalSize, State, WebviewWindow,
     WindowEvent,
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+
+mod config;
+use config::AppConfig;
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use std::{
@@ -330,6 +333,49 @@ fn hide_window(window: WebviewWindow) -> Result<(), String> {
         .map_err(|error| format!("隐藏窗口失败: {error}"))
 }
 
+#[tauri::command]
+fn get_config(config: State<Mutex<AppConfig>>) -> Result<AppConfig, String> {
+    config
+        .lock()
+        .map(|c| c.clone())
+        .map_err(|e| format!("读取配置失败: {e}"))
+}
+
+#[tauri::command]
+fn save_config(
+    new_config: AppConfig,
+    config: State<Mutex<AppConfig>>,
+    app: AppHandle,
+) -> Result<(), String> {
+    new_config.save()?;
+
+    let mut locked = config.lock().map_err(|e| format!("锁定配置失败: {e}"))?;
+    let old_shortcut = locked.capture_shortcut.clone();
+    *locked = new_config.clone();
+    drop(locked);
+
+    // Re-register global shortcut if it changed
+    if old_shortcut != new_config.capture_shortcut {
+        let _ = app.global_shortcut().unregister(old_shortcut.as_str());
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            app.global_shortcut()
+                .register(new_config.capture_shortcut.as_str())
+                .map_err(|e| format!("注册快捷键失败: {e}"))?;
+        }
+
+        #[cfg(target_os = "linux")]
+        if std::env::var("XDG_SESSION_TYPE").as_deref() != Ok("wayland") {
+            app.global_shortcut()
+                .register(new_config.capture_shortcut.as_str())
+                .map_err(|e| format!("注册快捷键失败: {e}"))?;
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(target_os = "linux")]
 fn configure_linux_webview_backend() {
     if let Some(backend) = std::env::var_os("SCREENPIN_GDK_BACKEND") {
@@ -356,8 +402,15 @@ fn show_main_window(app: &AppHandle) {
 }
 
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
-    let capture = MenuItem::with_id(app, "capture", "截图", true, None::<&str>)?;
-    let show = MenuItem::with_id(app, "show", "显示 ScreenPin", true, None::<&str>)?;
+    let config = app.state::<Mutex<AppConfig>>();
+    let shortcut = config
+        .lock()
+        .map(|c| c.capture_shortcut.clone())
+        .unwrap_or_else(|_| "Ctrl+Shift+A".to_string());
+
+    let capture_label = format!("截图 ({})", shortcut.replace("CommandOrControl", "Ctrl"));
+    let capture = MenuItem::with_id(app, "capture", capture_label, true, None::<&str>)?;
+    let show = MenuItem::with_id(app, "show", "显示窗口", true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
     let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&capture, &show, &separator, &quit])?;
@@ -365,7 +418,9 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let mut tray = TrayIconBuilder::with_id("screenpin-tray")
         .menu(&menu)
         .show_menu_on_left_click(false)
-        .tooltip("ScreenPin");
+        .tooltip("ScreenPin - 截图标注工具");
+
+    // Use icon.png for better quality on high-DPI displays
     if let Some(icon) = app.default_window_icon().cloned() {
         tray = tray.icon(icon);
     }
@@ -440,16 +495,20 @@ async fn run_wayland_shortcut(app: AppHandle) -> Result<(), String> {
 }
 
 fn setup_global_shortcut(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    let config = app.state::<Mutex<AppConfig>>();
+    let shortcut = config
+        .lock()
+        .map(|c| c.capture_shortcut.clone())
+        .unwrap_or_else(|_| "CommandOrControl+Shift+A".to_string());
+
     #[cfg(target_os = "linux")]
     if std::env::var("XDG_SESSION_TYPE").as_deref() == Ok("wayland") {
         let app_handle = app.handle().clone();
+        let shortcut_clone = shortcut.clone();
         tauri::async_runtime::spawn(async move {
             if let Err(error) = run_wayland_shortcut(app_handle.clone()).await {
                 eprintln!("ScreenPin: {error}; falling back to X11 shortcut registration");
-                if let Err(error) = app_handle
-                    .global_shortcut()
-                    .register("CommandOrControl+Shift+A")
-                {
+                if let Err(error) = app_handle.global_shortcut().register(shortcut_clone.as_str()) {
                     eprintln!("ScreenPin: fallback shortcut registration failed: {error}");
                 }
             }
@@ -457,7 +516,7 @@ fn setup_global_shortcut(app: &tauri::App) -> Result<(), Box<dyn std::error::Err
         return Ok(());
     }
 
-    app.global_shortcut().register("CommandOrControl+Shift+A")?;
+    app.global_shortcut().register(shortcut.as_str())?;
     Ok(())
 }
 
@@ -465,6 +524,8 @@ fn setup_global_shortcut(app: &tauri::App) -> Result<(), Box<dyn std::error::Err
 pub fn run() {
     #[cfg(target_os = "linux")]
     configure_linux_webview_backend();
+
+    let config = AppConfig::load();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -477,6 +538,7 @@ pub fn run() {
                 })
                 .build(),
         )
+        .manage(Mutex::new(config))
         .setup(|app| {
             setup_tray(app)?;
             setup_global_shortcut(app)?;
@@ -501,7 +563,9 @@ pub fn run() {
             work_area,
             fit_window,
             start_drag,
-            hide_window
+            hide_window,
+            get_config,
+            save_config
         ])
         .run(tauri::generate_context!())
         .expect("failed to run ScreenPin");

@@ -3,6 +3,10 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import type { CaptureResult, ExportFormat, ScreenPinProject } from "./types";
 import { EXPORT_FORMATS, extensionForFormat } from "./types";
 
+export interface AppConfig {
+  captureShortcut: string;
+}
+
 export const isTauri = () => "__TAURI_INTERNALS__" in window;
 
 export const captureScreen = () => invoke<CaptureResult>("capture_screen");
@@ -21,6 +25,10 @@ export const fitWindow = (width: number, height: number, center: boolean) =>
 export const startWindowDrag = () => invoke<void>("start_drag");
 
 export const hideWindow = () => invoke<void>("hide_window");
+
+export const getConfig = () => invoke<AppConfig>("get_config");
+
+export const saveConfig = (config: AppConfig) => invoke<void>("save_config", { newConfig: config });
 
 export async function saveImageAs(dataUrl: string, baseName: string, format: ExportFormat): Promise<boolean> {
   const extension = extensionForFormat(format);

@@ -24,6 +24,7 @@ import {
   PinOff,
   Redo2,
   ScanLine,
+  Settings,
   Square,
   SquareDashed,
   Trash2,
@@ -41,17 +42,20 @@ import {
   copyImage,
   createDemoImage,
   fitWindow,
+  getConfig,
   hideWindow,
   imageFromFile,
   isTauri,
   openProject,
   pasteImage,
   pixelateImage,
+  saveConfig,
   saveImageAs,
   saveProject,
   setMainPinned,
   startWindowDrag,
   workArea,
+  type AppConfig,
 } from "./platform";
 import type {
   Annotation,
@@ -116,7 +120,7 @@ export default function App() {
   const [isPinned, setIsPinned] = useState(false);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
-  const [panel, setPanel] = useState<"none" | "style" | "menu" | "shortcuts">("none");
+  const [panel, setPanel] = useState<"none" | "style" | "menu" | "shortcuts" | "settings">("none");
   const [styles, setStyles] = useState<Record<Annotation["type"], AnnotationStyle>>(() =>
     DRAW_TOOLS.reduce(
       (all, id) => ({ ...all, [id]: defaultStyle(id) }),
@@ -125,6 +129,7 @@ export default function App() {
   );
   const [exportFormat, setExportFormat] = useState<ExportFormat>("png");
   const [exportQuality, setExportQuality] = useState(0.92);
+  const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
   const [barHeight, setBarHeight] = useState(ASSUMED_BAR_HEIGHT);
   const area = useRef<{ width: number; height: number } | null>(null);
   const barHeightRef = useRef(barHeight);
@@ -157,6 +162,9 @@ export default function App() {
 
   useEffect(() => {
     void refreshArea();
+    if (isTauri()) {
+      void getConfig().then(setAppConfig).catch(() => setAppConfig({ captureShortcut: "CommandOrControl+Shift+A" }));
+    }
   }, [refreshArea]);
   const loadCapture = useCallback(
     async (capture: CaptureResult, name = `截图 ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`) => {
@@ -632,7 +640,25 @@ export default function App() {
         />
       )}
 
-      {panel === "shortcuts" && <ShortcutsPanel exportFormat={exportFormat} />}
+      {panel === "shortcuts" && <ShortcutsPanel exportFormat={exportFormat} captureShortcut={appConfig?.captureShortcut} />}
+
+      {panel === "settings" && appConfig && (
+        <SettingsPanel
+          config={appConfig}
+          onSave={async (newConfig) => {
+            try {
+              await saveConfig(newConfig);
+              setAppConfig(newConfig);
+              setPanel("none");
+              notify("设置已保存");
+            } catch (error) {
+              notify(errorMessage(error));
+            }
+          }}
+          onClose={() => setPanel("none")}
+        />
+      )}
+
       <div ref={barRef} className="pin-bar" aria-label="标注工具" onPointerDown={onBarPointerDown}>
         {TOOL_ITEMS.map((item) => (
           <ToolButton
@@ -667,6 +693,14 @@ export default function App() {
           active={panel === "shortcuts"}
           onClick={() => setPanel((current) => (current === "shortcuts" ? "none" : "shortcuts"))}
         />
+        {isTauri() && (
+          <IconButton
+            icon={Settings}
+            label="设置"
+            active={panel === "settings"}
+            onClick={() => setPanel((current) => (current === "settings" ? "none" : "settings"))}
+          />
+        )}
         <IconButton icon={isPinned ? PinOff : Pin} label={isPinned ? "取消置顶" : "置顶"} active={isPinned} onClick={handlePin} />
         <IconButton icon={Download} label={`导出 ${exportFormat.toUpperCase()} (Ctrl+S)`} onClick={handleSaveImage} />
         <IconButton
@@ -992,8 +1026,10 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
-function ShortcutsPanel({ exportFormat }: { exportFormat: ExportFormat }) {
+function ShortcutsPanel({ exportFormat, captureShortcut }: { exportFormat: ExportFormat; captureShortcut?: string }) {
+  const displayShortcut = captureShortcut?.replace("CommandOrControl", "Ctrl") || "Ctrl+Shift+A";
   const shortcuts = [
+    { keys: displayShortcut.split("+"), action: "截取屏幕（全局）" },
     { keys: ["V"], action: "选择工具" },
     { keys: ["R"], action: "矩形" },
     { keys: ["O"], action: "椭圆" },
@@ -1037,6 +1073,73 @@ function ShortcutsPanel({ exportFormat }: { exportFormat: ExportFormat }) {
             <div className="shortcut-action">{shortcut.action}</div>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function SettingsPanel({
+  config,
+  onSave,
+  onClose,
+}: {
+  config: AppConfig;
+  onSave: (config: AppConfig) => void;
+  onClose: () => void;
+}) {
+  const [shortcut, setShortcut] = useState(config.captureShortcut);
+  const [isRecording, setIsRecording] = useState(false);
+
+  const handleKeyDown = (event: React.KeyboardEvent) => {
+    if (!isRecording) return;
+    event.preventDefault();
+
+    const parts: string[] = [];
+    if (event.ctrlKey || event.metaKey) parts.push("CommandOrControl");
+    if (event.shiftKey) parts.push("Shift");
+    if (event.altKey) parts.push("Alt");
+
+    const key = event.key;
+    if (key === "Control" || key === "Shift" || key === "Alt" || key === "Meta") return;
+
+    const mainKey = key.length === 1 ? key.toUpperCase() : key;
+    parts.push(mainKey);
+
+    if (parts.length > 1) {
+      setShortcut(parts.join("+"));
+      setIsRecording(false);
+    }
+  };
+
+  return (
+    <div className="pin-panel is-settings" role="dialog" aria-label="设置">
+      <div className="panel-title">
+        <span>设置</span>
+      </div>
+      <label className="panel-field">
+        <span>截图快捷键</span>
+        <div className="shortcut-input-wrapper">
+          <input
+            className="shortcut-input"
+            value={shortcut.replace("CommandOrControl", "Ctrl")}
+            readOnly
+            placeholder="点击录制按钮设置快捷键"
+            onKeyDown={handleKeyDown}
+          />
+          <button
+            className={isRecording ? "is-recording" : ""}
+            onClick={() => setIsRecording(!isRecording)}
+          >
+            {isRecording ? "按下快捷键..." : "录制"}
+          </button>
+        </div>
+        <span className="panel-hint">全局快捷键，在任何界面都可触发截图</span>
+      </label>
+      <div className="panel-actions">
+        <button onClick={onClose}>取消</button>
+        <button className="primary-action" onClick={() => onSave({ captureShortcut: shortcut })}>
+          保存
+        </button>
       </div>
     </div>
   );
