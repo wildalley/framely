@@ -62,6 +62,158 @@ button:disabled {
   background: #1c2021;
 }
 
+/* Full-monitor application-owned capture selector. */
+.capture-overlay {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: #111516;
+  cursor: crosshair;
+  user-select: none;
+  touch-action: none;
+}
+
+.capture-background,
+.capture-shade,
+.capture-selection {
+  position: absolute;
+}
+
+.capture-background {
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  pointer-events: none;
+}
+
+.capture-shade {
+  z-index: 1;
+  background: rgb(5 9 10 / 52%);
+  pointer-events: none;
+}
+
+.capture-shade-all,
+.capture-shade-top {
+  inset: 0 0 auto;
+}
+
+.capture-shade-all {
+  height: 100%;
+}
+
+.capture-shade-left {
+  left: 0;
+}
+
+.capture-shade-right {
+  right: 0;
+}
+
+.capture-shade-bottom {
+  right: 0;
+  bottom: 0;
+  left: 0;
+}
+
+.capture-selection {
+  z-index: 2;
+  border: 1px solid #ffffff;
+  box-shadow: 0 0 0 1px rgb(13 104 73 / 95%), 0 0 18px rgb(0 0 0 / 22%);
+  cursor: move;
+}
+
+.capture-size {
+  position: absolute;
+  top: -29px;
+  left: -1px;
+  min-width: max-content;
+  padding: 4px 7px;
+  color: #ffffff;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  line-height: 18px;
+  background: rgb(19 27 25 / 92%);
+  border: 1px solid rgb(255 255 255 / 22%);
+  border-radius: 5px;
+  pointer-events: none;
+}
+
+.capture-handle {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  background: #ffffff;
+  border: 2px solid var(--accent-strong);
+  border-radius: 50%;
+}
+
+.capture-handle-nw { top: -5px; left: -5px; cursor: nwse-resize; }
+.capture-handle-n { top: -5px; left: 50%; cursor: ns-resize; transform: translateX(-50%); }
+.capture-handle-ne { top: -5px; right: -5px; cursor: nesw-resize; }
+.capture-handle-e { top: 50%; right: -5px; cursor: ew-resize; transform: translateY(-50%); }
+.capture-handle-se { right: -5px; bottom: -5px; cursor: nwse-resize; }
+.capture-handle-s { bottom: -5px; left: 50%; cursor: ns-resize; transform: translateX(-50%); }
+.capture-handle-sw { bottom: -5px; left: -5px; cursor: nesw-resize; }
+.capture-handle-w { top: 50%; left: -5px; cursor: ew-resize; transform: translateY(-50%); }
+
+.capture-help,
+.capture-actions {
+  position: fixed;
+  z-index: 4;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  color: #f7fbf9;
+  background: rgb(19 27 25 / 92%);
+  border: 1px solid rgb(255 255 255 / 20%);
+  border-radius: 7px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 28%);
+  transform: translateX(-50%);
+}
+
+.capture-help {
+  top: 18px;
+  padding: 7px 11px;
+  font-size: 12px;
+  pointer-events: none;
+}
+
+.capture-actions {
+  bottom: 20px;
+  gap: 5px;
+  padding: 5px;
+  cursor: default;
+}
+
+.capture-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 82px;
+  height: 32px;
+  padding: 0 12px;
+  color: #eef3f1;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.capture-actions button:hover:not(:disabled) {
+  background: rgb(255 255 255 / 12%);
+}
+
+.capture-actions button.is-primary {
+  color: #ffffff;
+  background: var(--accent);
+}
+
+.capture-actions button.is-primary:hover:not(:disabled) {
+  background: var(--accent-strong);
+}
+
 .pin-stage {
   position: relative;
   display: flex;
@@ -559,10 +711,10 @@ button:disabled {
   cursor: grab;
 }
 
-.empty-close {
+.empty-close,
+.empty-settings {
   position: absolute;
   top: 8px;
-  right: 8px;
   display: grid;
   place-items: center;
   width: 28px;
@@ -575,7 +727,16 @@ button:disabled {
   cursor: pointer;
 }
 
-.empty-close:hover {
+.empty-close {
+  right: 8px;
+}
+
+.empty-settings {
+  right: 40px;
+}
+
+.empty-close:hover,
+.empty-settings:hover {
   background: #e9ebea;
 }
 

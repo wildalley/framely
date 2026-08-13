@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { confirm, open, save } from "@tauri-apps/plugin-dialog";
-import type { CaptureResult, ExportFormat, ImageSource, ScreenPinProject } from "./types";
+import type { CaptureResponse, CaptureResult, ExportFormat, ImageSource, ScreenPinProject } from "./types";
 import { EXPORT_FORMATS, extensionForFormat } from "./types";
 
 export interface AppConfig {
@@ -9,7 +9,13 @@ export interface AppConfig {
 
 export const isTauri = () => "__TAURI_INTERNALS__" in window;
 
-export const captureScreen = () => invoke<CaptureResult>("capture_screen");
+export const captureScreen = () => invoke<CaptureResponse>("capture_screen");
+
+export const captureWithSystem = () => invoke<CaptureResult>("capture_with_system");
+
+export const enterCaptureMode = () => invoke<void>("enter_capture_mode");
+
+export const exitCaptureMode = (pinned: boolean) => invoke<void>("exit_capture_mode", { pinned });
 
 export const pasteImage = () => invoke<CaptureResult>("read_clipboard_image");
 

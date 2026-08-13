@@ -5,9 +5,12 @@ ScreenPin 是一个面向桌面的非破坏性截图编辑器，目标平台为 
 ## 特性
 
 - **跨平台截图采集**
-  - Linux Wayland/X11：通过 `xdg-desktop-portal` 交互式截图，选择区域由系统门户处理
-  - macOS：调用 `screencapture -i` 选择区域
-  - Windows：打开系统 `ms-screenclip:` 选择区域；取消或超时不会退回整屏截图
+  - 默认使用 ScreenPin 自己的全屏选区层，支持拖选、移动、八方向缩放、像素尺寸提示，以及 Enter / Esc 快捷操作
+  - Linux Wayland/X11：通过 `xdg-desktop-portal` 非交互采集屏幕像素，再由 ScreenPin 选择区域
+  - macOS：静默采集当前显示器，再由 ScreenPin 选择区域
+  - Windows：通过 Win32 GDI 静默采集当前显示器，再由 ScreenPin 选择区域
+  - 多显示器：Portal 只能返回整个虚拟桌面，ScreenPin 会裁切出指针所在的显示器，使选区层覆盖的区域与看到的画面一致。裁切按显示器各自的位置和尺寸计算，因此分辨率不同、上下错位、竖排或三屏以上的排布都适用；若 Portal 返回的图像与显示器布局不是等比缩放（例如各显示器缩放比例不同），则不做裁切，改为整幅显示
+  - 应用内采集或选区层不可用时，自动回退到系统交互式截图；取消兜底截图不会截取整个虚拟桌面
   
 - **八种标注工具**：矩形、椭圆、箭头、画笔、荧光笔、区域高亮、文字、马赛克
   - 区域高亮（`G`）：拖出一个或多个选区，选区内保持原图亮度，其余区域压暗，适合聚焦讲解重点
@@ -25,7 +28,7 @@ ScreenPin 是一个面向桌面的非破坏性截图编辑器，目标平台为 
   - 替换当前截图、打开其他工程或从托盘退出前，会提示确认尚未保存的工程修改；导出图片不等同于保存可编辑工程
   - 马赛克处理失败时不会回退到原图，相关工具会被禁用，含马赛克的导出也会被阻止
   - 置顶窗口继续修改，再次点击取消置顶
-  - 默认使用桌面级 `Ctrl/Cmd + Shift + A` 全局快捷键，可在设置面板中录制并保存其他组合键
+  - 默认使用桌面级 `Ctrl/Cmd + Shift + A` 全局快捷键，可在设置面板中录制并保存其他组合键；`Win` 键可以作为修饰键录制，但部分桌面（如 GNOME）会自行占用 `Win`，这类组合可能无法传给应用
   - 系统托盘菜单：截图、显示主窗口、退出；关闭主窗口隐藏到托盘
 
 ## 开发
@@ -56,7 +59,7 @@ sudo pacman -U "$(cd packaging/arch && makepkg --packagelist)"
 
 `build:arch` 会从当前工作区编译 release 二进制，并生成适配当前 CPU 架构的 `.pkg.tar.zst`。运行时依赖由 pacman 管理，不会打包一份 WebKitGTK。
 
-在 Wayland 会话中，ScreenPin 检测到 XWayland 后会自动让 WebKitGTK 窗口使用 X11，并关闭 DMA-BUF 渲染，以规避部分合成器上的 GDK protocol error 71。截图本身仍通过 `xdg-desktop-portal` 请求，不会绕过 Wayland 权限模型。
+在 Wayland 会话中，ScreenPin 检测到 XWayland 后会自动让 WebKitGTK 窗口使用 X11，并关闭 DMA-BUF 渲染，以规避部分合成器上的 GDK protocol error 71。屏幕像素仍通过 `xdg-desktop-portal` 请求，不会绕过 Wayland 权限模型；区域选择由 ScreenPin 自己完成。
 
 如需测试原生 Wayland 窗口后端，可以显式覆盖：
 
@@ -74,7 +77,7 @@ cd src-tauri && cargo check && cargo test
 
 ### Linux 依赖
 
-需要 WebKitGTK、GTK3、DBus 和 `xdg-desktop-portal`。Wayland 下截图权限与交互界面由桌面环境的 portal 后端决定；Hyprland 建议安装并启用 `xdg-desktop-portal-hyprland`。Wayland 全局快捷键使用 `org.freedesktop.portal.GlobalShortcuts`，首次启动或修改快捷键时可能由桌面门户请求授权。托盘图标使用 AppIndicator/StatusNotifier，Waybar 需要启用 `tray` 模块才能显示。
+需要 WebKitGTK、GTK3、DBus 和 `xdg-desktop-portal`。Wayland 不允许普通应用绕过合成器读取其他窗口，因此首次截图或桌面策略要求时，portal 后端仍可能显示安全授权；授权完成后，区域选择由 ScreenPin 自己处理。Hyprland 建议安装并启用 `xdg-desktop-portal-hyprland`。Wayland 全局快捷键使用 `org.freedesktop.portal.GlobalShortcuts`，首次启动或修改快捷键时也可能由桌面门户请求授权。门户的触发器语法与 Tauri 的快捷键写法不同：修饰键只有 `CTRL`、`ALT`、`SHIFT`、`NUM`、`LOGO`（即 `Win` 键，没有 `SUPER`），按键名是区分大小写的 xkb keysym（`s`、`Return`、`Print`），ScreenPin 会在注册前完成转换。托盘图标使用 AppIndicator/StatusNotifier，Waybar 需要启用 `tray` 模块才能显示。
 
 ### 平铺窗口管理器
 
@@ -117,8 +120,8 @@ windowrulev2 = noanim, class:^(ScreenPin)$
 - **测试**：Vitest
 - **平台集成**：
   - Linux：`xdg-desktop-portal` (截图)、`ashpd` (全局快捷键)、`arboard` (剪贴板)
-  - macOS：`screencapture` CLI
-  - Windows：`ms-screenclip:` URI、`arboard`（剪贴板）和 Windows 剪贴板序列号检测
+  - macOS：`screencapture` CLI（静默采集，交互模式仅作兜底）
+  - Windows：Win32 GDI（静默采集）、`ms-screenclip:` URI（兜底）、`arboard`（剪贴板）和 Windows 剪贴板序列号检测
 
 ## 架构
 

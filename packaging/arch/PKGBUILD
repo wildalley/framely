@@ -1,6 +1,6 @@
 pkgname=screenpin
-pkgver=0.1.0
-pkgrel=1
+pkgver=0.2.0
+pkgrel=3
 pkgdesc="Non-destructive cross-platform screenshot editor"
 arch=('x86_64' 'aarch64')
 url="https://github.com/wildalley/screenpin"

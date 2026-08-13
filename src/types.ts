@@ -62,6 +62,12 @@ export interface CaptureResult {
   height: number;
 }
 
+export interface CaptureResponse extends CaptureResult {
+  selectionRequired: boolean;
+  fallbackUsed: boolean;
+  fallbackReason?: string | null;
+}
+
 export const COLORS = ["#e5484d", "#ff8a3d", "#f2c94c", "#1f9d73", "#2383e2", "#7c5cff", "#171717", "#ffffff"];
 
 /** Formats the editor can export to. PNG stays lossless, the others take a quality. */

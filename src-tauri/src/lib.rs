@@ -25,6 +25,9 @@ use std::{
 #[cfg(target_os = "windows")]
 use std::process::Command;
 
+#[cfg(target_os = "linux")]
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
 const DEFAULT_CAPTURE_SHORTCUT: &str = "CommandOrControl+Shift+A";
 
 #[derive(Default)]
@@ -38,7 +41,34 @@ struct ShortcutRuntime {
 struct WaylandShortcutRuntime {
     task: Option<tauri::async_runtime::JoinHandle<()>>,
     fallback: Option<String>,
-    generation: u64,
+}
+
+#[derive(Default)]
+struct CaptureState {
+    /// Geometry of the pending screenshot, so the selector uses the same
+    /// coordinate space as the captured pixels.
+    geometry: Mutex<Option<CaptureGeometry>>,
+}
+
+/// The desktop region a pending capture covers, in physical pixels.
+#[derive(Clone, Copy)]
+struct CaptureGeometry {
+    origin: PhysicalPosition<i32>,
+    size: PhysicalSize<u32>,
+}
+
+impl CaptureState {
+    fn remember_geometry(&self, geometry: Option<CaptureGeometry>) -> Result<(), String> {
+        *self
+            .geometry
+            .lock()
+            .map_err(|error| format!("锁定截图状态失败: {error}"))? = geometry;
+        Ok(())
+    }
+
+    fn take_geometry(&self) -> Option<CaptureGeometry> {
+        self.geometry.lock().ok()?.take()
+    }
 }
 
 #[derive(Serialize)]
@@ -49,8 +79,22 @@ struct CaptureResult {
     height: u32,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CaptureResponse {
+    #[serde(flatten)]
+    image: CaptureResult,
+    selection_required: bool,
+    fallback_used: bool,
+    fallback_reason: Option<String>,
+}
+
 fn png_data_url(bytes: &[u8]) -> Result<CaptureResult, String> {
     let image = image::load_from_memory(bytes).map_err(|error| format!("无法读取截图: {error}"))?;
+    encode_png(&image)
+}
+
+fn encode_png(image: &DynamicImage) -> Result<CaptureResult, String> {
     let (width, height) = image.dimensions();
     let mut png = Cursor::new(Vec::new());
     image
@@ -77,12 +121,24 @@ fn decode_data_url(data_url: &str) -> Result<Vec<u8>, String> {
 }
 
 #[cfg(target_os = "linux")]
-async fn native_capture() -> Result<Vec<u8>, String> {
-    use ashpd::desktop::screenshot::Screenshot;
+async fn portal_capture(window: &WebviewWindow, interactive: bool) -> Result<Vec<u8>, String> {
+    use ashpd::{desktop::screenshot::Screenshot, WindowIdentifier};
 
-    let response = Screenshot::request()
-        .interactive(true)
-        .modal(true)
+    let identifier = window
+        .window_handle()
+        .ok()
+        .and_then(|handle| match handle.as_raw() {
+            RawWindowHandle::Xlib(handle) => Some(WindowIdentifier::from_xid(handle.window)),
+            RawWindowHandle::Xcb(handle) => {
+                Some(WindowIdentifier::from_xid(handle.window.get().into()))
+            }
+            _ => None,
+        });
+    let request = Screenshot::request()
+        .identifier(identifier)
+        .interactive(interactive)
+        .modal(interactive);
+    let response = request
         .send()
         .await
         .map_err(|error| format!("截图门户不可用: {error}"))?
@@ -100,11 +156,204 @@ async fn native_capture() -> Result<Vec<u8>, String> {
     bytes
 }
 
+#[cfg(target_os = "linux")]
+async fn primary_capture(window: &WebviewWindow, monitor: &Monitor) -> Result<Vec<u8>, String> {
+    // The screenshot portal takes no region, so the monitor cannot be asked for
+    // here. On a multi-monitor desktop it answers with all of them at once and
+    // `capture_frame` cuts out the screen being captured.
+    let _ = monitor;
+    portal_capture(window, false).await
+}
+
+#[cfg(target_os = "linux")]
+async fn system_capture(window: &WebviewWindow) -> Result<Vec<u8>, String> {
+    portal_capture(window, true).await
+}
+
+/// The pixels to hand the in-app selector, plus the desktop region they cover.
+///
+/// A capture spanning several monitors is reduced to the one being captured.
+/// The selector stretches its bitmap across its whole window, so the two have
+/// to describe the same region: the Linux portal returns the entire virtual
+/// desktop, no window can cover that, and the compositor clamped the selector
+/// to one screen while it still drew every screen's pixels. With monitors that
+/// do not share a top edge the result looked shifted downwards by the taller
+/// desktop's extra rows.
+fn capture_frame(
+    window: &WebviewWindow,
+    monitor: &Monitor,
+    bytes: &[u8],
+) -> Result<(DynamicImage, CaptureGeometry), String> {
+    let image =
+        image::load_from_memory(bytes).map_err(|error| format!("无法读取桌面门户截图: {error}"))?;
+    let monitors = window
+        .available_monitors()
+        .map_err(|error| format!("无法读取显示器布局: {error}"))?;
+    let image_size = PhysicalSize::new(image.width(), image.height());
+    let origin = *monitor.position();
+    let monitor_size = *monitor.size();
+
+    if is_virtual_desktop_capture(image_size, monitor_size, monitors.len()) {
+        let (desktop_origin, desktop_size) = desktop_bounds(&screen_rects(&monitors))?;
+        match monitor_crop(
+            image_size,
+            desktop_origin,
+            desktop_size,
+            origin,
+            monitor_size,
+        ) {
+            Some((left, top, width, height)) => {
+                return Ok((
+                    image.crop_imm(left, top, width, height),
+                    CaptureGeometry {
+                        origin,
+                        size: monitor_size,
+                    },
+                ));
+            }
+            // Nothing sensible to crop. Show the whole bitmap over the desktop
+            // origin instead of pretending it covers a single screen.
+            None => {
+                return Ok((
+                    image,
+                    CaptureGeometry {
+                        origin: desktop_origin,
+                        size: desktop_size,
+                    },
+                ))
+            }
+        }
+    }
+
+    Ok((
+        image,
+        CaptureGeometry {
+            origin,
+            size: monitor_size,
+        },
+    ))
+}
+
+/// A monitor reduced to plain geometry, so the layout maths can be tested
+/// without a live window server.
+type ScreenRect = (PhysicalPosition<i32>, PhysicalSize<u32>);
+
+fn screen_rects(monitors: &[Monitor]) -> Vec<ScreenRect> {
+    monitors
+        .iter()
+        .map(|monitor| (*monitor.position(), *monitor.size()))
+        .collect()
+}
+
+/// Bounding box of every monitor, in physical pixels.
+fn desktop_bounds(screens: &[ScreenRect]) -> Result<ScreenRect, String> {
+    let mut bounds: Option<(i32, i32, i32, i32)> = None;
+    for (position, size) in screens {
+        let right = position.x.saturating_add(size.width as i32);
+        let bottom = position.y.saturating_add(size.height as i32);
+        bounds = Some(match bounds {
+            None => (position.x, position.y, right, bottom),
+            Some((left, top, previous_right, previous_bottom)) => (
+                left.min(position.x),
+                top.min(position.y),
+                previous_right.max(right),
+                previous_bottom.max(bottom),
+            ),
+        });
+    }
+    let (left, top, right, bottom) = bounds.ok_or_else(|| "没有可用的显示器".to_string())?;
+    Ok((
+        PhysicalPosition::new(left, top),
+        PhysicalSize::new((right - left).max(0) as u32, (bottom - top).max(0) as u32),
+    ))
+}
+
+/// Whether both axes of a bitmap are scaled by the same amount, within the
+/// rounding a whole-pixel bitmap of a whole-pixel layout can introduce.
+fn scales_agree(scale_x: f64, scale_y: f64) -> bool {
+    (scale_x - scale_y).abs() <= 0.01 * scale_x.max(scale_y)
+}
+
+/// Where a monitor sits inside a bitmap of the whole virtual desktop, in bitmap
+/// pixels. `None` when the layout cannot be mapped onto the bitmap.
+fn monitor_crop(
+    image_size: PhysicalSize<u32>,
+    desktop_origin: PhysicalPosition<i32>,
+    desktop_size: PhysicalSize<u32>,
+    monitor_position: PhysicalPosition<i32>,
+    monitor_size: PhysicalSize<u32>,
+) -> Option<(u32, u32, u32, u32)> {
+    if desktop_size.width == 0 || desktop_size.height == 0 {
+        return None;
+    }
+    // The compositor may scale the bitmap relative to the layout it reports, so
+    // map through the ratio rather than assuming one bitmap pixel per layout
+    // pixel.
+    let scale_x = f64::from(image_size.width) / f64::from(desktop_size.width);
+    let scale_y = f64::from(image_size.height) / f64::from(desktop_size.height);
+    // One ratio can only describe a bitmap scaled evenly. If the axes disagree,
+    // the bitmap is not this layout scaled — mixed per-monitor scaling, say —
+    // and any rectangle derived from it would crop the wrong pixels. Better to
+    // hand back the whole capture than a confidently wrong region.
+    if !scales_agree(scale_x, scale_y) {
+        return None;
+    }
+    let left = (f64::from(monitor_position.x.saturating_sub(desktop_origin.x)) * scale_x).round();
+    let top = (f64::from(monitor_position.y.saturating_sub(desktop_origin.y)) * scale_y).round();
+    let width = (f64::from(monitor_size.width) * scale_x).round();
+    let height = (f64::from(monitor_size.height) * scale_y).round();
+    if left < 0.0 || top < 0.0 || width < 1.0 || height < 1.0 {
+        return None;
+    }
+    let left = left as u32;
+    let top = top as u32;
+    let width = (width as u32).min(image_size.width.saturating_sub(left));
+    let height = (height as u32).min(image_size.height.saturating_sub(top));
+    if width == 0 || height == 0 {
+        return None;
+    }
+    Some((left, top, width, height))
+}
+
+/// Whether a capture region is exactly one monitor, which is the only case a
+/// fullscreen selector window can cover.
+fn covers_one_monitor(screens: &[ScreenRect], geometry: CaptureGeometry) -> bool {
+    screens
+        .iter()
+        .any(|(position, size)| *position == geometry.origin && *size == geometry.size)
+}
+
+fn is_virtual_desktop_capture(
+    image_size: PhysicalSize<u32>,
+    active_size: PhysicalSize<u32>,
+    monitor_count: usize,
+) -> bool {
+    monitor_count > 1
+        && (image_size.width > active_size.width || image_size.height > active_size.height)
+}
+
 #[cfg(target_os = "macos")]
-async fn native_capture() -> Result<Vec<u8>, String> {
+async fn primary_capture(_window: &WebviewWindow, monitor: &Monitor) -> Result<Vec<u8>, String> {
+    let scale = monitor.scale_factor();
+    let position = monitor.position().to_logical::<i32>(scale);
+    let size = monitor.size().to_logical::<u32>(scale);
+    let region = format!(
+        "-R{},{},{},{}",
+        position.x, position.y, size.width, size.height
+    );
+    capture_with_screencapture(&["-x", region.as_str()]).await
+}
+
+#[cfg(target_os = "macos")]
+async fn system_capture(_window: &WebviewWindow) -> Result<Vec<u8>, String> {
+    capture_with_screencapture(&["-i", "-x"]).await
+}
+
+#[cfg(target_os = "macos")]
+async fn capture_with_screencapture(args: &[&str]) -> Result<Vec<u8>, String> {
     let path = temporary_capture_path();
     let status = Command::new("screencapture")
-        .args(["-i", "-x"])
+        .args(args)
         .arg(&path)
         .status()
         .map_err(|error| format!("无法启动系统截图: {error}"))?;
@@ -118,7 +367,12 @@ async fn native_capture() -> Result<Vec<u8>, String> {
 }
 
 #[cfg(target_os = "windows")]
-async fn native_capture() -> Result<Vec<u8>, String> {
+async fn primary_capture(_window: &WebviewWindow, monitor: &Monitor) -> Result<Vec<u8>, String> {
+    capture_windows_monitor(monitor)
+}
+
+#[cfg(target_os = "windows")]
+async fn system_capture(_window: &WebviewWindow) -> Result<Vec<u8>, String> {
     let before = clipboard_sequence_number();
     Command::new("explorer.exe")
         .arg("ms-screenclip:")
@@ -141,6 +395,187 @@ async fn native_capture() -> Result<Vec<u8>, String> {
     }
 
     Err("截图已取消或等待超时".to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn capture_windows_monitor(monitor: &Monitor) -> Result<Vec<u8>, String> {
+    use std::{ffi::c_void, ptr};
+
+    type Handle = *mut c_void;
+    type DeviceContext = *mut c_void;
+
+    #[repr(C)]
+    struct BitmapInfoHeader {
+        size: u32,
+        width: i32,
+        height: i32,
+        planes: u16,
+        bit_count: u16,
+        compression: u32,
+        image_size: u32,
+        x_pixels_per_meter: i32,
+        y_pixels_per_meter: i32,
+        colors_used: u32,
+        colors_important: u32,
+    }
+
+    #[repr(C)]
+    struct RgbQuad {
+        blue: u8,
+        green: u8,
+        red: u8,
+        reserved: u8,
+    }
+
+    #[repr(C)]
+    struct BitmapInfo {
+        header: BitmapInfoHeader,
+        colors: [RgbQuad; 1],
+    }
+
+    #[link(name = "user32")]
+    extern "system" {
+        fn GetDC(window: Handle) -> DeviceContext;
+        fn ReleaseDC(window: Handle, context: DeviceContext) -> i32;
+    }
+
+    #[link(name = "gdi32")]
+    extern "system" {
+        fn CreateCompatibleDC(context: DeviceContext) -> DeviceContext;
+        fn CreateCompatibleBitmap(context: DeviceContext, width: i32, height: i32) -> Handle;
+        fn SelectObject(context: DeviceContext, object: Handle) -> Handle;
+        fn BitBlt(
+            destination: DeviceContext,
+            x: i32,
+            y: i32,
+            width: i32,
+            height: i32,
+            source: DeviceContext,
+            source_x: i32,
+            source_y: i32,
+            operation: u32,
+        ) -> i32;
+        fn GetDIBits(
+            context: DeviceContext,
+            bitmap: Handle,
+            start: u32,
+            lines: u32,
+            bits: *mut c_void,
+            info: *mut BitmapInfo,
+            usage: u32,
+        ) -> i32;
+        fn DeleteObject(object: Handle) -> i32;
+        fn DeleteDC(context: DeviceContext) -> i32;
+    }
+
+    const SOURCE_COPY: u32 = 0x00cc_0020;
+    const CAPTURE_LAYERED_WINDOWS: u32 = 0x4000_0000;
+    const RGB_COLORS: u32 = 0;
+    const RGB_BITMAP: u32 = 0;
+
+    let position = *monitor.position();
+    let size = *monitor.size();
+    let width = i32::try_from(size.width).map_err(|_| "显示器宽度超出支持范围".to_string())?;
+    let height = i32::try_from(size.height).map_err(|_| "显示器高度超出支持范围".to_string())?;
+    let byte_len = usize::try_from(size.width)
+        .ok()
+        .and_then(|width| {
+            usize::try_from(size.height)
+                .ok()
+                .map(|height| (width, height))
+        })
+        .and_then(|(width, height)| width.checked_mul(height))
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or_else(|| "显示器截图尺寸过大".to_string())?;
+    let image_size = u32::try_from(byte_len).map_err(|_| "显示器截图尺寸过大".to_string())?;
+
+    unsafe {
+        let screen_context = GetDC(ptr::null_mut());
+        if screen_context.is_null() {
+            return Err("无法访问 Windows 屏幕".to_string());
+        }
+        let memory_context = CreateCompatibleDC(screen_context);
+        if memory_context.is_null() {
+            ReleaseDC(ptr::null_mut(), screen_context);
+            return Err("无法创建 Windows 截图缓冲区".to_string());
+        }
+        let bitmap = CreateCompatibleBitmap(screen_context, width, height);
+        if bitmap.is_null() {
+            DeleteDC(memory_context);
+            ReleaseDC(ptr::null_mut(), screen_context);
+            return Err("无法创建 Windows 截图位图".to_string());
+        }
+        let previous = SelectObject(memory_context, bitmap);
+        let copied = BitBlt(
+            memory_context,
+            0,
+            0,
+            width,
+            height,
+            screen_context,
+            position.x,
+            position.y,
+            SOURCE_COPY | CAPTURE_LAYERED_WINDOWS,
+        );
+        SelectObject(memory_context, previous);
+
+        let mut bgra = vec![0_u8; byte_len];
+        let mut info = BitmapInfo {
+            header: BitmapInfoHeader {
+                size: std::mem::size_of::<BitmapInfoHeader>() as u32,
+                width,
+                // A negative height asks GDI for a top-down bitmap.
+                height: -height,
+                planes: 1,
+                bit_count: 32,
+                compression: RGB_BITMAP,
+                image_size,
+                x_pixels_per_meter: 0,
+                y_pixels_per_meter: 0,
+                colors_used: 0,
+                colors_important: 0,
+            },
+            colors: [RgbQuad {
+                blue: 0,
+                green: 0,
+                red: 0,
+                reserved: 0,
+            }],
+        };
+        let scan_lines = if copied == 0 {
+            0
+        } else {
+            GetDIBits(
+                memory_context,
+                bitmap,
+                0,
+                size.height,
+                bgra.as_mut_ptr().cast(),
+                &mut info,
+                RGB_COLORS,
+            )
+        };
+
+        DeleteObject(bitmap);
+        DeleteDC(memory_context);
+        ReleaseDC(ptr::null_mut(), screen_context);
+
+        if copied == 0 || scan_lines != height {
+            return Err("Windows 屏幕像素采集失败".to_string());
+        }
+
+        for pixel in bgra.chunks_exact_mut(4) {
+            pixel.swap(0, 2);
+            pixel[3] = 255;
+        }
+        let image = RgbaImage::from_raw(size.width, size.height, bgra)
+            .ok_or_else(|| "Windows 截图数据无效".to_string())?;
+        let mut png = Cursor::new(Vec::new());
+        DynamicImage::ImageRgba8(image)
+            .write_to(&mut png, ImageFormat::Png)
+            .map_err(|error| format!("无法编码 Windows 截图: {error}"))?;
+        Ok(png.into_inner())
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -172,15 +607,122 @@ fn temporary_capture_path() -> PathBuf {
 }
 
 #[tauri::command]
-async fn capture_screen(window: WebviewWindow) -> Result<CaptureResult, String> {
+async fn capture_screen(
+    window: WebviewWindow,
+    capture: State<'_, CaptureState>,
+) -> Result<CaptureResponse, String> {
+    // Resolve the target monitor while the window is still mapped. Hiding it
+    // first would make the pointer lookup fall back to the primary monitor.
+    let monitor = capture_monitor(&window)?;
     let _ = window.hide();
     std::thread::sleep(std::time::Duration::from_millis(180));
-    let result = native_capture()
+    match primary_capture(&window, &monitor)
+        .await
+        .and_then(|bytes| capture_frame(&window, &monitor, &bytes))
+    {
+        Ok((frame, geometry)) => {
+            let image = encode_png(&frame)?;
+            capture.remember_geometry(Some(geometry))?;
+            Ok(CaptureResponse {
+                image,
+                selection_required: true,
+                fallback_used: false,
+                fallback_reason: None,
+            })
+        }
+        Err(primary_error) => {
+            eprintln!(
+                "ScreenPin: application capture unavailable: {primary_error}; using system capture"
+            );
+            // The system path needs no in-app selector, so drop any origin a
+            // previous capture left behind.
+            capture.remember_geometry(None)?;
+            let result = system_capture(&window)
+                .await
+                .and_then(|bytes| png_data_url(&bytes))
+                .map(|image| CaptureResponse {
+                    image,
+                    selection_required: false,
+                    fallback_used: true,
+                    fallback_reason: Some(primary_error),
+                });
+            let _ = window.show();
+            let _ = window.set_focus();
+            result
+        }
+    }
+}
+
+#[tauri::command]
+async fn capture_with_system(window: WebviewWindow) -> Result<CaptureResult, String> {
+    let _ = window.hide();
+    std::thread::sleep(std::time::Duration::from_millis(180));
+    let result = system_capture(&window)
         .await
         .and_then(|bytes| png_data_url(&bytes));
     let _ = window.show();
     let _ = window.set_focus();
     result
+}
+
+#[tauri::command]
+fn enter_capture_mode(
+    window: WebviewWindow,
+    capture: State<'_, CaptureState>,
+) -> Result<(), String> {
+    window
+        .set_always_on_top(true)
+        .map_err(|error| format!("无法置顶截图选区: {error}"))?;
+    // Cover exactly the desktop region the captured pixels came from, so the
+    // selector's coordinates match the bitmap it draws.
+    if let Some(geometry) = capture.take_geometry() {
+        window
+            .set_position(geometry.origin)
+            .map_err(|error| format!("无法定位截图选区: {error}"))?;
+        window
+            .set_size(geometry.size)
+            .map_err(|error| format!("无法调整截图选区尺寸: {error}"))?;
+        // Fullscreen is the only reliable way past panels and docks, but it only
+        // works when the region is one whole monitor. A region spanning several
+        // has to make do with an always-on-top window.
+        let monitors = window
+            .available_monitors()
+            .map_err(|error| format!("无法读取显示器布局: {error}"))?;
+        if covers_one_monitor(&screen_rects(&monitors), geometry) {
+            window
+                .set_fullscreen(true)
+                .map_err(|error| format!("无法打开全屏截图选区: {error}"))?;
+        }
+    }
+    window
+        .show()
+        .map_err(|error| format!("无法显示截图选区: {error}"))?;
+    window
+        .set_focus()
+        .map_err(|error| format!("无法聚焦截图选区: {error}"))
+}
+
+#[tauri::command]
+fn exit_capture_mode(window: WebviewWindow, pinned: bool) -> Result<(), String> {
+    // Keep the previous editor from flashing while React swaps the selector
+    // back to the document view.
+    let _ = window.hide();
+    let fullscreen_result = window
+        .set_fullscreen(false)
+        .map_err(|error| format!("无法退出全屏截图选区: {error}"));
+    let pinned_result = window
+        .set_always_on_top(pinned)
+        .map_err(|error| format!("无法恢复窗口置顶状态: {error}"));
+    let show_result = window
+        .show()
+        .map_err(|error| format!("无法恢复主窗口: {error}"));
+    let focus_result = window
+        .set_focus()
+        .map_err(|error| format!("无法聚焦主窗口: {error}"));
+    fullscreen_result?;
+    pinned_result?;
+    show_result?;
+    focus_result
 }
 
 #[tauri::command]
@@ -249,12 +791,56 @@ struct WorkArea {
     height: f64,
 }
 
+/// The monitor the window itself sits on. Used for window geometry so the
+/// editor never jumps to another screen on its own.
 fn active_monitor(window: &WebviewWindow) -> Result<Monitor, String> {
     let monitor = window
         .current_monitor()
         .or_else(|_| window.primary_monitor())
         .map_err(|error| format!("无法读取显示器信息: {error}"))?;
     monitor.ok_or_else(|| "没有可用的显示器".to_string())
+}
+
+/// The monitor a screenshot should cover. This follows the pointer rather than
+/// the window: `capture_screen` hides the window before grabbing pixels, and a
+/// hidden window reports no current monitor, so window-based detection always
+/// collapses onto the primary monitor.
+fn capture_monitor(window: &WebviewWindow) -> Result<Monitor, String> {
+    cursor_monitor(window).map_or_else(|| active_monitor(window), Ok)
+}
+
+fn cursor_monitor(window: &WebviewWindow) -> Option<Monitor> {
+    if !cursor_position_is_reliable() {
+        return None;
+    }
+    let cursor = window.cursor_position().ok()?;
+    window.monitor_from_point(cursor.x, cursor.y).ok().flatten()
+}
+
+#[cfg(target_os = "linux")]
+fn cursor_position_is_reliable() -> bool {
+    let gdk_backend = std::env::var("GDK_BACKEND").ok();
+    let session_type = std::env::var("XDG_SESSION_TYPE").ok();
+    gdk_backend_uses_x11(gdk_backend.as_deref(), session_type.as_deref())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn cursor_position_is_reliable() -> bool {
+    true
+}
+
+/// GTK reports a constant (0, 0) pointer position on its Wayland backend, so
+/// the cursor can only choose a monitor when GDK is talking X11. Wayland offers
+/// clients no way to query the global pointer, so there is nothing to fall back
+/// to there beyond the window's own monitor.
+#[cfg(target_os = "linux")]
+fn gdk_backend_uses_x11(gdk_backend: Option<&str>, session_type: Option<&str>) -> bool {
+    match gdk_backend {
+        // GDK_BACKEND is a comma-separated priority list; only the first entry
+        // is guaranteed to be the one that gets used.
+        Some(backend) => backend.split(',').next() == Some("x11"),
+        None => session_type != Some("wayland"),
+    }
 }
 
 /// The usable desktop area in logical pixels, so the editor can pick a zoom
@@ -339,9 +925,9 @@ fn get_config(config: State<Mutex<AppConfig>>) -> Result<AppConfig, String> {
 }
 
 #[tauri::command]
-fn save_config(
+async fn save_config(
     new_config: AppConfig,
-    config: State<Mutex<AppConfig>>,
+    config: State<'_, Mutex<AppConfig>>,
     app: AppHandle,
 ) -> Result<(), String> {
     validate_shortcut(&new_config.capture_shortcut)?;
@@ -351,18 +937,32 @@ fn save_config(
         .capture_shortcut
         .clone();
 
+    #[cfg(not(target_os = "linux"))]
     if old_shortcut == new_config.capture_shortcut {
         return new_config.save();
     }
 
     #[cfg(target_os = "linux")]
+    if old_shortcut == new_config.capture_shortcut && !is_wayland_session() {
+        return new_config.save();
+    }
+
+    #[cfg(target_os = "linux")]
     if is_wayland_session() {
-        new_config.save()?;
+        // Portal registration is asynchronous and may show a desktop approval
+        // dialog. Do not claim the setting was saved until the compositor has
+        // accepted the new binding.
+        let task =
+            prepare_wayland_shortcut(app.clone(), new_config.capture_shortcut.clone()).await?;
+        if let Err(error) = new_config.save() {
+            task.abort();
+            return Err(error);
+        }
         config
             .lock()
             .map_err(|e| format!("锁定配置失败: {e}"))?
             .clone_from(&new_config);
-        restart_wayland_shortcut(&app, new_config.capture_shortcut.clone())?;
+        install_wayland_shortcut(&app, task)?;
         return Ok(());
     }
 
@@ -440,7 +1040,10 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let mut tray = TrayIconBuilder::with_id("screenpin-tray")
         .menu(&menu)
         .show_menu_on_left_click(false)
-        .tooltip("ScreenPin - 截图标注工具");
+        .tooltip(format!(
+            "ScreenPin v{} - 截图标注工具",
+            env!("CARGO_PKG_VERSION")
+        ));
 
     // Use icon.png for better quality on high-DPI displays
     if let Some(icon) = app.default_window_icon().cloned() {
@@ -473,7 +1076,10 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
 }
 
 #[cfg(target_os = "linux")]
-async fn run_wayland_shortcut(app: AppHandle, configured_shortcut: String) -> Result<(), String> {
+async fn prepare_wayland_shortcut(
+    app: AppHandle,
+    configured_shortcut: String,
+) -> Result<tauri::async_runtime::JoinHandle<()>, String> {
     use ashpd::desktop::{
         global_shortcuts::{BindShortcutsOptions, GlobalShortcuts, NewShortcut},
         CreateSessionOptions,
@@ -492,8 +1098,12 @@ async fn run_wayland_shortcut(app: AppHandle, configured_shortcut: String) -> Re
         .await
         .map_err(|error| format!("无法创建全局快捷键会话: {error}"))?;
     let trigger = portal_shortcut(&configured_shortcut)?;
-    let shortcut =
-        NewShortcut::new("capture", "截取屏幕").preferred_trigger(Some(trigger.as_str()));
+    // GNOME keeps a user's trigger choice by application + shortcut ID. Use a
+    // trigger-specific ID so changing the setting cannot silently reuse the
+    // previous shortcut assigned to the fixed `capture` ID.
+    let shortcut_id = portal_shortcut_id(&trigger);
+    let shortcut = NewShortcut::new(shortcut_id.as_str(), "截取屏幕")
+        .preferred_trigger(Some(trigger.as_str()));
     let response = portal
         .bind_shortcuts(&session, &[shortcut], None, BindShortcutsOptions::default())
         .await
@@ -504,19 +1114,22 @@ async fn run_wayland_shortcut(app: AppHandle, configured_shortcut: String) -> Re
     if !response
         .shortcuts()
         .iter()
-        .any(|shortcut| shortcut.id() == "capture")
+        .any(|shortcut| shortcut.id() == shortcut_id)
     {
         return Err("桌面门户没有绑定截图快捷键".to_string());
     }
 
     eprintln!("ScreenPin: Wayland global shortcut registered");
-    while let Some(event) = activated.next().await {
-        if event.shortcut_id() == "capture" {
-            let _ = app.emit("capture-requested", ());
+    Ok(tauri::async_runtime::spawn(async move {
+        // A portal binding only lives as long as its session.
+        let _session = session;
+        while let Some(event) = activated.next().await {
+            if event.shortcut_id() == shortcut_id {
+                let _ = app.emit("capture-requested", ());
+            }
         }
-    }
-
-    Err("全局快捷键门户会话已结束".to_string())
+        eprintln!("ScreenPin: Wayland global shortcut portal session ended");
+    }))
 }
 
 #[cfg(target_os = "linux")]
@@ -524,79 +1137,192 @@ fn is_wayland_session() -> bool {
     std::env::var("XDG_SESSION_TYPE").as_deref() == Ok("wayland")
 }
 
+/// Translate a configured shortcut into a freedesktop "shortcuts" trigger.
+///
+/// The spec only knows the modifiers CTRL, ALT, SHIFT, NUM and LOGO — there is
+/// no SUPER — and the final key is an xkbcommon keysym name, which is
+/// case-sensitive (`s`, `Return`, `Print`). Uppercasing the whole string
+/// produced triggers such as `SUPER+S` or `ALT+PRINTSCREEN` that the portal
+/// refuses to bind, which is why the Win key never worked on Wayland.
 #[cfg(target_os = "linux")]
 fn portal_shortcut(shortcut: &str) -> Result<String, String> {
     validate_shortcut(shortcut)?;
-    Ok(shortcut
-        .replace("CommandOrControl", "CTRL")
-        .replace("Control", "CTRL")
-        .replace("Ctrl", "CTRL")
-        .to_uppercase())
+    let mut trigger: Vec<String> = Vec::new();
+    let mut tokens = shortcut.split('+').peekable();
+    while let Some(token) = tokens.next() {
+        if tokens.peek().is_some() {
+            trigger.push(portal_modifier(token)?);
+        } else {
+            trigger.push(portal_keysym(token)?);
+        }
+    }
+    Ok(trigger.join("+"))
 }
 
 #[cfg(target_os = "linux")]
-fn restart_wayland_shortcut(app: &AppHandle, shortcut: String) -> Result<(), String> {
+fn portal_modifier(token: &str) -> Result<String, String> {
+    let name = match token.to_ascii_uppercase().as_str() {
+        "COMMANDORCONTROL" | "COMMANDORCTRL" | "CMDORCONTROL" | "CMDORCTRL" | "CONTROL"
+        | "CTRL" => "CTRL",
+        "ALT" | "OPTION" => "ALT",
+        "SHIFT" => "SHIFT",
+        // The Win/Command key. `global-hotkey` spells it SUPER, the portal LOGO.
+        "SUPER" | "META" | "COMMAND" | "CMD" => "LOGO",
+        _ => return Err("快捷键格式无效或包含不受支持的按键".to_string()),
+    };
+    Ok(name.to_string())
+}
+
+/// The xkbcommon keysym name for a key spelled the way `global-hotkey` spells
+/// it. Only keys that survive `validate_shortcut` can reach this function.
+#[cfg(target_os = "linux")]
+fn portal_keysym(token: &str) -> Result<String, String> {
+    let upper = token.to_ascii_uppercase();
+    let name = match upper.as_str() {
+        "ENTER" | "NUMPADENTER" => "Return",
+        "SPACE" => "space",
+        "TAB" => "Tab",
+        "BACKSPACE" => "BackSpace",
+        "DELETE" => "Delete",
+        "INSERT" => "Insert",
+        "ESCAPE" => "Escape",
+        "HOME" => "Home",
+        "END" => "End",
+        "PAGEUP" => "Prior",
+        "PAGEDOWN" => "Next",
+        "ARROWUP" => "Up",
+        "ARROWDOWN" => "Down",
+        "ARROWLEFT" => "Left",
+        "ARROWRIGHT" => "Right",
+        "PRINTSCREEN" => "Print",
+        "SCROLLLOCK" => "Scroll_Lock",
+        "PAUSE" => "Pause",
+        "CAPSLOCK" => "Caps_Lock",
+        "BACKQUOTE" => "grave",
+        "BACKSLASH" => "backslash",
+        "BRACKETLEFT" => "bracketleft",
+        "BRACKETRIGHT" => "bracketright",
+        "COMMA" => "comma",
+        "PERIOD" => "period",
+        "MINUS" => "minus",
+        "EQUAL" => "equal",
+        "QUOTE" => "apostrophe",
+        "SEMICOLON" => "semicolon",
+        "SLASH" => "slash",
+        // Function keys keep their name; letters and digits are lower case
+        // keysyms (`a`, `7`), which is also how xkbcommon names them.
+        _ => {
+            if upper.len() >= 2
+                && upper.starts_with('F')
+                && upper[1..].chars().all(|digit| digit.is_ascii_digit())
+            {
+                return Ok(upper);
+            }
+            if upper.len() == 1
+                && upper
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric())
+            {
+                return Ok(upper.to_ascii_lowercase());
+            }
+            return Err("快捷键格式无效或包含不受支持的按键".to_string());
+        }
+    };
+    Ok(name.to_string())
+}
+
+#[cfg(target_os = "linux")]
+fn portal_shortcut_id(trigger: &str) -> String {
+    let suffix: String = trigger
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    format!("capture-{suffix}")
+}
+
+#[cfg(target_os = "linux")]
+fn install_wayland_shortcut(
+    app: &AppHandle,
+    task: tauri::async_runtime::JoinHandle<()>,
+) -> Result<(), String> {
     let runtime = app.state::<ShortcutRuntime>();
     let mut wayland = runtime
         .wayland
         .lock()
         .map_err(|error| format!("锁定快捷键任务失败: {error}"))?;
-    wayland.generation = wayland.generation.wrapping_add(1);
-    let generation = wayland.generation;
     if let Some(previous) = wayland.task.take() {
         previous.abort();
     }
     if let Some(previous) = wayland.fallback.take() {
         let _ = app.global_shortcut().unregister(previous.as_str());
     }
+    wayland.task = Some(task);
+    Ok(())
+}
 
+#[cfg(target_os = "linux")]
+fn restart_wayland_shortcut(app: &AppHandle, shortcut: String) -> Result<(), String> {
     let app_handle = app.clone();
     let fallback_shortcut = shortcut.clone();
-    wayland.task = Some(tauri::async_runtime::spawn(async move {
-        if let Err(error) = run_wayland_shortcut(app_handle.clone(), shortcut).await {
-            eprintln!("ScreenPin: {error}; falling back to X11 shortcut registration");
-            let registered_shortcut = match app_handle
-                .global_shortcut()
-                .register(fallback_shortcut.as_str())
-            {
-                Ok(()) => fallback_shortcut,
-                Err(error) if fallback_shortcut != DEFAULT_CAPTURE_SHORTCUT => {
-                    eprintln!("ScreenPin: fallback shortcut registration failed: {error}");
-                    match app_handle
-                        .global_shortcut()
-                        .register(DEFAULT_CAPTURE_SHORTCUT)
-                    {
-                        Ok(()) => {
-                            repair_shortcut_config(&app_handle);
-                            DEFAULT_CAPTURE_SHORTCUT.to_string()
-                        }
-                        Err(default_error) => {
-                            eprintln!(
-                                "ScreenPin: default shortcut registration failed: {default_error}"
-                            );
-                            return;
+    tauri::async_runtime::spawn(async move {
+        match prepare_wayland_shortcut(app_handle.clone(), shortcut).await {
+            Ok(task) => {
+                if let Err(error) = install_wayland_shortcut(&app_handle, task) {
+                    eprintln!("ScreenPin: {error}");
+                }
+            }
+            Err(error) => {
+                eprintln!("ScreenPin: {error}; falling back to X11 shortcut registration");
+                let registered_shortcut = match app_handle
+                    .global_shortcut()
+                    .register(fallback_shortcut.as_str())
+                {
+                    Ok(()) => fallback_shortcut,
+                    Err(error) if fallback_shortcut != DEFAULT_CAPTURE_SHORTCUT => {
+                        eprintln!("ScreenPin: fallback shortcut registration failed: {error}");
+                        match app_handle
+                            .global_shortcut()
+                            .register(DEFAULT_CAPTURE_SHORTCUT)
+                        {
+                            Ok(()) => {
+                                repair_shortcut_config(&app_handle);
+                                DEFAULT_CAPTURE_SHORTCUT.to_string()
+                            }
+                            Err(default_error) => {
+                                eprintln!(
+                                    "ScreenPin: default shortcut registration failed: {default_error}"
+                                );
+                                return;
+                            }
                         }
                     }
-                }
-                Err(error) => {
-                    eprintln!("ScreenPin: fallback shortcut registration failed: {error}");
-                    return;
-                }
-            };
+                    Err(error) => {
+                        eprintln!("ScreenPin: fallback shortcut registration failed: {error}");
+                        return;
+                    }
+                };
 
-            let runtime = app_handle.state::<ShortcutRuntime>();
-            match runtime.wayland.lock() {
-                Ok(mut wayland) if wayland.generation == generation => {
-                    wayland.fallback = Some(registered_shortcut);
-                }
-                _ => {
-                    let _ = app_handle
-                        .global_shortcut()
-                        .unregister(registered_shortcut.as_str());
-                }
-            };
+                let runtime = app_handle.state::<ShortcutRuntime>();
+                match runtime.wayland.lock() {
+                    Ok(mut wayland) => {
+                        if let Some(previous) = wayland.task.take() {
+                            previous.abort();
+                        }
+                        if let Some(previous) = wayland.fallback.replace(registered_shortcut) {
+                            let _ = app_handle.global_shortcut().unregister(previous.as_str());
+                        }
+                    }
+                    Err(error) => eprintln!("ScreenPin: failed to lock shortcut state: {error}"),
+                };
+            }
         }
-    }));
+    });
     Ok(())
 }
 
@@ -672,6 +1398,7 @@ pub fn run() {
         )
         .manage(Mutex::new(config))
         .manage(ShortcutRuntime::default())
+        .manage(CaptureState::default())
         .setup(|app| {
             setup_tray(app)?;
             setup_global_shortcut(app)?;
@@ -687,6 +1414,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             capture_screen,
+            capture_with_system,
+            enter_capture_mode,
+            exit_capture_mode,
             read_clipboard_image,
             copy_image,
             save_image,
@@ -726,16 +1456,249 @@ mod tests {
         assert!(validate_shortcut("").is_err());
     }
 
+    #[test]
+    fn detects_a_virtual_desktop_capture() {
+        let active = PhysicalSize::new(1920, 1080);
+        assert!(is_virtual_desktop_capture(
+            PhysicalSize::new(3840, 1080),
+            active,
+            2
+        ));
+        assert!(is_virtual_desktop_capture(
+            PhysicalSize::new(1920, 2160),
+            active,
+            2
+        ));
+        assert!(!is_virtual_desktop_capture(active, active, 2));
+        assert!(!is_virtual_desktop_capture(
+            PhysicalSize::new(3840, 1080),
+            active,
+            1
+        ));
+    }
+
+    /// Two 1440p monitors side by side with the left one pushed down, which is
+    /// the layout that made captures look shifted downwards.
+    fn staggered_screens() -> Vec<ScreenRect> {
+        vec![
+            (PhysicalPosition::new(0, 182), PhysicalSize::new(2560, 1440)),
+            (
+                PhysicalPosition::new(2560, 0),
+                PhysicalSize::new(2560, 1440),
+            ),
+        ]
+    }
+
+    #[test]
+    fn measures_the_virtual_desktop_bounding_box() {
+        let (origin, size) = desktop_bounds(&staggered_screens()).unwrap();
+        assert_eq!(origin, PhysicalPosition::new(0, 0));
+        // Taller than either monitor, because one of them starts lower down.
+        assert_eq!(size, PhysicalSize::new(5120, 1622));
+        assert!(desktop_bounds(&[]).is_err());
+    }
+
+    /// The heart of the offset bug: the portal's bitmap spans both screens, so
+    /// the region belonging to the captured monitor has to be cut out of it.
+    #[test]
+    fn finds_a_monitor_inside_a_virtual_desktop_capture() {
+        let screens = staggered_screens();
+        let (desktop_origin, desktop_size) = desktop_bounds(&screens).unwrap();
+        let image = PhysicalSize::new(5120, 1622);
+
+        let (position, size) = screens[0];
+        assert_eq!(
+            monitor_crop(image, desktop_origin, desktop_size, position, size),
+            Some((0, 182, 2560, 1440))
+        );
+
+        let (position, size) = screens[1];
+        assert_eq!(
+            monitor_crop(image, desktop_origin, desktop_size, position, size),
+            Some((2560, 0, 2560, 1440))
+        );
+    }
+
+    /// A compositor may hand back a bitmap scaled relative to the layout it
+    /// reports, so the crop has to be mapped through that ratio.
+    #[test]
+    fn scales_the_crop_to_the_returned_bitmap() {
+        let screens = staggered_screens();
+        let (desktop_origin, desktop_size) = desktop_bounds(&screens).unwrap();
+        let (position, size) = screens[0];
+        assert_eq!(
+            monitor_crop(
+                PhysicalSize::new(2560, 811),
+                desktop_origin,
+                desktop_size,
+                position,
+                size
+            ),
+            Some((0, 91, 1280, 720))
+        );
+    }
+
+    /// A bitmap whose axes are scaled differently is not this layout scaled, so
+    /// there is no honest way to locate a monitor in it. Cropping anyway would
+    /// silently return the wrong part of the desktop.
+    #[test]
+    fn refuses_to_crop_an_unevenly_scaled_bitmap() {
+        let desktop_origin = PhysicalPosition::new(0, 0);
+        let desktop_size = PhysicalSize::new(3840, 2160);
+        assert_eq!(
+            monitor_crop(
+                PhysicalSize::new(3840, 1080),
+                desktop_origin,
+                desktop_size,
+                PhysicalPosition::new(1920, 0),
+                PhysicalSize::new(1920, 1080)
+            ),
+            None
+        );
+        // Rounding a whole-pixel bitmap of an odd-sized layout still counts as
+        // even scaling.
+        assert!(scales_agree(1.0, 1.0));
+        assert!(scales_agree(0.5, 811.0 / 1622.0));
+        assert!(scales_agree(2560.0 / 5121.0, 811.0 / 1622.0));
+        assert!(!scales_agree(1.0, 0.5));
+    }
+
+    #[test]
+    fn clamps_a_crop_to_the_bitmap_it_came_from() {
+        let desktop_origin = PhysicalPosition::new(0, 0);
+        let desktop_size = PhysicalSize::new(3840, 1080);
+        let image = PhysicalSize::new(3840, 1080);
+        // A monitor reaching past the bitmap is trimmed rather than asking the
+        // image crate for pixels that do not exist.
+        assert_eq!(
+            monitor_crop(
+                image,
+                desktop_origin,
+                desktop_size,
+                PhysicalPosition::new(1920, 0),
+                PhysicalSize::new(2400, 1080)
+            ),
+            Some((1920, 0, 1920, 1080))
+        );
+        // Nothing to crop when the monitor starts at or past the far edge.
+        assert_eq!(
+            monitor_crop(
+                image,
+                desktop_origin,
+                desktop_size,
+                PhysicalPosition::new(3840, 0),
+                PhysicalSize::new(1920, 1080)
+            ),
+            None
+        );
+        // A monitor left of the desktop origin cannot be located in the bitmap.
+        assert_eq!(
+            monitor_crop(
+                image,
+                PhysicalPosition::new(0, 0),
+                desktop_size,
+                PhysicalPosition::new(-1920, 0),
+                PhysicalSize::new(1920, 1080)
+            ),
+            None
+        );
+        // A degenerate layout must not divide by zero.
+        assert_eq!(
+            monitor_crop(
+                image,
+                desktop_origin,
+                PhysicalSize::new(0, 0),
+                PhysicalPosition::new(0, 0),
+                PhysicalSize::new(1920, 1080)
+            ),
+            None
+        );
+    }
+
+    /// Only a region matching one monitor exactly may go fullscreen; the
+    /// compositor would otherwise shrink the selector to a single screen while
+    /// it still draws a bitmap covering several.
+    #[test]
+    fn goes_fullscreen_only_for_a_single_monitor_region() {
+        let screens = staggered_screens();
+        assert!(covers_one_monitor(
+            &screens,
+            CaptureGeometry {
+                origin: PhysicalPosition::new(0, 182),
+                size: PhysicalSize::new(2560, 1440),
+            }
+        ));
+        assert!(!covers_one_monitor(
+            &screens,
+            CaptureGeometry {
+                origin: PhysicalPosition::new(0, 0),
+                size: PhysicalSize::new(5120, 1622),
+            }
+        ));
+        // Right size, wrong place.
+        assert!(!covers_one_monitor(
+            &screens,
+            CaptureGeometry {
+                origin: PhysicalPosition::new(0, 0),
+                size: PhysicalSize::new(2560, 1440),
+            }
+        ));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn trusts_the_pointer_only_on_the_x11_gdk_backend() {
+        // GTK reports a constant (0, 0) pointer on Wayland, which would silently
+        // pin every capture to the leftmost monitor.
+        assert!(gdk_backend_uses_x11(Some("x11"), Some("wayland")));
+        assert!(!gdk_backend_uses_x11(Some("wayland"), Some("wayland")));
+        // Only the first entry of the priority list is guaranteed to be used.
+        assert!(gdk_backend_uses_x11(Some("x11,wayland"), Some("wayland")));
+        assert!(!gdk_backend_uses_x11(Some("wayland,x11"), Some("wayland")));
+        // Without an override, the session type decides.
+        assert!(gdk_backend_uses_x11(None, Some("x11")));
+        assert!(!gdk_backend_uses_x11(None, Some("wayland")));
+        assert!(gdk_backend_uses_x11(None, None));
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn converts_configured_shortcuts_for_the_wayland_portal() {
+        // Modifiers are upper case spec names; the key is an xkb keysym, which
+        // is case-sensitive.
         assert_eq!(
             portal_shortcut("CommandOrControl+Shift+S").unwrap(),
-            "CTRL+SHIFT+S"
+            "CTRL+SHIFT+s"
         );
-        assert_eq!(
-            portal_shortcut("Alt+PrintScreen").unwrap(),
-            "ALT+PRINTSCREEN"
+        assert_eq!(portal_shortcut("Alt+PrintScreen").unwrap(), "ALT+Print");
+        assert_eq!(portal_shortcut("Ctrl+Alt+F5").unwrap(), "CTRL+ALT+F5");
+        assert_eq!(portal_shortcut("Alt+Enter").unwrap(), "ALT+Return");
+    }
+
+    /// The portal spells the Win/Command key LOGO and has no SUPER modifier, so
+    /// a Super shortcut has to be translated rather than uppercased.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn maps_the_win_key_to_the_portal_logo_modifier() {
+        assert_eq!(portal_shortcut("Super+Shift+S").unwrap(), "LOGO+SHIFT+s");
+        // `Super` is the spelling the recorder produces; the aliases exist for
+        // hand-written configuration files.
+        assert_eq!(portal_shortcut("Command+A").unwrap(), "LOGO+a");
+        assert_eq!(portal_shortcut("Cmd+A").unwrap(), "LOGO+a");
+        assert!(!portal_shortcut("Super+A").unwrap().contains("SUPER"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn gives_each_wayland_trigger_its_own_portal_binding_id() {
+        assert_eq!(portal_shortcut_id("CTRL+SHIFT+s"), "capture-ctrl-shift-s");
+        assert_ne!(
+            portal_shortcut_id("CTRL+SHIFT+s"),
+            portal_shortcut_id("CTRL+SHIFT+a")
+        );
+        assert_ne!(
+            portal_shortcut_id("CTRL+SHIFT+s"),
+            portal_shortcut_id("LOGO+SHIFT+s")
         );
     }
 }

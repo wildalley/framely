@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Aperture,
   ArrowDown,
@@ -36,12 +36,17 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
+import { CaptureOverlay, cropCapture, type CaptureSelection } from "./CaptureOverlay";
 import { EditorCanvas, type EditorCanvasHandle } from "./EditorCanvas";
+import { formatShortcut, heldModifiers, isModifierPress, recordShortcut, shortcutParts } from "./shortcut";
 import {
   captureScreen,
+  captureWithSystem,
   confirmDiscardChanges,
   copyImage,
   createDemoImage,
+  enterCaptureMode,
+  exitCaptureMode,
   fitWindow,
   getConfig,
   hideWindow,
@@ -114,6 +119,7 @@ export default function App() {
   const projectInput = useRef<HTMLInputElement>(null);
   const demoCapture = useMemo(() => (new URLSearchParams(window.location.search).has("demo") ? createDemoImage() : null), []);
   const [image, setImage] = useState<ImageSource | null>(() => demoCapture ? { ...demoCapture, name: "交付概览" } : null);
+  const [captureDraft, setCaptureDraft] = useState<CaptureResult | null>(null);
   const [pixelatedImage, setPixelatedImage] = useState<string | null>(null);
   const [mosaicStatus, setMosaicStatus] = useState<"loading" | "ready" | "error">("loading");
   const [title, setTitle] = useState(demoCapture ? "交付概览" : "未命名截图");
@@ -139,6 +145,8 @@ export default function App() {
   const barHeightRef = useRef(barHeight);
   const recenter = useRef(true);
   const pixelationRequest = useRef(0);
+  const captureInProgress = useRef(false);
+  const startupCaptureStarted = useRef(false);
   const history = useEditorHistory();
   const [savedDocument, setSavedDocument] = useState<SavedDocument | null>(null);
 
@@ -260,21 +268,72 @@ export default function App() {
   }, [image]);
 
   const handleCapture = useCallback(async () => {
+    if (captureDraft || captureInProgress.current) return;
     setPanel("none");
     if (!isTauri()) {
       imageInput.current?.click();
       return;
     }
-    if (!(await confirmReplace())) return;
+    captureInProgress.current = true;
     setBusy(true);
     try {
-      await loadCapture(await captureScreen());
+      const response = await captureScreen();
+      if (!response.selectionRequired) {
+        await loadCapture({ dataUrl: response.dataUrl, width: response.width, height: response.height });
+        if (response.fallbackUsed) notify("应用内采集不可用，已使用系统截图");
+        return;
+      }
+
+      setCaptureDraft(response);
+      // Let React replace the editor with the selector before the hidden native
+      // window is made fullscreen, avoiding a flash of the previous document.
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+      try {
+        await enterCaptureMode();
+      } catch {
+        setCaptureDraft(null);
+        await exitCaptureMode(isPinned).catch(() => undefined);
+        await loadCapture(await captureWithSystem());
+        notify("应用内选区不可用，已切换系统截图");
+      }
     } catch (error) {
+      await exitCaptureMode(isPinned).catch(() => undefined);
+      notify(errorMessage(error));
+    } finally {
+      captureInProgress.current = false;
+      setBusy(false);
+    }
+  }, [captureDraft, confirmReplace, isPinned, loadCapture, notify]);
+
+  const cancelCaptureSelection = useCallback(async () => {
+    setCaptureDraft(null);
+    try {
+      await exitCaptureMode(isPinned);
+      const size = stage
+        ? { width: Math.max(MIN_WINDOW_WIDTH, stage.width), height: stage.height + barHeightRef.current }
+        : EMPTY_WINDOW;
+      await fitWindow(size.width, size.height, false);
+    } catch (error) {
+      notify(errorMessage(error));
+    }
+  }, [isPinned, notify, stage]);
+
+  const confirmCaptureSelection = useCallback(async (selection: CaptureSelection) => {
+    if (!captureDraft) return;
+    setBusy(true);
+    try {
+      const cropped = await cropCapture(captureDraft, selection);
+      setCaptureDraft(null);
+      await exitCaptureMode(isPinned);
+      await loadCapture(cropped);
+    } catch (error) {
+      setCaptureDraft(null);
+      await exitCaptureMode(isPinned).catch(() => undefined);
       notify(errorMessage(error));
     } finally {
       setBusy(false);
     }
-  }, [confirmReplace, loadCapture, notify]);
+  }, [captureDraft, isPinned, loadCapture, notify]);
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -283,6 +342,12 @@ export default function App() {
       void unlisten.then((dispose) => dispose());
     };
   }, [handleCapture]);
+
+  useEffect(() => {
+    if (!isTauri() || demoCapture || startupCaptureStarted.current) return;
+    startupCaptureStarted.current = true;
+    void handleCapture();
+  }, [demoCapture, handleCapture]);
 
   const handlePaste = useCallback(async () => {
     setPanel("none");
@@ -497,6 +562,7 @@ export default function App() {
     );
   };
   useEffect(() => {
+    if (captureDraft) return;
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement;
       if (["INPUT", "TEXTAREA"].includes(target.tagName)) return;
@@ -560,7 +626,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [applyZoom, handleCopy, handleSaveImage, handleSaveProject, history.redo, history.undo, image, mosaicStatus, notify, panel, removeSelected, zoom]);
+  }, [applyZoom, captureDraft, handleCopy, handleSaveImage, handleSaveProject, history.redo, history.undo, image, mosaicStatus, notify, panel, removeSelected, zoom]);
 
   // Dragging the picture itself moves the window, the way a pinned note behaves.
   const dragOrigin = useRef<{ x: number; y: number } | null>(null);
@@ -591,6 +657,15 @@ export default function App() {
     if (event.button !== 0 || target.closest("button, input, textarea")) return;
     if (isTauri()) void startWindowDrag().catch(() => undefined);
   };
+  if (captureDraft) {
+    return (
+      <CaptureOverlay
+        capture={captureDraft}
+        onConfirm={confirmCaptureSelection}
+        onCancel={cancelCaptureSelection}
+      />
+    );
+  }
   if (!image) {
     return (
       <div className="pin-window is-empty">
@@ -601,7 +676,26 @@ export default function App() {
           onOpen={() => imageInput.current?.click()}
           onOpenProject={handleOpenProject}
           onClose={handleClose}
+          captureShortcut={appConfig?.captureShortcut}
+          onSettings={isTauri() ? () => setPanel((current) => (current === "settings" ? "none" : "settings")) : undefined}
         />
+        {panel === "settings" && appConfig && (
+          <SettingsPanel
+            config={appConfig}
+            onSave={async (newConfig) => {
+              try {
+                await saveConfig(newConfig);
+                setAppConfig(newConfig);
+                setPanel("none");
+                notify("设置已保存");
+              } catch (error) {
+                notify(errorMessage(error));
+                throw error;
+              }
+            }}
+            onClose={() => setPanel("none")}
+          />
+        )}
         <FilePickers
           imageInput={imageInput}
           projectInput={projectInput}
@@ -694,6 +788,7 @@ export default function App() {
               notify("设置已保存");
             } catch (error) {
               notify(errorMessage(error));
+              throw error;
             }
           }}
           onClose={() => setPanel("none")}
@@ -988,6 +1083,8 @@ function EmptyState({
   onOpen,
   onOpenProject,
   onClose,
+  captureShortcut,
+  onSettings,
 }: {
   busy: boolean;
   onDrag: (event: React.PointerEvent<HTMLDivElement>) => void;
@@ -995,9 +1092,17 @@ function EmptyState({
   onOpen: () => void;
   onOpenProject: () => void;
   onClose: () => void;
+  captureShortcut?: string;
+  onSettings?: () => void;
 }) {
+  const displayShortcut = shortcutParts(captureShortcut || "CommandOrControl+Shift+A");
   return (
     <div className="empty-state" onPointerDown={onDrag}>
+      {onSettings && (
+        <button className="empty-settings" title="设置" aria-label="设置" onClick={onSettings}>
+          <Settings size={15} />
+        </button>
+      )}
       <button className="empty-close" title="关闭到托盘" aria-label="关闭到托盘" onClick={onClose}><X size={15} /></button>
       <div className="empty-symbol"><Aperture size={26} /></div>
       <div className="empty-actions">
@@ -1005,7 +1110,14 @@ function EmptyState({
         <button className="secondary-action" onClick={onOpen}><ImagePlus size={16} />打开图片</button>
         <button className="secondary-action" onClick={onOpenProject}><FolderOpen size={16} />工程</button>
       </div>
-      <div className="shortcut-row"><kbd>Ctrl</kbd><span>+</span><kbd>Shift</kbd><span>+</span><kbd>A</kbd></div>
+      <div className="shortcut-row">
+        {displayShortcut.map((key, index) => (
+          <Fragment key={`${key}-${index}`}>
+            {index > 0 && <span>+</span>}
+            <kbd>{key}</kbd>
+          </Fragment>
+        ))}
+      </div>
     </div>
   );
 }
@@ -1073,9 +1185,8 @@ function errorMessage(error: unknown) {
 }
 
 function ShortcutsPanel({ exportFormat, captureShortcut }: { exportFormat: ExportFormat; captureShortcut?: string }) {
-  const displayShortcut = captureShortcut?.replace("CommandOrControl", "Ctrl") || "Ctrl+Shift+A";
   const shortcuts = [
-    { keys: displayShortcut.split("+"), action: "截取屏幕（全局）" },
+    { keys: shortcutParts(captureShortcut || "CommandOrControl+Shift+A"), action: "截取屏幕（全局）" },
     { keys: ["V"], action: "选择工具" },
     { keys: ["R"], action: "矩形" },
     { keys: ["O"], action: "椭圆" },
@@ -1130,36 +1241,79 @@ function SettingsPanel({
   onClose,
 }: {
   config: AppConfig;
-  onSave: (config: AppConfig) => void;
+  onSave: (config: AppConfig) => Promise<void>;
   onClose: () => void;
 }) {
   const [shortcut, setShortcut] = useState(config.captureShortcut);
   const [isRecording, setIsRecording] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [pending, setPending] = useState<string[]>([]);
+  const [hint, setHint] = useState<string | null>(null);
 
-  const handleKeyDown = (event: React.KeyboardEvent) => {
+  // A capture-phase listener on the window, rather than React's onKeyDown on
+  // the panel: the panel is not focusable, so modifier-only presses such as the
+  // Win key would otherwise never reach it, and the editor's own global
+  // shortcut handler would react to the combination being recorded.
+  useEffect(() => {
     if (!isRecording) return;
-    event.preventDefault();
-    event.stopPropagation();
+    const onKeyDown = (event: KeyboardEvent) => {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const result = recordShortcut(event);
+      if (result.status === "recorded") {
+        setShortcut(result.shortcut);
+        setPending([]);
+        setHint(null);
+        setIsRecording(false);
+        return;
+      }
+      if (result.status === "pending") {
+        setPending(result.modifiers);
+        setHint(null);
+        return;
+      }
+      setPending([]);
+      setHint(
+        result.status === "needs-modifier"
+          ? "全局快捷键需要至少一个修饰键，例如 Ctrl 或 Win"
+          : "不支持这个按键，请换一个",
+      );
+    };
+    const onKeyUp = (event: KeyboardEvent) => {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      // Releasing a modifier without completing a combination clears the
+      // preview, so a swallowed Win press does not look like it registered.
+      if (isModifierPress(event)) setPending(heldModifiers(event).filter((held) => held !== "Super" || event.metaKey));
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("keyup", onKeyUp, true);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("keyup", onKeyUp, true);
+    };
+  }, [isRecording]);
 
-    const parts: string[] = [];
-    if (event.ctrlKey || event.metaKey) parts.push("CommandOrControl");
-    if (event.shiftKey) parts.push("Shift");
-    if (event.altKey) parts.push("Alt");
+  const toggleRecording = () => {
+    setPending([]);
+    setHint(null);
+    setIsRecording((current) => !current);
+  };
 
-    const key = event.key;
-    if (key === "Control" || key === "Shift" || key === "Alt" || key === "Meta") return;
-
-    const mainKey = key.length === 1 ? key.toUpperCase() : key;
-    parts.push(mainKey);
-
-    if (parts.length > 1) {
-      setShortcut(parts.join("+"));
-      setIsRecording(false);
+  const saveShortcut = async () => {
+    setIsSaving(true);
+    try {
+      await onSave({ captureShortcut: shortcut });
+    } catch {
+      // The parent displays the native registration error and leaves this
+      // panel open so the user can choose another combination.
+    } finally {
+      setIsSaving(false);
     }
   };
 
   return (
-    <div className="pin-panel is-settings" role="dialog" aria-label="设置" onKeyDown={handleKeyDown}>
+    <div className="pin-panel is-settings" role="dialog" aria-label="设置">
       <div className="panel-title">
         <span>设置</span>
       </div>
@@ -1168,23 +1322,22 @@ function SettingsPanel({
         <div className="shortcut-input-wrapper">
           <input
             className="shortcut-input"
-            value={shortcut.replace("CommandOrControl", "Ctrl")}
+            value={isRecording && pending.length > 0 ? `${formatShortcut(pending.join("+"))}+…` : formatShortcut(shortcut)}
             readOnly
-            placeholder="点击录制按钮设置快捷键"
+            placeholder={isRecording ? "按下想要的组合键" : "点击录制按钮设置快捷键"}
           />
-          <button
-            className={isRecording ? "is-recording" : ""}
-            onClick={() => setIsRecording(!isRecording)}
-          >
+          <button className={isRecording ? "is-recording" : ""} onClick={toggleRecording}>
             {isRecording ? "按下快捷键..." : "录制"}
           </button>
         </div>
-        <span className="panel-hint">全局快捷键，在任何界面都可触发截图</span>
+        <span className="panel-hint">
+          {hint ?? (isRecording ? "Win 键可以作为修饰键；部分组合会被桌面环境占用" : "全局快捷键，在任何界面都可触发截图")}
+        </span>
       </label>
       <div className="panel-actions">
-        <button onClick={onClose}>取消</button>
-        <button className="primary-action" onClick={() => onSave({ captureShortcut: shortcut })}>
-          保存
+        <button disabled={isSaving} onClick={onClose}>取消</button>
+        <button className="primary-action" disabled={isSaving || isRecording} onClick={() => void saveShortcut()}>
+          {isSaving ? "正在注册..." : "保存"}
         </button>
       </div>
     </div>
