@@ -102,7 +102,7 @@ describe("capture crop", () => {
     vi.stubGlobal("Image", FakeImage);
     vi.stubGlobal("document", { createElement: vi.fn(() => canvas) });
 
-    const screen = { x: 2560, y: 0, width: 2560, height: 1440, primary: false };
+    const screen = { x: 2560, y: 0, width: 2560, height: 1440, primary: false, originX: 2560, originY: 0, cursorHere: false };
     await expect(cropThumb(
       { dataUrl: "data:image/png;base64,source", width: 5120, height: 1622 },
       screen,
@@ -144,8 +144,8 @@ describe("virtual-desktop display mapping", () => {
 
 describe("screen picking", () => {
   const screens = [
-    { x: 0, y: 0, width: 1920, height: 1080, primary: true },
-    { x: 1920, y: 0, width: 1920, height: 1080, primary: false },
+    { x: 0, y: 0, width: 1920, height: 1080, primary: true, originX: 0, originY: 0, cursorHere: false },
+    { x: 1920, y: 0, width: 1920, height: 1080, primary: false, originX: 1920, originY: 0, cursorHere: false },
   ];
 
   it("finds the monitor that contains an image-pixel point", () => {
@@ -165,8 +165,8 @@ describe("screen picking", () => {
   it("lays stacked monitors in a column", () => {
     expect(
       screenLayoutAxis([
-        { x: 0, y: 0, width: 1920, height: 1080, primary: true },
-        { x: 0, y: 1080, width: 1920, height: 1080, primary: false },
+        { x: 0, y: 0, width: 1920, height: 1080, primary: true, originX: 0, originY: 0, cursorHere: false },
+        { x: 0, y: 1080, width: 1920, height: 1080, primary: false, originX: 0, originY: 1080, cursorHere: false },
       ]),
     ).toBe("column");
   });

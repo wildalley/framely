@@ -46,6 +46,9 @@ struct CaptureState {
     /// Geometry of the pending screenshot, so the selector uses the same
     /// coordinate space as the captured pixels.
     geometry: Mutex<Option<CaptureGeometry>>,
+    /// The physical position of the monitor the user picked, so the editor
+    /// window can be moved onto that screen after the capture completes.
+    target_monitor: Mutex<Option<PhysicalPosition<i32>>>,
 }
 
 /// The desktop region a pending capture covers, in physical pixels.
@@ -66,6 +69,18 @@ impl CaptureState {
 
     fn take_geometry(&self) -> Option<CaptureGeometry> {
         self.geometry.lock().ok()?.take()
+    }
+
+    fn remember_target(&self, position: Option<PhysicalPosition<i32>>) -> Result<(), String> {
+        *self
+            .target_monitor
+            .lock()
+            .map_err(|error| format!("锁定截图状态失败: {error}"))? = position;
+        Ok(())
+    }
+
+    fn take_target(&self) -> Option<PhysicalPosition<i32>> {
+        self.target_monitor.lock().ok()?.take()
     }
 }
 
@@ -89,6 +104,13 @@ struct ScreenBounds {
     width: u32,
     height: u32,
     primary: bool,
+    /// The monitor's position in physical desktop coordinates (may be
+    /// negative), so the editor can be moved onto the picked screen.
+    origin_x: i32,
+    origin_y: i32,
+    /// True when the pointer is reliably known to be on this monitor (X11 /
+    /// XWayland). Lets the screen picker highlight the screen under the mouse.
+    cursor_here: bool,
 }
 
 #[derive(Serialize)]
@@ -220,6 +242,7 @@ fn capture_frame(
             desktop_size,
             &rects,
             primary.as_ref(),
+            cursor_monitor(window).map(|m| *m.position()).as_ref(),
         );
         return Ok((
             image,
@@ -243,6 +266,9 @@ fn capture_frame(
             width: image_size.width,
             height: image_size.height,
             primary: true,
+            origin_x: origin.x,
+            origin_y: origin.y,
+            cursor_here: true,
         }],
     ))
 }
@@ -257,6 +283,7 @@ fn monitor_screen_bounds(
     desktop_size: PhysicalSize<u32>,
     screens: &[ScreenRect],
     primary_position: Option<&PhysicalPosition<i32>>,
+    cursor_position: Option<&PhysicalPosition<i32>>,
 ) -> Vec<ScreenBounds> {
     if desktop_size.width == 0 || desktop_size.height == 0 {
         return Vec::new();
@@ -284,7 +311,17 @@ fn monitor_screen_bounds(
                 return None;
             }
             let primary = primary_position.is_some_and(|pp| pp == position);
-            Some(ScreenBounds { x, y, width, height, primary })
+            let cursor_here = cursor_position.is_some_and(|cp| cp == position);
+            Some(ScreenBounds {
+                x,
+                y,
+                width,
+                height,
+                primary,
+                origin_x: position.x,
+                origin_y: position.y,
+                cursor_here,
+            })
         })
         .collect()
 }
@@ -681,6 +718,15 @@ async fn capture_with_system(window: WebviewWindow) -> Result<CaptureResult, Str
 }
 
 #[tauri::command]
+fn set_capture_target(
+    x: i32,
+    y: i32,
+    capture: State<'_, CaptureState>,
+) -> Result<(), String> {
+    capture.remember_target(Some(PhysicalPosition::new(x, y)))
+}
+
+#[tauri::command]
 fn enter_capture_mode(
     window: WebviewWindow,
     capture: State<'_, CaptureState>,
@@ -1068,10 +1114,28 @@ fn work_area(window: WebviewWindow) -> Result<WorkArea, String> {
 }
 
 /// Resize the frameless window to hug the screenshot plus its toolbar, keeping
-/// it inside the work area.
+/// it inside the work area. When the user picked a monitor during a multi-
+/// screen capture, the window is moved onto that screen instead of wherever
+/// it last was.
 #[tauri::command]
-fn fit_window(window: WebviewWindow, width: f64, height: f64, center: bool) -> Result<(), String> {
-    let monitor = active_monitor(&window)?;
+fn fit_window(
+    window: WebviewWindow,
+    width: f64,
+    height: f64,
+    center: bool,
+    capture: State<'_, CaptureState>,
+) -> Result<(), String> {
+    let target = capture.take_target();
+    let monitor = match target {
+        Some(position) => window
+            .monitor_from_point(f64::from(position.x), f64::from(position.y))
+            .ok()
+            .flatten()
+            .or_else(|| window.primary_monitor().ok().flatten())
+            .or_else(|| active_monitor(&window).ok())
+            .ok_or_else(|| "没有可用的显示器".to_string())?,
+        None => active_monitor(&window)?,
+    };
     let scale = monitor.scale_factor();
     let area = *monitor.work_area();
 
@@ -1648,6 +1712,7 @@ pub fn run() {
             capture_screen,
             capture_with_system,
             capture_region,
+            set_capture_target,
             enter_capture_mode,
             exit_capture_mode,
             read_clipboard_image,
@@ -1755,12 +1820,12 @@ mod tests {
         let (origin, size) = desktop_bounds(&screens).unwrap();
         let image_size = PhysicalSize::new(5120, 1622);
         let primary = screens[0].0;
-        let bounds = monitor_screen_bounds(image_size, origin, size, &screens, Some(&primary));
+        let bounds = monitor_screen_bounds(image_size, origin, size, &screens, Some(&primary), None);
         assert_eq!(
             bounds,
             vec![
-                ScreenBounds { x: 0, y: 182, width: 2560, height: 1440, primary: true },
-                ScreenBounds { x: 2560, y: 0, width: 2560, height: 1440, primary: false },
+                ScreenBounds { x: 0, y: 182, width: 2560, height: 1440, primary: true, origin_x: 0, origin_y: 182, cursor_here: false },
+                ScreenBounds { x: 2560, y: 0, width: 2560, height: 1440, primary: false, origin_x: 2560, origin_y: 0, cursor_here: false },
             ]
         );
     }
@@ -1772,12 +1837,12 @@ mod tests {
         let screens = staggered_screens();
         let (origin, size) = desktop_bounds(&screens).unwrap();
         let image_size = PhysicalSize::new(2560, 811);
-        let bounds = monitor_screen_bounds(image_size, origin, size, &screens, None);
+        let bounds = monitor_screen_bounds(image_size, origin, size, &screens, None, None);
         assert_eq!(
             bounds,
             vec![
-                ScreenBounds { x: 0, y: 91, width: 1280, height: 720, primary: false },
-                ScreenBounds { x: 1280, y: 0, width: 1280, height: 720, primary: false },
+                ScreenBounds { x: 0, y: 91, width: 1280, height: 720, primary: false, origin_x: 0, origin_y: 182, cursor_here: false },
+                ScreenBounds { x: 1280, y: 0, width: 1280, height: 720, primary: false, origin_x: 2560, origin_y: 0, cursor_here: false },
             ]
         );
     }
@@ -1793,6 +1858,7 @@ mod tests {
             origin,
             size,
             &screens,
+            None,
             None,
         );
         assert!(bounds.is_empty());

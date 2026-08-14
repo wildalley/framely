@@ -70,6 +70,11 @@ export interface ScreenBounds {
   height: number;
   /** True for the system's primary monitor. */
   primary: boolean;
+  /** The monitor's position in physical desktop coordinates (may be negative). */
+  originX: number;
+  originY: number;
+  /** True when the pointer is reliably known to be on this monitor. */
+  cursorHere: boolean;
 }
 
 export interface CaptureResponse extends CaptureResult {

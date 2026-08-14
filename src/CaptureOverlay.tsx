@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, X } from "lucide-react";
 import type { CaptureResult, Point, ScreenBounds } from "./types";
+import { setCaptureTarget } from "./platform";
 
 export interface CaptureSelection {
   x: number;
@@ -305,6 +306,12 @@ export function CaptureOverlay({
       if (!picked) return;
       setLocked(true);
       try {
+        // Remember which monitor was picked so the editor window opens there.
+        try {
+          await setCaptureTarget(picked.originX, picked.originY);
+        } catch {
+          // Non-fatal: the editor simply stays on its current screen.
+        }
         const frame = await cropCapture(capture, picked);
         setScreenImage(frame);
         setSelection(null);
@@ -404,7 +411,10 @@ export function CaptureOverlay({
 
   const thumbLabel = (screen: ScreenBounds) => {
     const orientation = screen.width >= screen.height ? "横屏" : "竖屏";
-    return `${screen.width}×${screen.height} · ${orientation}${screen.primary ? " · 主屏" : ""}`;
+    const parts = [`${screen.width}×${screen.height} · ${orientation}`];
+    if (screen.cursorHere) parts.push("· 鼠标所在");
+    if (screen.primary) parts.push("· 主屏");
+    return parts.join(" ");
   };
 
   return (
@@ -424,7 +434,7 @@ export function CaptureOverlay({
           {screenBounds.map((screen, index) => (
             <button
               key={`${screen.x}-${screen.y}`}
-              className="capture-screen"
+              className={`capture-screen${screen.cursorHere ? " is-cursor-here" : ""}`}
               onClick={() => void pickScreen({ x: screen.x + screen.width / 2, y: screen.y + screen.height / 2 })}
               aria-label={`屏幕 ${index + 1}：${thumbLabel(screen)}`}
             >

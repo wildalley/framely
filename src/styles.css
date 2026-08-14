@@ -135,6 +135,17 @@ button:disabled {
   outline: none;
 }
 
+/* The screen the pointer was on when the capture started stands out. */
+.capture-screen.is-cursor-here .capture-thumb,
+.capture-screen.is-cursor-here .capture-thumb-placeholder {
+  outline: 2px solid rgb(242 201 76 / 90%);
+  outline-offset: 2px;
+}
+
+.capture-screen.is-cursor-here .capture-screen-label {
+  color: #f2c94c;
+}
+
 .capture-thumb,
 .capture-thumb-placeholder {
   width: auto;

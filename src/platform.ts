@@ -16,6 +16,8 @@ export const captureWithSystem = () => invoke<CaptureResult>("capture_with_syste
 export const captureRegion = (x: number, y: number, width: number, height: number) =>
   invoke<CaptureResult>("capture_region", { x, y, width, height });
 
+export const setCaptureTarget = (x: number, y: number) => invoke<void>("set_capture_target", { x, y });
+
 export const enterCaptureMode = () => invoke<void>("enter_capture_mode");
 
 export const exitCaptureMode = (pinned: boolean) => invoke<void>("exit_capture_mode", { pinned });
