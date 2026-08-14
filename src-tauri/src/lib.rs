@@ -1,4 +1,12 @@
-use std::{borrow::Cow, fs, io::Cursor, path::Path, sync::Mutex};
+use std::{
+    borrow::Cow,
+    fs,
+    io::Cursor,
+    path::{Path, PathBuf},
+    process::Command,
+    sync::Mutex,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use arboard::{Clipboard, ImageData};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
@@ -14,16 +22,6 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 mod config;
 use config::AppConfig;
-
-#[cfg(target_os = "macos")]
-use std::{
-    path::PathBuf,
-    process::Command,
-    time::{SystemTime, UNIX_EPOCH},
-};
-
-#[cfg(target_os = "windows")]
-use std::process::Command;
 
 #[cfg(target_os = "linux")]
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -613,7 +611,6 @@ fn clipboard_image() -> Option<(usize, usize, Vec<u8>)> {
     Some((image.width, image.height, image.bytes.into_owned()))
 }
 
-#[cfg(target_os = "macos")]
 fn temporary_capture_path() -> PathBuf {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -784,9 +781,114 @@ fn copy_image(data_url: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn copy_text(text: String) -> Result<(), String> {
+    let mut clipboard = Clipboard::new().map_err(|error| format!("无法访问剪贴板: {error}"))?;
+    clipboard
+        .set_text(text)
+        .map_err(|error| format!("复制文字失败: {error}"))
+}
+
+#[tauri::command]
 fn save_image(path: String, data_url: String) -> Result<(), String> {
     let bytes = decode_data_url(&data_url)?;
     fs::write(Path::new(&path), bytes).map_err(|error| format!("保存图片失败: {error}"))
+}
+
+/// Text recognized from an image, plus whether the engine was fully usable.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OcrResult {
+    text: String,
+    /// Set when tesseract could not run because no trained language data is
+    /// installed; the message explains what to install.
+    setup_error: Option<String>,
+}
+
+/// Recognize text from an image via the Tesseract CLI, which is available on
+/// all three platforms. A temporary PNG is written because the CLI is picky
+/// about reading images from stdin on some platforms.
+///
+/// The language is chosen from what is actually installed: English and
+/// Simplified Chinese are preferred when present, otherwise any installed
+/// language is used so the command still works with a minimal install.
+#[tauri::command]
+fn ocr_image(data_url: String) -> Result<OcrResult, String> {
+    let bytes = decode_data_url(&data_url)?;
+    let path = temporary_capture_path();
+    fs::write(&path, &bytes).map_err(|error| format!("无法写入待识别图片: {error}"))?;
+
+    let languages = installed_languages().inspect_err(|_| {
+        let _ = fs::remove_file(&path);
+    })?;
+    let lang_arg = if languages.is_empty() {
+        let _ = fs::remove_file(&path);
+        return Ok(OcrResult {
+            text: String::new(),
+            setup_error: Some(
+                "未安装 Tesseract 语言数据。请安装 tesseract-data-eng（英文）和 \
+                 tesseract-data-chi_sim（简体中文）后重试。"
+                    .to_string(),
+            ),
+        });
+    } else {
+        languages.join("+")
+    };
+
+    let output = Command::new("tesseract")
+        .arg(path.to_str().unwrap_or_default())
+        .arg("stdout")
+        .arg("-l")
+        .arg(&lang_arg)
+        .output()
+        .map_err(|error| {
+            let _ = fs::remove_file(&path);
+            format!("无法启动 Tesseract: {error}")
+        });
+    let _ = fs::remove_file(&path);
+
+    let output = output?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            "Tesseract 识别失败".to_string()
+        } else {
+            format!("Tesseract 识别失败: {stderr}")
+        });
+    }
+    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    Ok(OcrResult {
+        text,
+        setup_error: None,
+    })
+}
+
+/// Languages for which `tesseract --list-langs` reports trained data.
+fn installed_languages() -> Result<Vec<String>, String> {
+    let output = Command::new("tesseract")
+        .arg("--list-langs")
+        .output()
+        .map_err(|error| format!("无法启动 Tesseract: {error}"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let langs: Vec<String> = stdout
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with("List of"))
+        .map(str::to_string)
+        .collect();
+    Ok(ocr_languages(&langs))
+}
+
+/// Pick the languages to pass to tesseract from the installed set: English +
+/// Simplified Chinese when both are present (the common desktop install),
+/// otherwise whatever is installed so a minimal setup still works.
+fn ocr_languages(installed: &[String]) -> Vec<String> {
+    if installed.iter().any(|l| l == "eng") && installed.iter().any(|l| l == "chi_sim") {
+        return vec!["eng".to_string(), "chi_sim".to_string()];
+    }
+    let mut sorted = installed.to_vec();
+    sorted.sort();
+    sorted.dedup();
+    sorted
 }
 
 #[tauri::command]
@@ -1462,7 +1564,9 @@ pub fn run() {
             exit_capture_mode,
             read_clipboard_image,
             copy_image,
+            copy_text,
             save_image,
+            ocr_image,
             write_project,
             read_project,
             set_main_pinned,
@@ -1486,6 +1590,19 @@ mod tests {
     fn decodes_a_data_url() {
         let bytes = decode_data_url("data:image/png;base64,aGVsbG8=").unwrap();
         assert_eq!(bytes, b"hello");
+    }
+
+    #[test]
+    fn picks_english_and_chinese_for_ocr_when_both_are_installed() {
+        let installed = vec!["afr".to_string(), "chi_sim".to_string(), "eng".to_string()];
+        assert_eq!(ocr_languages(&installed), vec!["eng".to_string(), "chi_sim".to_string()]);
+    }
+
+    #[test]
+    fn falls_back_to_whatever_languages_are_installed_for_ocr() {
+        let installed = vec!["osd".to_string(), "afr".to_string()];
+        assert_eq!(ocr_languages(&installed), vec!["afr".to_string(), "osd".to_string()]);
+        assert!(ocr_languages(&[]).is_empty());
     }
 
     #[test]

@@ -1,11 +1,12 @@
 pkgname=screenpin
 pkgver=0.2.0
-pkgrel=20
+pkgrel=21
 pkgdesc="Non-destructive cross-platform screenshot editor"
 arch=('x86_64' 'aarch64')
 url="https://github.com/wildalley/screenpin"
 license=('MIT')
-depends=('gtk3' 'libayatana-appindicator' 'webkit2gtk-4.1' 'xdg-desktop-portal')
+depends=('gtk3' 'libayatana-appindicator' 'webkit2gtk-4.1' 'xdg-desktop-portal' 'tesseract')
+optdepends=('tesseract-data-eng: 英文 OCR 识别' 'tesseract-data-chi_sim: 简体中文 OCR 识别')
 makedepends=('nodejs' 'npm' 'pkgconf' 'rust')
 options=('!debug' '!lto')
 source=()

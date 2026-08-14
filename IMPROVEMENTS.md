@@ -119,3 +119,30 @@ npm run tauri build
 1. Wayland 环境下，快捷键通过桌面门户注册，可能需要用户授权
 2. 某些系统快捷键可能被占用，建议选择未被使用的组合
 3. 配置文件保存在用户配置目录，卸载应用不会删除配置
+
+## 后续规划（暂未实现）
+
+按跨平台落地成本排序，以下功能已评估但当前版本暂不实现：
+
+### 1. GIF 录制
+- 目标：短片段演示，可设置帧率（如 5/10/15 fps）
+- 平台方案：
+  - Linux：Wayland Portal `ScreenCast`（`ashpd` 已支持）
+  - Windows：DXGI Desktop Duplication / Windows Graphics Capture
+  - macOS：ScreenCaptureKit（macOS 12+）
+- 编码：GIF 可用 Rust `image` crate（已有依赖）统一编码，采集端按平台实现
+- 限制：长录屏 GIF 文件巨大、画质差，适合 2-3 秒片段
+
+### 2. 视频录制（MP4/WebM）
+- 目标：完整屏幕/窗口录制，可设帧率
+- 比 GIF 复杂一个量级：三平台采集 + 编码各自实现（Media Foundation / AVFoundation / 编码器）
+- 建议作为独立里程碑，不与 GIF 混在同一需求里
+
+### 3. 滚动截图自动捕获
+- 目标：自动滚动窗口并逐段截图拼接
+- 平台限制：**Linux Wayland 基本不可行**——portal 无法控制其他窗口滚动；仅 X11/macOS（可）/Windows（可）相对可行
+- 由于用户主力是 GNOME Wayland，此功能跨平台价值最低，优先级排在最后
+- 当前以"画布拼接"（手工选择多图拼接）替代，已实现
+
+### 4. 其他（远期）
+- 云同步、多图画布、窗口录制等

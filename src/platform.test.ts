@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ confirm: mocks.confirm, open: vi.fn(), save: mocks.save }));
 
-import { confirmDiscardChanges, saveImageAs, saveProject, validateProjectImage } from "./platform";
+import { confirmDiscardChanges, saveImageAs, saveProject, stitchImages, validateProjectImage } from "./platform";
 
 const project = {
   format: "screenpin-project" as const,
@@ -82,5 +82,74 @@ describe("project image validation", () => {
     await expect(
       validateProjectImage({ dataUrl: "data:image/png;base64,AA==", width: 11, height: 20, name: "bad-size" }),
     ).rejects.toThrow("尺寸");
+  });
+});
+
+describe("image stitching", () => {
+  class FakeImage {
+    naturalWidth = 0;
+    naturalHeight = 0;
+    width = 0;
+    height = 0;
+    onload: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+
+    set src(value: string) {
+      const dims = value.split("dims=")[1];
+      const [w, h] = (dims ?? "1,1").split(",").map(Number);
+      this.naturalWidth = w;
+      this.naturalHeight = h;
+      this.width = w;
+      this.height = h;
+      queueMicrotask(() => this.onload?.());
+    }
+  }
+
+  const makeCanvas = () => {
+    const drawImage = vi.fn();
+    const canvas = {
+      width: 0,
+      height: 0,
+      getContext: vi.fn(() => ({ drawImage })),
+      toDataURL: vi.fn(() => "data:image/png;base64,stitched"),
+    };
+    return { canvas, drawImage };
+  };
+
+  beforeEach(() => vi.stubGlobal("Image", FakeImage));
+
+  it("stacks images vertically and centers them on the width", async () => {
+    const { canvas, drawImage } = makeCanvas();
+    vi.stubGlobal("document", { createElement: vi.fn(() => canvas) });
+
+    const stitched = await stitchImages(
+      [
+        { dataUrl: "data:image/png;base64,x;dims=100,50", width: 100, height: 50 },
+        { dataUrl: "data:image/png;base64,y;dims=80,60", width: 80, height: 60 },
+      ],
+      "vertical",
+    );
+
+    expect(stitched).toEqual({ dataUrl: "data:image/png;base64,stitched", width: 100, height: 110 });
+    expect(canvas).toMatchObject({ width: 100, height: 110 });
+    // Second image (80 wide) is centered in the 100-wide canvas.
+    expect(drawImage).toHaveBeenNthCalledWith(2, expect.any(FakeImage), 10, 50);
+  });
+
+  it("lays images side by side for horizontal stitching", async () => {
+    const { canvas, drawImage } = makeCanvas();
+    vi.stubGlobal("document", { createElement: vi.fn(() => canvas) });
+
+    await stitchImages(
+      [
+        { dataUrl: "data:image/png;base64,x;dims=100,50", width: 100, height: 50 },
+        { dataUrl: "data:image/png;base64,y;dims=80,60", width: 80, height: 60 },
+      ],
+      "horizontal",
+    );
+
+    expect(canvas).toMatchObject({ width: 180, height: 60 });
+    // Second image is placed right after the first and centered vertically.
+    expect(drawImage).toHaveBeenNthCalledWith(2, expect.any(FakeImage), 100, 0);
   });
 });

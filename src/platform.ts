@@ -21,6 +21,15 @@ export const pasteImage = () => invoke<CaptureResult>("read_clipboard_image");
 
 export const copyImage = (dataUrl: string) => invoke<void>("copy_image", { dataUrl });
 
+export const copyText = (text: string) => invoke<void>("copy_text", { text });
+
+export interface OcrResult {
+  text: string;
+  setupError?: string | null;
+}
+
+export const ocrImage = (dataUrl: string) => invoke<OcrResult>("ocr_image", { dataUrl });
+
 export const setMainPinned = (pinned: boolean) => invoke<void>("set_main_pinned", { pinned });
 
 export const workArea = () => invoke<{ width: number; height: number }>("work_area");
@@ -106,6 +115,63 @@ export function imageFromFile(file: File): Promise<CaptureResult> {
     };
     reader.readAsDataURL(file);
   });
+}
+
+export type StitchDirection = "vertical" | "horizontal";
+
+/**
+ * Stitch several images into one long canvas, aligned on the shared axis
+ * (centered on the other). Used for manual long screenshots: the user picks
+ * the shots in order and they are joined into a single editable image.
+ */
+export async function stitchImages(
+  sources: CaptureResult[],
+  direction: StitchDirection,
+): Promise<CaptureResult> {
+  if (sources.length === 0) throw new Error("没有可拼接的图片");
+  if (sources.length === 1) return sources[0];
+  const images = await Promise.all(
+    sources.map((source) => {
+      return new Promise<HTMLImageElement>((resolve, reject) => {
+        const image = new Image();
+        image.onerror = () => reject(new Error("有图片无法读取，拼接已取消"));
+        image.onload = () => {
+          if (image.naturalWidth !== source.width || image.naturalHeight !== source.height) {
+            reject(new Error("图片实际尺寸与记录不一致，拼接已取消"));
+            return;
+          }
+          resolve(image);
+        };
+        image.src = source.dataUrl;
+      });
+    }),
+  );
+
+  const vertical = direction === "vertical";
+  const mainAxis = vertical ? "height" : "width";
+  const crossAxis = vertical ? "width" : "height";
+  const total = images.reduce((sum, image) => sum + image[mainAxis], 0);
+  const cross = Math.max(...images.map((image) => image[crossAxis]));
+
+  const canvas = document.createElement("canvas");
+  canvas.width = vertical ? cross : total;
+  canvas.height = vertical ? total : cross;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("浏览器画布不可用");
+
+  let offset = 0;
+  for (const image of images) {
+    const x = vertical ? Math.round((cross - image.width) / 2) : offset;
+    const y = vertical ? offset : Math.round((cross - image.height) / 2);
+    context.drawImage(image, x, y);
+    offset += image[mainAxis];
+  }
+
+  return {
+    dataUrl: canvas.toDataURL("image/png"),
+    width: canvas.width,
+    height: canvas.height,
+  };
 }
 
 export function pixelateImage(dataUrl: string, width: number, height: number): Promise<string> {

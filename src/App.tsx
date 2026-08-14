@@ -24,6 +24,7 @@ import {
   PinOff,
   Redo2,
   ScanLine,
+  ScanText,
   Settings,
   Square,
   SquareDashed,
@@ -44,6 +45,7 @@ import {
   captureWithSystem,
   confirmDiscardChanges,
   copyImage,
+  copyText,
   createDemoImage,
   enterCaptureMode,
   exitCaptureMode,
@@ -55,15 +57,18 @@ import {
   openProject,
   pasteImage,
   pixelateImage,
+  ocrImage,
   quitApp,
   saveConfig,
   saveImageAs,
   saveProject,
   setMainPinned,
   startWindowDrag,
+  stitchImages,
   validateProjectImage,
   workArea,
   type AppConfig,
+  type StitchDirection,
 } from "./platform";
 import type {
   Annotation,
@@ -118,6 +123,7 @@ export default function App() {
   const barRef = useRef<HTMLDivElement>(null);
   const imageInput = useRef<HTMLInputElement>(null);
   const projectInput = useRef<HTMLInputElement>(null);
+  const stitchInput = useRef<HTMLInputElement>(null);
   const demoCapture = useMemo(() => (new URLSearchParams(window.location.search).has("demo") ? createDemoImage() : null), []);
   const [image, setImage] = useState<ImageSource | null>(() => demoCapture ? { ...demoCapture, name: "交付概览" } : null);
   const [captureDraft, setCaptureDraft] = useState<CaptureResponse | null>(null);
@@ -131,7 +137,10 @@ export default function App() {
   const [isPinned, setIsPinned] = useState(false);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
-  const [panel, setPanel] = useState<"none" | "style" | "menu" | "shortcuts" | "settings">("none");
+  const [panel, setPanel] = useState<"none" | "style" | "menu" | "shortcuts" | "settings" | "ocr">("none");
+  const [ocrText, setOcrText] = useState<string | null>(null);
+  const [ocrSetupError, setOcrSetupError] = useState<string | null>(null);
+  const [ocrBusy, setOcrBusy] = useState(false);
   const [styles, setStyles] = useState<Record<Annotation["type"], AnnotationStyle>>(() =>
     DRAW_TOOLS.reduce(
       (all, id) => ({ ...all, [id]: defaultStyle(id) }),
@@ -385,6 +394,43 @@ export default function App() {
     }
   }, [exportImage, notify]);
 
+  const handleOcr = useCallback(async () => {
+    if (!image) return;
+    setOcrBusy(true);
+    setOcrText(null);
+    setOcrSetupError(null);
+    try {
+      const result = await ocrImage(image.dataUrl);
+      if (result.setupError) {
+        setOcrSetupError(result.setupError);
+        setOcrText("");
+      } else {
+        setOcrText(result.text);
+      }
+      setPanel("ocr");
+    } catch (error) {
+      setOcrText("");
+      setOcrSetupError(errorMessage(error));
+      setPanel("ocr");
+    } finally {
+      setOcrBusy(false);
+    }
+  }, [image]);
+
+  const handleCopyOcr = useCallback(async () => {
+    if (!ocrText) return;
+    try {
+      if (isTauri()) {
+        await copyText(ocrText);
+      } else {
+        await navigator.clipboard.writeText(ocrText);
+      }
+      notify("文字已复制到剪贴板");
+    } catch (error) {
+      notify(errorMessage(error));
+    }
+  }, [notify, ocrText]);
+
   const handlePin = useCallback(async () => {
     if (!image) return;
     try {
@@ -501,6 +547,26 @@ export default function App() {
       notify(errorMessage(error));
     }
   }, [confirmReplace, loadProject, notify]);
+
+  // Long screenshot: pick several images in order and join them into one image.
+  const handleStitchPicked = useCallback(
+    async (files: FileList | null, direction: StitchDirection) => {
+      if (!files || files.length === 0) return;
+      if (!(await confirmReplace())) return;
+      setBusy(true);
+      setPanel("none");
+      try {
+        const sources = await Promise.all(Array.from(files).map(imageFromFile));
+        const stitched = await stitchImages(sources, direction);
+        await loadCapture(stitched, `长截图 ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`);
+      } catch (error) {
+        notify(errorMessage(error));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [confirmReplace, loadCapture, notify],
+  );
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -693,8 +759,10 @@ export default function App() {
         <FilePickers
           imageInput={imageInput}
           projectInput={projectInput}
+          stitchInput={stitchInput}
           onImage={loadCapture}
           onProject={loadProject}
+          onStitch={handleStitchPicked}
           onBeforeReplace={confirmReplace}
           onError={notify}
         />
@@ -766,10 +834,26 @@ export default function App() {
           onExportFormat={setExportFormat}
           onExportQuality={setExportQuality}
           onSaveImage={handleSaveImage}
+          onStitch={(direction) => {
+            setPanel("none");
+            stitchInput.current?.setAttribute("data-direction", direction);
+            stitchInput.current?.click();
+          }}
         />
       )}
 
       {panel === "shortcuts" && <ShortcutsPanel exportFormat={exportFormat} captureShortcut={appConfig?.captureShortcut} />}
+
+      {panel === "ocr" && (
+        <OcrPanel
+          busy={ocrBusy}
+          text={ocrText}
+          setupError={ocrSetupError}
+          onRetry={() => void handleOcr()}
+          onCopy={handleCopyOcr}
+          onClose={() => setPanel("none")}
+        />
+      )}
 
       {panel === "settings" && appConfig && (
         <SettingsPanel
@@ -823,6 +907,13 @@ export default function App() {
           active={panel === "shortcuts"}
           onClick={() => setPanel((current) => (current === "shortcuts" ? "none" : "shortcuts"))}
         />
+        <IconButton
+          icon={ScanText}
+          label="识别文字 (OCR)"
+          active={panel === "ocr"}
+          disabled={!image || ocrBusy}
+          onClick={() => void handleOcr()}
+        />
         {isTauri() && (
           <IconButton
             icon={Settings}
@@ -846,8 +937,10 @@ export default function App() {
       <FilePickers
         imageInput={imageInput}
         projectInput={projectInput}
+        stitchInput={stitchInput}
         onImage={loadCapture}
         onProject={loadProject}
+        onStitch={handleStitchPicked}
         onBeforeReplace={confirmReplace}
         onError={notify}
       />
@@ -1001,6 +1094,7 @@ function MenuPanel({
   onExportFormat,
   onExportQuality,
   onSaveImage,
+  onStitch,
 }: {
   title: string;
   image: ImageSource;
@@ -1019,6 +1113,7 @@ function MenuPanel({
   onExportFormat: (format: ExportFormat) => void;
   onExportQuality: (quality: number) => void;
   onSaveImage: () => void;
+  onStitch: (direction: StitchDirection) => void;
 }) {
   return (
     <div className="pin-panel is-menu" role="dialog" aria-label="更多">
@@ -1064,6 +1159,13 @@ function MenuPanel({
         <button onClick={onOpenImage}><ImagePlus size={15} />打开图片</button>
         <button onClick={onOpenProject}><FolderOpen size={15} />打开工程</button>
         <button onClick={onSaveProject}><FileArchive size={15} />保存工程 (Ctrl+Shift+S)</button>
+      </div>
+      <div className="panel-stitch">
+        <span className="panel-stitch-label">长截图：按顺序拼接图片</span>
+        <div className="panel-stitch-actions">
+          <button disabled={busy} onClick={() => onStitch("vertical")}>垂直拼接</button>
+          <button disabled={busy} onClick={() => onStitch("horizontal")}>水平拼接</button>
+        </div>
       </div>
       <div className="panel-meta">{image.width} × {image.height} · {isTauri() ? "桌面" : "预览"}</div>
     </div>
@@ -1118,15 +1220,19 @@ function EmptyState({
 function FilePickers({
   imageInput,
   projectInput,
+  stitchInput,
   onImage,
   onProject,
+  onStitch,
   onBeforeReplace,
   onError,
 }: {
   imageInput: React.RefObject<HTMLInputElement | null>;
   projectInput: React.RefObject<HTMLInputElement | null>;
+  stitchInput: React.RefObject<HTMLInputElement | null>;
   onImage: (capture: CaptureResult, name?: string) => Promise<void>;
   onProject: (project: ScreenPinProject) => Promise<void>;
+  onStitch: (files: FileList | null, direction: StitchDirection) => Promise<void>;
   onBeforeReplace: () => Promise<boolean>;
   onError: (message: string) => void;
 }) {
@@ -1166,6 +1272,24 @@ function FilePickers({
           }
         }}
       />
+      <input
+        ref={stitchInput}
+        hidden
+        type="file"
+        multiple
+        accept="image/png,image/jpeg,image/webp"
+        onChange={async (event) => {
+          const files = event.target.files;
+          const direction = event.currentTarget.getAttribute("data-direction") as StitchDirection | null;
+          event.target.value = "";
+          if (!files || files.length === 0) return;
+          try {
+            await onStitch(files, direction ?? "vertical");
+          } catch (error) {
+            onError(errorMessage(error));
+          }
+        }}
+      />
     </>
   );
 }
@@ -1176,6 +1300,53 @@ function toolName(tool: Annotation["type"]) {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function OcrPanel({
+  busy,
+  text,
+  setupError,
+  onRetry,
+  onCopy,
+  onClose,
+}: {
+  busy: boolean;
+  text: string | null;
+  setupError: string | null;
+  onRetry: () => void;
+  onCopy: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="pin-panel is-ocr" role="dialog" aria-label="识别文字">
+      <div className="panel-title">
+        <span>识别文字 (OCR)</span>
+        <button className="panel-close" title="关闭" aria-label="关闭" onClick={onClose}><X size={13} /></button>
+      </div>
+      {setupError ? (
+        <div className="ocr-setup-error">{setupError}</div>
+      ) : busy ? (
+        <div className="ocr-status">正在识别…</div>
+      ) : text ? (
+        <textarea
+          className="ocr-text"
+          readOnly
+          value={text}
+          onFocus={(event) => event.currentTarget.select()}
+          aria-label="识别出的文字"
+        />
+      ) : (
+        <div className="ocr-status">没有识别到文字。</div>
+      )}
+      <div className="panel-actions panel-actions-form">
+        {!setupError && text !== null && (
+          <button type="button" disabled={busy || !text} onClick={onCopy}><Copy size={14} />复制文字</button>
+        )}
+        <button type="button" disabled={busy} onClick={onRetry}>重新识别</button>
+        <button type="button" className="primary-action" onClick={onClose}>关闭</button>
+      </div>
+    </div>
+  );
 }
 
 function ShortcutsPanel({ exportFormat, captureShortcut }: { exportFormat: ExportFormat; captureShortcut?: string }) {

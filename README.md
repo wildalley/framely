@@ -15,6 +15,15 @@ ScreenPin 是一个面向桌面的非破坏性截图编辑器，目标平台为 
 - **八种标注工具**：矩形、椭圆、箭头、画笔、荧光笔、区域高亮、文字、马赛克
   - 区域高亮（`G`）：拖出一个或多个选区，选区内保持原图亮度，其余区域压暗，适合聚焦讲解重点
   
+- **OCR 文字识别**
+  - 工具栏"识别文字 (OCR)"按钮，调用本地 Tesseract 离线识别当前截图，结果可一键复制
+  - 自动优先使用英文 + 简体中文语言包，仅装其他语言包时回退使用已安装语言；未安装语言数据时给出安装提示
+  - 识别在本地完成，截图内容不会上传
+  
+- **长截图（画布拼接）**
+  - "更多"菜单里的"长截图：按顺序拼接图片"，垂直或水平拼接多张图片为一张长图后继续标注/导出
+  - 各图在拼接轴上按顺序排列、另一轴居中对齐；适合手工滚动截图后拼接
+  
 - **实时编辑**
   - 选中对象后移动、四角缩放、改颜色、调粗细/透明度、调整图层和删除
   - 文字对象双击直接编辑，新建文字自动进入编辑状态
@@ -77,7 +86,7 @@ cd src-tauri && cargo check && cargo test
 
 ### Linux 依赖
 
-需要 WebKitGTK、GTK3、DBus 和 `xdg-desktop-portal`。Wayland 不允许普通应用绕过合成器读取其他窗口，因此首次截图或桌面策略要求时，portal 后端仍可能显示安全授权；授权完成后，区域选择由 ScreenPin 自己处理。Hyprland 建议安装并启用 `xdg-desktop-portal-hyprland`。Wayland 全局快捷键使用 `org.freedesktop.portal.GlobalShortcuts`，首次启动或修改快捷键时也可能由桌面门户请求授权。门户的触发器语法与 Tauri 的快捷键写法不同：修饰键只有 `CTRL`、`ALT`、`SHIFT`、`NUM`、`LOGO`（即 `Win` 键，没有 `SUPER`），按键名是区分大小写的 xkb keysym（`s`、`Return`、`Print`），ScreenPin 会在注册前完成转换。托盘图标使用 AppIndicator/StatusNotifier，Waybar 需要启用 `tray` 模块才能显示。
+需要 WebKitGTK、GTK3、DBus 和 `xdg-desktop-portal`。OCR 需要 `tesseract` 及语言数据，建议安装 `tesseract-data-eng`（英文）和 `tesseract-data-chi_sim`（简体中文），未安装时识别会提示如何补齐。Wayland 不允许普通应用绕过合成器读取其他窗口，因此首次截图或桌面策略要求时，portal 后端仍可能显示安全授权；授权完成后，区域选择由 ScreenPin 自己处理。Hyprland 建议安装并启用 `xdg-desktop-portal-hyprland`。Wayland 全局快捷键使用 `org.freedesktop.portal.GlobalShortcuts`，首次启动或修改快捷键时也可能由桌面门户请求授权。门户的触发器语法与 Tauri 的快捷键写法不同：修饰键只有 `CTRL`、`ALT`、`SHIFT`、`NUM`、`LOGO`（即 `Win` 键，没有 `SUPER`），按键名是区分大小写的 xkb keysym（`s`、`Return`、`Print`），ScreenPin 会在注册前完成转换。托盘图标使用 AppIndicator/StatusNotifier，Waybar 需要启用 `tray` 模块才能显示。
 
 GNOME 的全局快捷键后端要求调用方有一个可解析的应用 ID：ScreenPin 开启了 `app.enableGTKAppId`（GTK 应用 ID 为 `io.screenpin.desktop`），并在注册 host 应用时传入**不带 `.desktop` 后缀**的 ID（`io.screenpin`）——portal 查找桌面文件时会自行追加 `.desktop`。Arch 包会安装 `/usr/share/applications/io.screenpin.desktop`，与这个 ID 对应；其他发行版构建时也需要提供同名的桌面文件，否则 GNOME 会拒绝创建全局快捷键会话（"An app id is required"）。KDE、niri 等桌面同样走该 portal 接口，此机制通用；Windows/macOS 与 Linux X11 会话走 Tauri 插件，不涉及应用 ID。
 
@@ -113,7 +122,7 @@ windowrulev2 = noanim, class:^(ScreenPin)$
 
 区域高亮对象使用 `type: "area-highlight"`，并保存选区的 `x`、`y`、`width`、`height`、颜色和压暗强度。工程打开时会校验图片能否解码、真实尺寸、时间字段、标注类型、数值范围和对象 ID，非法、损坏或伪造图片尺寸的工程会被拒绝加载。
 
-后续版本可以在保持原图和对象坐标兼容的前提下增加 OCR、滚动截图、窗口录制、云同步和多图画布。
+后续版本可以在保持原图和对象坐标兼容的前提下增加 GIF/视频录制、滚动截图自动捕获（受平台限制：Wayland 下 portal 无法控制其他窗口滚动）、云同步和多图画布。OCR 与手工画布拼接已在当前版本提供。
 
 ## 技术栈
 
