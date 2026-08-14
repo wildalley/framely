@@ -244,6 +244,118 @@ button:disabled {
   pointer-events: none;
 }
 
+/* Scroll-capture overlay (region select + live assembly). */
+.scroll-selection {
+  position: absolute;
+  z-index: 3;
+  border: 2px solid #2383e2;
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 35%);
+  background: rgb(35 131 226 / 8%);
+}
+
+.scroll-controls {
+  position: fixed;
+  z-index: 5;
+  left: 50%;
+  bottom: 20px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: rgb(19 27 25 / 94%);
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 30%);
+}
+
+.scroll-status {
+  max-width: 320px;
+  color: #e7ecea;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.scroll-dir {
+  display: flex;
+  gap: 4px;
+}
+
+.scroll-dir button {
+  padding: 4px 10px;
+  font-size: 12px;
+  color: #d7ddda;
+  background: transparent;
+  border: 1px solid rgb(255 255 255 / 20%);
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.scroll-dir button.is-active {
+  color: #ffffff;
+  background: rgb(35 131 226 / 80%);
+  border-color: transparent;
+}
+
+.scroll-controls > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 12px;
+  font-size: 12px;
+  color: #e7ecea;
+  background: rgb(255 255 255 / 10%);
+  border: 1px solid rgb(255 255 255 / 20%);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.scroll-controls > button.is-primary {
+  color: #ffffff;
+  background: var(--accent);
+  border-color: transparent;
+}
+
+.scroll-controls > button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.scroll-preview {
+  position: fixed;
+  z-index: 4;
+  left: 18px;
+  top: 18px;
+  max-width: 200px;
+  max-height: 40vh;
+  overflow: hidden;
+  border: 1px solid rgb(255 255 255 / 25%);
+  border-radius: 6px;
+  background: #111516;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 35%);
+}
+
+.scroll-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.scroll-preview-size {
+  position: absolute;
+  left: 4px;
+  bottom: 4px;
+  padding: 2px 6px;
+  font-size: 10px;
+  color: #ffffff;
+  background: rgb(10 14 15 / 80%);
+  border-radius: 3px;
+}
+
 .capture-actions {
   bottom: 20px;
   gap: 5px;

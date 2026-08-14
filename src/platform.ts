@@ -13,6 +13,9 @@ export const captureScreen = () => invoke<CaptureResponse>("capture_screen");
 
 export const captureWithSystem = () => invoke<CaptureResult>("capture_with_system");
 
+export const captureRegion = (x: number, y: number, width: number, height: number) =>
+  invoke<CaptureResult>("capture_region", { x, y, width, height });
+
 export const enterCaptureMode = () => invoke<void>("enter_capture_mode");
 
 export const exitCaptureMode = (pinned: boolean) => invoke<void>("exit_capture_mode", { pinned });

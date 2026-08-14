@@ -38,6 +38,7 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { CaptureOverlay } from "./CaptureOverlay";
+import { ScrollCaptureOverlay } from "./ScrollCapture";
 import { EditorCanvas, type EditorCanvasHandle } from "./EditorCanvas";
 import { formatShortcut, MODIFIER_ORDER, mainShortcutKey, modifierFromEvent, shortcutParts } from "./shortcut";
 import {
@@ -143,6 +144,7 @@ export default function App() {
   const [ocrBusy, setOcrBusy] = useState(false);
   const [stitchSources, setStitchSources] = useState<CaptureResult[]>([]);
   const [stitchDirection, setStitchDirection] = useState<StitchDirection>("vertical");
+  const [scrollCaptureActive, setScrollCaptureActive] = useState(false);
   const [styles, setStyles] = useState<Record<Annotation["type"], AnnotationStyle>>(() =>
     DRAW_TOOLS.reduce(
       (all, id) => ({ ...all, [id]: defaultStyle(id) }),
@@ -582,6 +584,33 @@ export default function App() {
     }
   }, [confirmReplace, loadCapture, notify, stitchDirection, stitchSources]);
 
+  const openScrollCapture = useCallback(async () => {
+    setPanel("none");
+    try {
+      await enterCaptureMode();
+      setScrollCaptureActive(true);
+    } catch (error) {
+      notify(errorMessage(error));
+    }
+  }, [notify]);
+
+  const closeScrollCapture = useCallback(async () => {
+    setScrollCaptureActive(false);
+    try {
+      await exitCaptureMode(isPinned);
+    } catch {
+      // Non-fatal: the window may already be in its normal state.
+    }
+  }, [isPinned]);
+
+  const finishScrollCapture = useCallback(
+    async (result: CaptureResult) => {
+      await closeScrollCapture();
+      await loadCapture(result, `滚动截图 ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`);
+    },
+    [closeScrollCapture, loadCapture],
+  );
+
   useEffect(() => {
     if (!isTauri()) return;
     const unlisten = listen("quit-requested", async () => {
@@ -730,6 +759,14 @@ export default function App() {
     if (event.button !== 0 || target.closest("button, input, textarea")) return;
     if (isTauri()) void startWindowDrag().catch(() => undefined);
   };
+  if (scrollCaptureActive) {
+    return (
+      <ScrollCaptureOverlay
+        onFinish={(result) => void finishScrollCapture(result)}
+        onCancel={() => void closeScrollCapture()}
+      />
+    );
+  }
   if (captureDraft) {
     return (
       <CaptureOverlay
@@ -847,6 +884,7 @@ export default function App() {
           onExportQuality={setExportQuality}
           onSaveImage={handleSaveImage}
           onStitch={() => setPanel("stitch")}
+          onScrollCapture={() => void openScrollCapture()}
         />
       )}
 
@@ -1137,6 +1175,7 @@ function MenuPanel({
   onExportQuality,
   onSaveImage,
   onStitch,
+  onScrollCapture,
 }: {
   title: string;
   image: ImageSource;
@@ -1156,6 +1195,7 @@ function MenuPanel({
   onExportQuality: (quality: number) => void;
   onSaveImage: () => void;
   onStitch: () => void;
+  onScrollCapture: () => void;
 }) {
   return (
     <div className="pin-panel is-menu" role="dialog" aria-label="更多">
@@ -1202,6 +1242,7 @@ function MenuPanel({
         <button onClick={onOpenProject}><FolderOpen size={15} />打开工程</button>
         <button onClick={onSaveProject}><FileArchive size={15} />保存工程 (Ctrl+Shift+S)</button>
         <button disabled={busy} onClick={onStitch}><MoveUpRight size={15} />长截图拼接…</button>
+        <button disabled={busy} onClick={onScrollCapture}><ScanLine size={15} />滚动截图…</button>
       </div>
       <div className="panel-meta">{image.width} × {image.height} · {isTauri() ? "桌面" : "预览"}</div>
     </div>

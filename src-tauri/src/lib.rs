@@ -789,6 +789,35 @@ fn copy_text(text: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn capture_region(window: WebviewWindow, x: u32, y: u32, width: u32, height: u32) -> Result<CaptureResult, String> {
+    if width == 0 || height == 0 {
+        return Err("区域尺寸无效".to_string());
+    }
+    // The coordinates are physical pixels relative to the window's top-left.
+    // The portal captures the whole desktop, so translate to global desktop
+    // coordinates using the window's outer position (captured before hiding).
+    let outer = window.outer_position().ok();
+    let _ = window.hide();
+    let bytes = primary_capture(&window, &active_monitor(&window)?)
+        .await
+        .map_err(|error| format!("无法采集区域画面: {error}"))?;
+    let image =
+        image::load_from_memory(&bytes).map_err(|error| format!("无法读取区域画面: {error}"))?;
+    let (image_w, image_h) = image.dimensions();
+    let (gx, gy) = outer.map_or((x as i32, y as i32), |p| (p.x + x as i32, p.y + y as i32));
+    let left = (gx.max(0) as u32).min(image_w);
+    let top = (gy.max(0) as u32).min(image_h);
+    let width = width.min(image_w - left);
+    let height = height.min(image_h - top);
+    if width == 0 || height == 0 {
+        return Err("区域超出桌面范围".to_string());
+    }
+    let frame = image.crop_imm(left, top, width, height);
+    let _ = window.show();
+    encode_png(&frame)
+}
+
+#[tauri::command]
 fn save_image(path: String, data_url: String) -> Result<(), String> {
     let bytes = decode_data_url(&data_url)?;
     fs::write(Path::new(&path), bytes).map_err(|error| format!("保存图片失败: {error}"))
@@ -1597,6 +1626,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             capture_screen,
             capture_with_system,
+            capture_region,
             enter_capture_mode,
             exit_capture_mode,
             read_clipboard_image,
