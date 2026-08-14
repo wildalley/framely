@@ -68,8 +68,9 @@ export function ScrollCaptureOverlay({
   directionRef.current = direction;
 
   const pointFromEvent = useCallback((event: { clientX: number; clientY: number }): { x: number; y: number } => {
-    const dpr = window.devicePixelRatio || 1;
-    return { x: Math.round(event.clientX * dpr), y: Math.round(event.clientY * dpr) };
+    // Logical (CSS) pixels relative to the window; the Rust side scales and
+    // translates to desktop coordinates using the window's monitor.
+    return { x: Math.round(event.clientX), y: Math.round(event.clientY) };
   }, []);
 
   const normalize = (origin: { x: number; y: number }, current: { x: number; y: number }): RegionRect => ({
@@ -206,12 +207,11 @@ export function ScrollCaptureOverlay({
   }, [capturing, stopping]);
 
   const styleFor = (rect: RegionRect) => {
-    const dpr = window.devicePixelRatio || 1;
     return {
-      left: `${rect.x / dpr}px`,
-      top: `${rect.y / dpr}px`,
-      width: `${rect.width / dpr}px`,
-      height: `${rect.height / dpr}px`,
+      left: `${rect.x}px`,
+      top: `${rect.y}px`,
+      width: `${rect.width}px`,
+      height: `${rect.height}px`,
     };
   };
 

@@ -793,27 +793,48 @@ async fn capture_region(window: WebviewWindow, x: u32, y: u32, width: u32, heigh
     if width == 0 || height == 0 {
         return Err("区域尺寸无效".to_string());
     }
-    // The coordinates are physical pixels relative to the window's top-left.
-    // The portal captures the whole desktop, so translate to global desktop
-    // coordinates using the window's outer position (captured before hiding).
-    let outer = window.outer_position().ok();
+    // The frontend passes logical (CSS) pixels relative to the window's
+    // top-left. Resolve the monitor while the window is still mapped (a hidden
+    // window reports no current monitor), then scale to physical pixels and
+    // translate to global desktop coordinates — the coordinate space of the
+    // portal bitmap.
+    let monitor = window.current_monitor().ok().flatten();
+    let (origin, scale) = monitor
+        .as_ref()
+        .map(|monitor| (*monitor.position(), monitor.scale_factor()))
+        .or_else(|| {
+            window
+                .outer_position()
+                .ok()
+                .map(|position| (position, 1.0))
+        })
+        .unwrap_or((PhysicalPosition::new(0, 0), 1.0));
+    let px = |logical: u32| (logical as f64 * scale).round() as i32;
+    let gx = origin.x + px(x);
+    let gy = origin.y + px(y);
+    let gw = (width as f64 * scale).round().max(1.0) as u32;
+    let gh = (height as f64 * scale).round().max(1.0) as u32;
+
     let _ = window.hide();
+    // Let the compositor actually remove the window before grabbing pixels;
+    // otherwise the portal captures our own fullscreen selector → black frame.
+    std::thread::sleep(std::time::Duration::from_millis(180));
     let bytes = primary_capture(&window, &active_monitor(&window)?)
         .await
         .map_err(|error| format!("无法采集区域画面: {error}"))?;
     let image =
         image::load_from_memory(&bytes).map_err(|error| format!("无法读取区域画面: {error}"))?;
     let (image_w, image_h) = image.dimensions();
-    let (gx, gy) = outer.map_or((x as i32, y as i32), |p| (p.x + x as i32, p.y + y as i32));
     let left = (gx.max(0) as u32).min(image_w);
     let top = (gy.max(0) as u32).min(image_h);
-    let width = width.min(image_w - left);
-    let height = height.min(image_h - top);
+    let width = gw.min(image_w - left);
+    let height = gh.min(image_h - top);
     if width == 0 || height == 0 {
         return Err("区域超出桌面范围".to_string());
     }
     let frame = image.crop_imm(left, top, width, height);
     let _ = window.show();
+    let _ = window.set_focus();
     encode_png(&frame)
 }
 
