@@ -1,48 +1,38 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
-  Aperture,
-  ArrowDown,
-  ArrowUp,
-  Check,
-  Circle,
-  Clipboard,
-  Copy,
-  Download,
-  FileArchive,
-  FolderOpen,
-  Grid3X3,
-  HelpCircle,
-  Highlighter,
-  ImagePlus,
-  Maximize2,
-  MoreHorizontal,
-  MousePointer2,
-  MoveUpRight,
-  Palette,
-  Pencil,
-  Pin,
-  PinOff,
-  Redo2,
-  ScanLine,
-  Settings,
-  Square,
-  SquareDashed,
-  Trash2,
-  Type,
-  Undo2,
-  X,
-  ZoomIn,
-  ZoomOut,
-} from "lucide-react";
-import type { LucideIcon } from "lucide-react";
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent,
+} from "react";
 import { listen } from "@tauri-apps/api/event";
+import { EmptyState } from "./components/EmptyState";
+import { EditorToolbar } from "./components/EditorToolbar";
+import { Toast } from "./components/EditorControls";
+import { FilePickers } from "./components/FilePickers";
+import {
+  MenuPanel,
+  SettingsPanel,
+  ShortcutsPanel,
+  StylePanel,
+} from "./components/EditorPanels";
 import { EditorCanvas, type EditorCanvasHandle } from "./EditorCanvas";
+import {
+  CAPTURE_SETTLE_DELAY,
+  DRAW_TOOLS,
+  errorMessage,
+  type EditorPanel,
+  zoomToFit,
+} from "./editor/constants";
+import { useEditorShortcuts } from "./hooks/useEditorShortcuts";
+import { useEditorWindowLayout } from "./hooks/useEditorWindowLayout";
 import {
   captureScreen,
   confirmDiscardChanges,
   copyImage,
   createDemoImage,
-  fitWindow,
   getConfig,
   hideWindow,
   imageFromFile,
@@ -55,9 +45,9 @@ import {
   saveImageAs,
   saveProject,
   setMainPinned,
+  showMainWindow,
   startWindowDrag,
   validateProjectImage,
-  workArea,
   type AppConfig,
 } from "./platform";
 import type {
@@ -70,46 +60,10 @@ import type {
   ScreenPinProject,
   Tool,
 } from "./types";
-import { COLORS, EXPORT_FORMATS, defaultStyle, isDocumentDirty, isLossyFormat, isScreenPinProject } from "./types";
+import { defaultStyle, isDocumentDirty, isLossyFormat, isScreenPinProject } from "./types";
 import { useEditorHistory } from "./useEditorHistory";
-
-const TOOL_ITEMS: { id: Tool; label: string; icon: LucideIcon; key: string }[] = [
-  { id: "select", label: "选择", icon: MousePointer2, key: "V" },
-  { id: "rectangle", label: "矩形", icon: Square, key: "R" },
-  { id: "ellipse", label: "椭圆", icon: Circle, key: "O" },
-  { id: "arrow", label: "箭头", icon: MoveUpRight, key: "A" },
-  { id: "pen", label: "画笔", icon: Pencil, key: "P" },
-  { id: "highlighter", label: "荧光笔", icon: Highlighter, key: "H" },
-  { id: "area-highlight", label: "区域高亮", icon: SquareDashed, key: "G" },
-  { id: "text", label: "文字", icon: Type, key: "T" },
-  { id: "mosaic", label: "马赛克", icon: Grid3X3, key: "M" },
-];
-
-const DRAW_TOOLS = TOOL_ITEMS.map((item) => item.id).filter(
-  (id): id is Annotation["type"] => id !== "select",
-);
-
-const MIN_ZOOM = 0.1;
-const MAX_ZOOM = 3;
-/** Enough room for the toolbar to stay usable next to very small screenshots. */
-const MIN_WINDOW_WIDTH = 320;
-const EMPTY_WINDOW = { width: 460, height: 300 };
-const ASSUMED_BAR_HEIGHT = 46;
-
-const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
-const roundZoom = (value: number) => Math.round(value * 100) / 100;
-
-/** Largest zoom that keeps image plus toolbar inside the usable desktop area. */
-function zoomToFit(image: ImageSource, area: { width: number; height: number } | null, barHeight: number) {
-  if (!area) return 1;
-  const usableWidth = Math.max(120, area.width - 24);
-  const usableHeight = Math.max(120, area.height - barHeight - 24);
-  return roundZoom(clamp(Math.min(usableWidth / image.width, usableHeight / image.height, 1), MIN_ZOOM, 1));
-}
 export default function App() {
   const canvasRef = useRef<EditorCanvasHandle>(null);
-  const stageRef = useRef<HTMLDivElement>(null);
-  const barRef = useRef<HTMLDivElement>(null);
   const imageInput = useRef<HTMLInputElement>(null);
   const projectInput = useRef<HTMLInputElement>(null);
   const demoCapture = useMemo(() => (new URLSearchParams(window.location.search).has("demo") ? createDemoImage() : null), []);
@@ -124,7 +78,7 @@ export default function App() {
   const [isPinned, setIsPinned] = useState(false);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
-  const [panel, setPanel] = useState<"none" | "style" | "menu" | "shortcuts" | "settings">("none");
+  const [panel, setPanel] = useState<EditorPanel>("none");
   const [styles, setStyles] = useState<Record<Annotation["type"], AnnotationStyle>>(() =>
     DRAW_TOOLS.reduce(
       (all, id) => ({ ...all, [id]: defaultStyle(id) }),
@@ -134,13 +88,22 @@ export default function App() {
   const [exportFormat, setExportFormat] = useState<ExportFormat>("png");
   const [exportQuality, setExportQuality] = useState(0.92);
   const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
-  const [barHeight, setBarHeight] = useState(ASSUMED_BAR_HEIGHT);
-  const area = useRef<{ width: number; height: number } | null>(null);
-  const barHeightRef = useRef(barHeight);
-  const recenter = useRef(true);
   const pixelationRequest = useRef(0);
+  const captureInProgress = useRef(false);
   const history = useEditorHistory();
   const [savedDocument, setSavedDocument] = useState<SavedDocument | null>(null);
+  const {
+    applyZoom,
+    barHeight,
+    barHeightRef,
+    barRef,
+    refreshArea,
+    requestRecenter,
+    stage,
+    stageRef,
+    waitForWindowFit,
+    zoomToScreen,
+  } = useEditorWindowLayout({ image, zoom, setZoom });
 
   const selected = useMemo(
     () => history.annotations.find((annotation) => annotation.id === selectedId) ?? null,
@@ -156,19 +119,6 @@ export default function App() {
   const notify = useCallback((message: string) => {
     setToast(message);
     window.setTimeout(() => setToast((current) => (current === message ? null : current)), 2400);
-  }, []);
-
-  const refreshArea = useCallback(async () => {
-    if (!isTauri()) {
-      area.current = { width: window.innerWidth, height: window.innerHeight };
-      return area.current;
-    }
-    try {
-      area.current = await workArea();
-    } catch {
-      area.current = { width: window.screen.availWidth, height: window.screen.availHeight };
-    }
-    return area.current;
   }, []);
 
   useEffect(() => {
@@ -194,7 +144,7 @@ export default function App() {
       history.reset();
       setSavedDocument(null);
       setZoom(fitted);
-      recenter.current = true;
+      requestRecenter();
       try {
         const result = await pixelateImage(capture.dataUrl, capture.width, capture.height);
         if (request !== pixelationRequest.current) return;
@@ -207,57 +157,12 @@ export default function App() {
         notify("马赛克处理失败，已禁用该工具");
       }
     },
-    [history.reset, notify, refreshArea],
+    [history.reset, notify, refreshArea, requestRecenter],
   );
 
   useEffect(() => {
     if (demoCapture) loadCapture(demoCapture, "交付概览");
   }, [demoCapture, loadCapture]);
-
-  // Keep the frameless window hugging the stage and the toolbar.
-  const stage = image
-    ? { width: Math.round(image.width * zoom), height: Math.round(image.height * zoom) }
-    : null;
-
-  useLayoutEffect(() => {
-    barHeightRef.current = barHeight;
-    if (!isTauri()) return;
-    const center = recenter.current;
-    recenter.current = false;
-    const size = stage
-      ? { width: Math.max(MIN_WINDOW_WIDTH, stage.width), height: stage.height + barHeight }
-      : EMPTY_WINDOW;
-    void fitWindow(size.width, size.height, center).catch(() => undefined);
-  }, [stage?.width, stage?.height, barHeight]);
-
-  useEffect(() => {
-    const bar = barRef.current;
-    if (!bar) return;
-    const observer = new ResizeObserver(() => {
-      const next = Math.round(bar.getBoundingClientRect().height);
-      if (next > 0) setBarHeight((current) => (current === next ? current : next));
-    });
-    observer.observe(bar);
-    return () => observer.disconnect();
-  }, [image]);
-  const applyZoom = useCallback((next: number) => setZoom(roundZoom(clamp(next, MIN_ZOOM, MAX_ZOOM))), []);
-
-  const zoomToScreen = useCallback(async () => {
-    if (image) applyZoom(zoomToFit(image, await refreshArea(), barHeightRef.current));
-  }, [applyZoom, image, refreshArea]);
-
-  // Ctrl + wheel zoom needs a non-passive listener to cancel the scroll.
-  useEffect(() => {
-    const stageNode = stageRef.current;
-    if (!stageNode) return;
-    const onWheel = (event: WheelEvent) => {
-      if (!event.ctrlKey && !event.metaKey) return;
-      event.preventDefault();
-      setZoom((current) => roundZoom(clamp(current * (event.deltaY < 0 ? 1.1 : 1 / 1.1), MIN_ZOOM, MAX_ZOOM)));
-    };
-    stageNode.addEventListener("wheel", onWheel, { passive: false });
-    return () => stageNode.removeEventListener("wheel", onWheel);
-  }, [image]);
 
   const handleCapture = useCallback(async () => {
     setPanel("none");
@@ -265,16 +170,33 @@ export default function App() {
       imageInput.current?.click();
       return;
     }
-    if (!(await confirmReplace())) return;
-    setBusy(true);
+    if (captureInProgress.current) return;
+    captureInProgress.current = true;
     try {
-      await loadCapture(await captureScreen());
+      if (!(await confirmReplace())) return;
+      setBusy(true);
+      const capture = await captureScreen();
+      // The compositor may still be tearing down the system screenshot UI.
+      // Let that transition settle before the hidden editor is re-fitted.
+      await new Promise<void>((resolve) => window.setTimeout(resolve, CAPTURE_SETTLE_DELAY));
+      await loadCapture(capture);
+      // `capture_screen` keeps the window hidden until the new geometry has
+      // been applied, so revealing it here cannot restore the old position.
+      // Yield once so React has committed the image and run the layout effect,
+      // then wait for that native geometry request before showing the window.
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+      await waitForWindowFit();
+      await showMainWindow();
     } catch (error) {
+      // Capture failures can happen after the native window was hidden. Make
+      // the editor recoverable even when the command failed mid-flight.
+      await showMainWindow().catch(() => undefined);
       notify(errorMessage(error));
     } finally {
+      captureInProgress.current = false;
       setBusy(false);
     }
-  }, [confirmReplace, loadCapture, notify]);
+  }, [confirmReplace, loadCapture, notify, waitForWindowFit]);
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -414,7 +336,7 @@ export default function App() {
       setTool("select");
       setPanel("none");
       setZoom(fitted);
-      recenter.current = true;
+      requestRecenter();
       try {
         const result = await pixelateImage(project.image.dataUrl, project.image.width, project.image.height);
         if (request !== pixelationRequest.current) return;
@@ -427,7 +349,7 @@ export default function App() {
         notify("马赛克处理失败，已阻止含马赛克的导出");
       }
     },
-    [history.reset, notify, refreshArea],
+    [history.reset, notify, refreshArea, requestRecenter],
   );
 
   const handleOpenProject = useCallback(async () => {
@@ -496,84 +418,37 @@ export default function App() {
       history.annotations.map((annotation) => (annotation.id === selectedId ? { ...annotation, text } : annotation)),
     );
   };
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement;
-      if (["INPUT", "TEXTAREA"].includes(target.tagName)) return;
-      const modifier = event.ctrlKey || event.metaKey;
-      const key = event.key.toLowerCase();
-      if (modifier && key === "z") {
-        event.preventDefault();
-        event.shiftKey ? history.redo() : history.undo();
-        return;
-      }
-      if (modifier && key === "y") {
-        event.preventDefault();
-        history.redo();
-        return;
-      }
-      if (modifier && key === "c" && image) {
-        event.preventDefault();
-        void handleCopy();
-        return;
-      }
-      if (modifier && key === "s" && image) {
-        event.preventDefault();
-        void (event.shiftKey ? handleSaveProject() : handleSaveImage());
-        return;
-      }
-      if (modifier && (key === "=" || key === "+")) {
-        event.preventDefault();
-        applyZoom(zoom + 0.1);
-        return;
-      }
-      if (modifier && key === "-") {
-        event.preventDefault();
-        applyZoom(zoom - 0.1);
-        return;
-      }
-      if (modifier && key === "0") {
-        event.preventDefault();
-        applyZoom(1);
-        return;
-      }
-      if (modifier) return;
-      if (event.key === "Delete" || event.key === "Backspace") removeSelected();
-      if (event.key === "Escape") {
-        if (panel !== "none") {
-          setPanel("none");
-          return;
-        }
-        setSelectedId(null);
-        setTool("select");
-      }
-      if (key === "?") {
-        setPanel((current) => (current === "shortcuts" ? "none" : "shortcuts"));
-        return;
-      }
-      const item = TOOL_ITEMS.find((candidate) => candidate.key.toLowerCase() === key);
-      if (item?.id === "mosaic" && mosaicStatus !== "ready") {
-        notify(mosaicStatus === "loading" ? "马赛克正在准备" : "马赛克当前不可用");
-        return;
-      }
-      if (item) setTool(item.id);
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [applyZoom, handleCopy, handleSaveImage, handleSaveProject, history.redo, history.undo, image, mosaicStatus, notify, panel, removeSelected, zoom]);
+
+  useEditorShortcuts({
+    applyZoom,
+    image,
+    mosaicStatus,
+    notify,
+    onCopy: handleCopy,
+    onDeleteSelected: removeSelected,
+    onSaveImage: handleSaveImage,
+    onSaveProject: handleSaveProject,
+    panel,
+    redo: history.redo,
+    setPanel,
+    setSelectedId,
+    setTool,
+    undo: history.undo,
+    zoom,
+  });
 
   // Dragging the picture itself moves the window, the way a pinned note behaves.
   const dragOrigin = useRef<{ x: number; y: number } | null>(null);
   const startedDrag = useRef(false);
 
-  const onStagePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+  const onStagePointerDown = (event: PointerEvent<HTMLDivElement>) => {
     const target = event.target as Element;
     if (event.button !== 0 || tool !== "select" || !target.classList?.contains("editor-canvas")) return;
     dragOrigin.current = { x: event.clientX, y: event.clientY };
     startedDrag.current = false;
   };
 
-  const onStagePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+  const onStagePointerMove = (event: PointerEvent<HTMLDivElement>) => {
     const origin = dragOrigin.current;
     if (!origin || startedDrag.current) return;
     if (Math.abs(event.clientX - origin.x) < 4 && Math.abs(event.clientY - origin.y) < 4) return;
@@ -586,7 +461,7 @@ export default function App() {
     dragOrigin.current = null;
   };
 
-  const onBarPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+  const onBarPointerDown = (event: PointerEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement;
     if (event.button !== 0 || target.closest("button, input, textarea")) return;
     if (isTauri()) void startWindowDrag().catch(() => undefined);
@@ -616,7 +491,7 @@ export default function App() {
   }
 
   return (
-    <div className="pin-window" style={{ "--bar-height": `${barHeight}px` } as React.CSSProperties}>
+    <div className="pin-window" style={{ "--bar-height": `${barHeight}px` } as CSSProperties}>
       <div
         ref={stageRef}
         className="pin-stage"
@@ -700,59 +575,26 @@ export default function App() {
         />
       )}
 
-      <div ref={barRef} className="pin-bar" aria-label="标注工具" onPointerDown={onBarPointerDown}>
-        {TOOL_ITEMS.map((item) => (
-          <ToolButton
-            key={item.id}
-            item={item}
-            active={tool === item.id}
-            disabled={item.id === "mosaic" && mosaicStatus !== "ready"}
-            disabledReason={mosaicStatus === "loading" ? "马赛克正在准备" : "马赛克处理失败"}
-            onClick={() => {
-              setTool(item.id);
-              if (item.id === "select") setPanel("none");
-            }}
-          />
-        ))}
-        <span className="bar-divider" />
-        <button
-          className={`icon-button swatch-button ${panel === "style" ? "is-active" : ""}`}
-          title={activeStyle ? "样式" : "选中标注或先选择工具"}
-          aria-label="样式"
-          disabled={!activeStyle}
-          onClick={() => setPanel((current) => (current === "style" ? "none" : "style"))}
-        >
-          <Palette size={17} />
-          {activeStyle && <span className="swatch-dot" style={{ backgroundColor: activeStyle.color }} />}
-        </button>
-        <IconButton icon={Undo2} label="撤销" disabled={!history.canUndo} onClick={history.undo} />
-        <IconButton icon={Redo2} label="重做" disabled={!history.canRedo} onClick={history.redo} />
-        <span className="bar-divider" />
-        <IconButton
-          icon={HelpCircle}
-          label="快捷键 (?)"
-          active={panel === "shortcuts"}
-          onClick={() => setPanel((current) => (current === "shortcuts" ? "none" : "shortcuts"))}
-        />
-        {isTauri() && (
-          <IconButton
-            icon={Settings}
-            label="设置"
-            active={panel === "settings"}
-            onClick={() => setPanel((current) => (current === "settings" ? "none" : "settings"))}
-          />
-        )}
-        <IconButton icon={isPinned ? PinOff : Pin} label={isPinned ? "取消置顶" : "置顶"} active={isPinned} onClick={handlePin} />
-        <IconButton icon={Download} label={`导出 ${exportFormat.toUpperCase()} (Ctrl+S)`} onClick={handleSaveImage} />
-        <IconButton
-          icon={MoreHorizontal}
-          label="更多"
-          active={panel === "menu"}
-          onClick={() => setPanel((current) => (current === "menu" ? "none" : "menu"))}
-        />
-        <button className="primary-action" onClick={handleCopy}><Copy size={15} />复制</button>
-        <IconButton icon={X} label="关闭到托盘" onClick={handleClose} />
-      </div>
+      <EditorToolbar
+        activeStyle={activeStyle}
+        barRef={barRef}
+        canRedo={history.canRedo}
+        canUndo={history.canUndo}
+        exportFormat={exportFormat}
+        isPinned={isPinned}
+        mosaicStatus={mosaicStatus}
+        onClose={handleClose}
+        onCopy={handleCopy}
+        onPanelChange={setPanel}
+        onPin={handlePin}
+        onRedo={history.redo}
+        onSaveImage={handleSaveImage}
+        onToolChange={setTool}
+        onUndo={history.undo}
+        onPointerDown={onBarPointerDown}
+        panel={panel}
+        tool={tool}
+      />
 
       <FilePickers
         imageInput={imageInput}
@@ -762,431 +604,6 @@ export default function App() {
         onBeforeReplace={confirmReplace}
         onError={notify}
       />
-    </div>
-  );
-}
-
-function IconButton({ icon: Icon, label, active, disabled, onClick }: { icon: LucideIcon; label: string; active?: boolean; disabled?: boolean; onClick: () => void }) {
-  return <button className={`icon-button ${active ? "is-active" : ""}`} title={label} aria-label={label} aria-pressed={active} disabled={disabled} onClick={onClick}><Icon size={17} /></button>;
-}
-
-function ToolButton({ item, active, disabled, disabledReason, onClick }: { item: (typeof TOOL_ITEMS)[number]; active: boolean; disabled?: boolean; disabledReason?: string; onClick: () => void }) {
-  const Icon = item.icon;
-  return (
-    <button className={`tool-button ${active ? "is-active" : ""}`} title={disabled ? disabledReason : `${item.label} (${item.key})`} aria-label={item.label} aria-pressed={active} disabled={disabled} onClick={onClick}>
-      <Icon size={17} />
-    </button>
-  );
-}
-
-function Toast({ message, onDismiss }: { message: string; onDismiss: () => void }) {
-  return (
-    <div className="toast">
-      <Check size={14} />
-      {message}
-      <button aria-label="关闭提示" onClick={onDismiss}><X size={13} /></button>
-    </div>
-  );
-}
-function StylePanel({
-  style,
-  target,
-  hasSelection,
-  text,
-  onChange,
-  onText,
-  onBeginChange,
-  onEndChange,
-  onMoveLayer,
-  onDelete,
-}: {
-  style: AnnotationStyle;
-  target: Annotation["type"];
-  hasSelection: boolean;
-  text: string | null;
-  onChange: (change: Partial<AnnotationStyle>, transient?: boolean) => void;
-  onText: (text: string) => void;
-  onBeginChange: () => void;
-  onEndChange: () => void;
-  onMoveLayer: (direction: -1 | 1) => void;
-  onDelete: () => void;
-}) {
-  return (
-    <div className="pin-panel" role="dialog" aria-label="样式">
-      <div className="panel-title">
-        <span>{toolName(target)}</span>
-        <span className="panel-hint">{hasSelection ? "编辑所选" : "下次绘制"}</span>
-      </div>
-      {target !== "mosaic" && (
-        <div className="color-row">
-          {COLORS.map((color) => (
-            <button
-              key={color}
-              className={`color-swatch ${style.color === color ? "is-selected" : ""}`}
-              style={{ backgroundColor: color }}
-              aria-label={color}
-              onClick={() => onChange({ color })}
-            />
-          ))}
-        </div>
-      )}
-      {target !== "mosaic" && target !== "text" && (
-        <Slider
-          label="粗细"
-          value={style.strokeWidth}
-          min={1}
-          max={target === "highlighter" ? 40 : 16}
-          suffix="px"
-          onChange={(strokeWidth) => onChange({ strokeWidth }, true)}
-          onBegin={onBeginChange}
-          onEnd={onEndChange}
-        />
-      )}
-      {target === "text" && (
-        <Slider label="字号" value={style.fontSize} min={12} max={96} suffix="px" onChange={(fontSize) => onChange({ fontSize }, true)} onBegin={onBeginChange} onEnd={onEndChange} />
-      )}
-      {target !== "mosaic" && (
-        <Slider
-          label="不透明度"
-          value={Math.round(style.opacity * 100)}
-          min={10}
-          max={100}
-          suffix="%"
-          onChange={(value) => onChange({ opacity: value / 100 }, true)}
-          onBegin={onBeginChange}
-          onEnd={onEndChange}
-        />
-      )}
-      {text !== null && (
-        <label className="panel-field">
-          <span>文字</span>
-          <textarea value={text} rows={2} onFocus={onBeginChange} onChange={(event) => onText(event.target.value)} onBlur={() => onEndChange()} />
-        </label>
-      )}
-      {hasSelection && (
-        <div className="panel-actions">
-          <button title="下移一层" onClick={() => onMoveLayer(-1)}><ArrowDown size={15} /></button>
-          <button title="上移一层" onClick={() => onMoveLayer(1)}><ArrowUp size={15} /></button>
-          <button className="danger" title="删除 (Delete)" onClick={onDelete}><Trash2 size={15} /></button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function Slider({ label, value, min, max, suffix, onChange, onBegin, onEnd }: { label: string; value: number; min: number; max: number; suffix: string; onChange: (value: number) => void; onBegin?: () => void; onEnd?: () => void }) {
-  return (
-    <label className="panel-slider">
-      <span>{label}</span>
-      <output>{value}{suffix}</output>
-      <input
-        type="range"
-        min={min}
-        max={max}
-        value={value}
-        onFocus={() => onBegin?.()}
-        onPointerDown={() => onBegin?.()}
-        onChange={(event) => onChange(Number(event.target.value))}
-        onPointerUp={() => onEnd?.()}
-        onPointerCancel={() => onEnd?.()}
-        onBlur={() => onEnd?.()}
-      />
-    </label>
-  );
-}
-function MenuPanel({
-  title,
-  image,
-  zoom,
-  busy,
-  onTitle,
-  onCapture,
-  onPaste,
-  onOpenImage,
-  onOpenProject,
-  onSaveProject,
-  onZoom,
-  onZoomToScreen,
-  exportFormat,
-  exportQuality,
-  onExportFormat,
-  onExportQuality,
-  onSaveImage,
-}: {
-  title: string;
-  image: ImageSource;
-  zoom: number;
-  busy: boolean;
-  onTitle: (title: string) => void;
-  onCapture: () => void;
-  onPaste: () => void;
-  onOpenImage: () => void;
-  onOpenProject: () => void;
-  onSaveProject: () => void;
-  onZoom: (zoom: number) => void;
-  onZoomToScreen: () => void;
-  exportFormat: ExportFormat;
-  exportQuality: number;
-  onExportFormat: (format: ExportFormat) => void;
-  onExportQuality: (quality: number) => void;
-  onSaveImage: () => void;
-}) {
-  return (
-    <div className="pin-panel is-menu" role="dialog" aria-label="更多">
-      <label className="panel-field">
-        <span>名称</span>
-        <input aria-label="工程名称" value={title} onChange={(event) => onTitle(event.target.value)} />
-      </label>
-      <div className="panel-zoom">
-        <button title="缩小 (Ctrl+-)" onClick={() => onZoom(zoom - 0.1)}><ZoomOut size={15} /></button>
-        <button className="zoom-value" title="100% (Ctrl+0)" onClick={() => onZoom(1)}>{Math.round(zoom * 100)}%</button>
-        <button title="放大 (Ctrl++)" onClick={() => onZoom(zoom + 0.1)}><ZoomIn size={15} /></button>
-        <button title="适应屏幕" onClick={onZoomToScreen}><Maximize2 size={15} /></button>
-      </div>
-      <div className="panel-export">
-        <span className="panel-export-label">导出格式</span>
-        <div className="format-row">
-          {EXPORT_FORMATS.map((entry) => (
-            <button
-              key={entry.id}
-              className={`format-button ${exportFormat === entry.id ? "is-selected" : ""}`}
-              aria-pressed={exportFormat === entry.id}
-              onClick={() => onExportFormat(entry.id)}
-            >
-              {entry.label}
-            </button>
-          ))}
-        </div>
-        {isLossyFormat(exportFormat) && (
-          <Slider
-            label="质量"
-            value={Math.round(exportQuality * 100)}
-            min={40}
-            max={100}
-            suffix="%"
-            onChange={(value) => onExportQuality(value / 100)}
-          />
-        )}
-      </div>
-      <div className="panel-menu">
-        <button onClick={onSaveImage}><Download size={15} />导出 {exportFormat.toUpperCase()} (Ctrl+S)</button>
-        <button disabled={busy} onClick={onCapture}><ScanLine size={15} />重新截图</button>
-        <button disabled={busy} onClick={onPaste}><Clipboard size={15} />粘贴剪贴板</button>
-        <button onClick={onOpenImage}><ImagePlus size={15} />打开图片</button>
-        <button onClick={onOpenProject}><FolderOpen size={15} />打开工程</button>
-        <button onClick={onSaveProject}><FileArchive size={15} />保存工程 (Ctrl+Shift+S)</button>
-      </div>
-      <div className="panel-meta">{image.width} × {image.height} · {isTauri() ? "桌面" : "预览"}</div>
-    </div>
-  );
-}
-
-function EmptyState({
-  busy,
-  onDrag,
-  onCapture,
-  onOpen,
-  onOpenProject,
-  onClose,
-}: {
-  busy: boolean;
-  onDrag: (event: React.PointerEvent<HTMLDivElement>) => void;
-  onCapture: () => void;
-  onOpen: () => void;
-  onOpenProject: () => void;
-  onClose: () => void;
-}) {
-  return (
-    <div className="empty-state" onPointerDown={onDrag}>
-      <button className="empty-close" title="关闭到托盘" aria-label="关闭到托盘" onClick={onClose}><X size={15} /></button>
-      <div className="empty-symbol"><Aperture size={26} /></div>
-      <div className="empty-actions">
-        <button className="primary-action large" disabled={busy} onClick={onCapture}><ScanLine size={16} />截取屏幕</button>
-        <button className="secondary-action" onClick={onOpen}><ImagePlus size={16} />打开图片</button>
-        <button className="secondary-action" onClick={onOpenProject}><FolderOpen size={16} />工程</button>
-      </div>
-      <div className="shortcut-row"><kbd>Ctrl</kbd><span>+</span><kbd>Shift</kbd><span>+</span><kbd>A</kbd></div>
-    </div>
-  );
-}
-function FilePickers({
-  imageInput,
-  projectInput,
-  onImage,
-  onProject,
-  onBeforeReplace,
-  onError,
-}: {
-  imageInput: React.RefObject<HTMLInputElement | null>;
-  projectInput: React.RefObject<HTMLInputElement | null>;
-  onImage: (capture: CaptureResult, name?: string) => Promise<void>;
-  onProject: (project: ScreenPinProject) => Promise<void>;
-  onBeforeReplace: () => Promise<boolean>;
-  onError: (message: string) => void;
-}) {
-  return (
-    <>
-      <input
-        ref={imageInput}
-        hidden
-        type="file"
-        accept="image/png,image/jpeg,image/webp"
-        onChange={async (event) => {
-          const file = event.target.files?.[0];
-          event.target.value = "";
-          if (!file) return;
-          try {
-            if (!(await onBeforeReplace())) return;
-            await onImage(await imageFromFile(file), file.name);
-          } catch (error) {
-            onError(errorMessage(error));
-          }
-        }}
-      />
-      <input
-        ref={projectInput}
-        hidden
-        type="file"
-        accept=".screenpin,application/json"
-        onChange={async (event) => {
-          const file = event.target.files?.[0];
-          event.target.value = "";
-          if (!file) return;
-          try {
-            if (!(await onBeforeReplace())) return;
-            await onProject(JSON.parse(await file.text()));
-          } catch (error) {
-            onError(errorMessage(error));
-          }
-        }}
-      />
-    </>
-  );
-}
-
-function toolName(tool: Annotation["type"]) {
-  return TOOL_ITEMS.find((item) => item.id === tool)?.label ?? tool;
-}
-
-function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function ShortcutsPanel({ exportFormat, captureShortcut }: { exportFormat: ExportFormat; captureShortcut?: string }) {
-  const displayShortcut = captureShortcut?.replace("CommandOrControl", "Ctrl") || "Ctrl+Shift+A";
-  const shortcuts = [
-    { keys: displayShortcut.split("+"), action: "截取屏幕（全局）" },
-    { keys: ["V"], action: "选择工具" },
-    { keys: ["R"], action: "矩形" },
-    { keys: ["O"], action: "椭圆" },
-    { keys: ["A"], action: "箭头" },
-    { keys: ["P"], action: "画笔" },
-    { keys: ["H"], action: "荧光笔" },
-    { keys: ["G"], action: "区域高亮" },
-    { keys: ["T"], action: "文字" },
-    { keys: ["M"], action: "马赛克" },
-    { keys: ["Ctrl", "Z"], action: "撤销" },
-    { keys: ["Ctrl", "Shift", "Z"], action: "重做" },
-    { keys: ["Ctrl", "Y"], action: "重做" },
-    { keys: ["Ctrl", "C"], action: "复制到剪贴板" },
-    { keys: ["Ctrl", "S"], action: `导出 ${exportFormat.toUpperCase()}` },
-    { keys: ["Ctrl", "Shift", "S"], action: "保存工程" },
-    { keys: ["Ctrl", "+"], action: "放大" },
-    { keys: ["Ctrl", "-"], action: "缩小" },
-    { keys: ["Ctrl", "0"], action: "重置缩放" },
-    { keys: ["Delete"], action: "删除所选" },
-    { keys: ["Backspace"], action: "删除所选" },
-    { keys: ["Esc"], action: "取消选择/关闭面板" },
-    { keys: ["?"], action: "显示/隐藏快捷键" },
-  ];
-
-  return (
-    <div className="pin-panel is-shortcuts" role="dialog" aria-label="快捷键">
-      <div className="panel-title">
-        <span>键盘快捷键</span>
-      </div>
-      <div className="shortcuts-list">
-        {shortcuts.map((shortcut, index) => (
-          <div key={index} className="shortcut-item">
-            <div className="shortcut-keys">
-              {shortcut.keys.map((key, i) => (
-                <span key={i}>
-                  <kbd>{key}</kbd>
-                  {i < shortcut.keys.length - 1 && <span className="shortcut-plus">+</span>}
-                </span>
-              ))}
-            </div>
-            <div className="shortcut-action">{shortcut.action}</div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function SettingsPanel({
-  config,
-  onSave,
-  onClose,
-}: {
-  config: AppConfig;
-  onSave: (config: AppConfig) => void;
-  onClose: () => void;
-}) {
-  const [shortcut, setShortcut] = useState(config.captureShortcut);
-  const [isRecording, setIsRecording] = useState(false);
-
-  const handleKeyDown = (event: React.KeyboardEvent) => {
-    if (!isRecording) return;
-    event.preventDefault();
-    event.stopPropagation();
-
-    const parts: string[] = [];
-    if (event.ctrlKey || event.metaKey) parts.push("CommandOrControl");
-    if (event.shiftKey) parts.push("Shift");
-    if (event.altKey) parts.push("Alt");
-
-    const key = event.key;
-    if (key === "Control" || key === "Shift" || key === "Alt" || key === "Meta") return;
-
-    const mainKey = key.length === 1 ? key.toUpperCase() : key;
-    parts.push(mainKey);
-
-    if (parts.length > 1) {
-      setShortcut(parts.join("+"));
-      setIsRecording(false);
-    }
-  };
-
-  return (
-    <div className="pin-panel is-settings" role="dialog" aria-label="设置" onKeyDown={handleKeyDown}>
-      <div className="panel-title">
-        <span>设置</span>
-      </div>
-      <label className="panel-field">
-        <span>截图快捷键</span>
-        <div className="shortcut-input-wrapper">
-          <input
-            className="shortcut-input"
-            value={shortcut.replace("CommandOrControl", "Ctrl")}
-            readOnly
-            placeholder="点击录制按钮设置快捷键"
-          />
-          <button
-            className={isRecording ? "is-recording" : ""}
-            onClick={() => setIsRecording(!isRecording)}
-          >
-            {isRecording ? "按下快捷键..." : "录制"}
-          </button>
-        </div>
-        <span className="panel-hint">全局快捷键，在任何界面都可触发截图</span>
-      </label>
-      <div className="panel-actions">
-        <button onClick={onClose}>取消</button>
-        <button className="primary-action" onClick={() => onSave({ captureShortcut: shortcut })}>
-          保存
-        </button>
-      </div>
     </div>
   );
 }
