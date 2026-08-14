@@ -1,6 +1,6 @@
 pkgname=screenpin
 pkgver=0.2.0
-pkgrel=1
+pkgrel=20
 pkgdesc="Non-destructive cross-platform screenshot editor"
 arch=('x86_64' 'aarch64')
 url="https://github.com/wildalley/screenpin"
@@ -35,7 +35,9 @@ package() {
   local _build_root="$srcdir/repo"
 
   install -Dm755 "$_build_root/src-tauri/target/release/screenpin" "$pkgdir/usr/bin/screenpin"
-  install -Dm644 "$startdir/screenpin.desktop" "$pkgdir/usr/share/applications/screenpin.desktop"
+  # Installed under the reverse-DNS app id so GNOME's portal can resolve
+  # `App info for 'io.screenpin.desktop'` and allow global shortcuts.
+  install -Dm644 "$startdir/screenpin.desktop" "$pkgdir/usr/share/applications/io.screenpin.desktop"
   install -Dm644 "$_build_root/src-tauri/icons/32x32.png" "$pkgdir/usr/share/icons/hicolor/32x32/apps/screenpin.png"
   install -Dm644 "$_build_root/src-tauri/icons/64x64.png" "$pkgdir/usr/share/icons/hicolor/64x64/apps/screenpin.png"
   install -Dm644 "$_build_root/src-tauri/icons/128x128.png" "$pkgdir/usr/share/icons/hicolor/128x128/apps/screenpin.png"

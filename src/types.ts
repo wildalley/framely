@@ -62,10 +62,22 @@ export interface CaptureResult {
   height: number;
 }
 
+/** A monitor's location inside a whole-desktop capture, in image pixels. */
+export interface ScreenBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** True for the system's primary monitor. */
+  primary: boolean;
+}
+
 export interface CaptureResponse extends CaptureResult {
   selectionRequired: boolean;
   fallbackUsed: boolean;
   fallbackReason?: string | null;
+  /** The monitors inside the delivered bitmap, empty when unmappable. */
+  screens: ScreenBounds[];
 }
 
 export const COLORS = ["#e5484d", "#ff8a3d", "#f2c94c", "#1f9d73", "#2383e2", "#7c5cff", "#171717", "#ffffff"];

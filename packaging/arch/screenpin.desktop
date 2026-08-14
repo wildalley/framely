@@ -6,4 +6,5 @@ Exec=screenpin
 Icon=screenpin
 Terminal=false
 Categories=Graphics;Utility;
-StartupWMClass=screenpin
+StartupWMClass=io.screenpin.desktop
+StartupNotify=true

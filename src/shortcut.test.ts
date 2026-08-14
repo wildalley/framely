@@ -4,6 +4,7 @@ import {
   heldModifiers,
   isModifierPress,
   mainShortcutKey,
+  modifierFromEvent,
   recordShortcut,
   shortcutParts,
   type ShortcutKeyEvent,

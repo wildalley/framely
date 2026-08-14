@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, X } from "lucide-react";
-import type { CaptureResult, Point } from "./types";
+import type { CaptureResult, Point, ScreenBounds } from "./types";
 
 export interface CaptureSelection {
   x: number;
@@ -18,6 +18,91 @@ type DragState =
 const HANDLES: ResizeHandle[] = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+
+/**
+ * The rectangle of the browser surface that actually shows the captured image.
+ * The image is letterboxed (`object-fit: contain`) so a whole virtual desktop
+ * stays fully visible even when the selector window covers a single monitor —
+ * which is all Wayland lets a program do. Pointer and selection coordinates are
+ * mapped through this rect in both directions.
+ */
+export function imageDisplayRect(
+  surface: { left: number; top: number; width: number; height: number },
+  image: { width: number; height: number },
+): { left: number; top: number; width: number; height: number } {
+  if (surface.width <= 0 || surface.height <= 0 || image.width <= 0 || image.height <= 0) {
+    return { left: surface.left, top: surface.top, width: surface.width, height: surface.height };
+  }
+  const surfaceRatio = surface.width / surface.height;
+  const imageRatio = image.width / image.height;
+  if (imageRatio > surfaceRatio) {
+    const width = surface.width;
+    const height = surface.width / imageRatio;
+    return { left: surface.left, top: surface.top + (surface.height - height) / 2, width, height };
+  }
+  const height = surface.height;
+  const width = surface.height * imageRatio;
+  return { left: surface.left + (surface.width - width) / 2, top: surface.top, width, height };
+}
+
+/** Convert an image-pixel point to CSS pixel coordinates on the surface. */
+export function constainPoint(
+  rect: { left: number; top: number; width: number; height: number },
+  image: { width: number; height: number },
+  x: number,
+  y: number,
+): { x: number; y: number } {
+  return {
+    x: rect.left + (x / image.width) * rect.width,
+    y: rect.top + (y / image.height) * rect.height,
+  };
+}
+
+/** Convert a CSS surface point to image-pixel coordinates. */
+export function unconstainPoint(
+  rect: { left: number; top: number; width: number; height: number },
+  image: { width: number; height: number },
+  x: number,
+  y: number,
+): { x: number; y: number } {
+  if (rect.width === 0 || rect.height === 0) return { x: 0, y: 0 };
+  return {
+    x: ((x - rect.left) / rect.width) * image.width,
+    y: ((y - rect.top) / rect.height) * image.height,
+  };
+}
+
+/** The monitor whose bitmap rectangle contains an image-pixel point. */
+export function screenAtPoint(screens: ScreenBounds[], point: Point): ScreenBounds | undefined {
+  return screens.find(
+    (s) => point.x >= s.x && point.x <= s.x + s.width && point.y >= s.y && point.y <= s.y + s.height,
+  );
+}
+
+/** A monitor's rectangle in a normalized 0..1 layout space. */
+export interface ScreenLayoutRect {
+  screenIndex: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * True when screens are stacked vertically (their x-ranges overlap), which
+ * decides whether the screen-picker lays them in a row or a column.
+ */
+export function screenLayoutAxis(screens: ScreenBounds[]): "row" | "column" {
+  if (screens.length < 2) return "row";
+  const primaryIndex = screens.findIndex((s) => s.primary);
+  const anchorIndex = primaryIndex >= 0 ? primaryIndex : 0;
+  const anchor = screens[anchorIndex];
+  const overlap = screens.some((s, i) => {
+    if (i === anchorIndex) return false;
+    return s.x < anchor.x + anchor.width && anchor.x < s.x + s.width;
+  });
+  return overlap ? "column" : "row";
+}
 
 export function normalizeSelection(start: Point, end: Point): CaptureSelection {
   return {
@@ -78,6 +163,33 @@ export async function cropCapture(
   return { dataUrl: canvas.toDataURL("image/png"), width, height };
 }
 
+/**
+ * Crop a real screen out of the shared whole-desktop bitmap and downscale it to
+ * exactly `width × height` pixels, so the whole screen fits the box at native
+ * sharpness (matched to the box size × devicePixelRatio). It is never upscaled,
+ * and neighbouring screens never bleed in because only this monitor's region is
+ * drawn.
+ */
+export async function cropThumb(
+  capture: CaptureResult,
+  screen: ScreenBounds,
+  width: number,
+  height: number,
+): Promise<string> {
+  const source = await loadImage(capture.dataUrl);
+  const tw = Math.max(1, Math.round(width));
+  const th = Math.max(1, Math.round(height));
+  const canvas = document.createElement("canvas");
+  canvas.width = tw;
+  canvas.height = th;
+  const context = canvas.getContext("2d");
+  if (!context) return canvas.toDataURL("image/png");
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = "high";
+  context.drawImage(source, screen.x, screen.y, screen.width, screen.height, 0, 0, tw, th);
+  return canvas.toDataURL("image/png");
+}
+
 function loadImage(dataUrl: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const image = new Image();
@@ -89,38 +201,119 @@ function loadImage(dataUrl: string): Promise<HTMLImageElement> {
 
 export function CaptureOverlay({
   capture,
+  screens,
   onConfirm,
   onCancel,
 }: {
   capture: CaptureResult;
-  onConfirm: (selection: CaptureSelection) => void;
+  screens?: ScreenBounds[];
+  onConfirm: (result: CaptureResult) => void;
   onCancel: () => void;
 }) {
   const surfaceRef = useRef<HTMLDivElement>(null);
   const drag = useRef<DragState | null>(null);
   const [selection, setSelection] = useState<CaptureSelection | null>(null);
   const [locked, setLocked] = useState(false);
+  // Multi-screen capture first asks which screen to take: show a scaled-down
+  // preview of each monitor, let the user click one, then crop that screen
+  // natively.
+  const screenBounds = screens ?? [];
+  const multiScreen = screenBounds.length > 1;
+  const [screenImage, setScreenImage] = useState<CaptureResult | null>(null);
+  const [thumbs, setThumbs] = useState<Record<number, string>>({});
+  const active = screenImage ?? capture;
+  const pickingScreen = multiScreen && !screenImage;
+
+  // Downscale each screen to a whole-screen preview. Resolution is computed
+  // purely from the layout constants + DPR (no DOM measurement, so it is
+  // deterministic on first display and every re-pick), and generated × 2 so the
+  // preview is never upscaled and stays sharp.
+  useEffect(() => {
+    if (!pickingScreen) return;
+    let cancelled = false;
+    const axis = screenLayoutAxis(screenBounds);
+    const dpr = (typeof window !== "undefined" && window.devicePixelRatio) || 1;
+    // Match the CSS thumbnail size (row: height-capped, column: width-capped).
+    const viewH = typeof window !== "undefined" ? Math.min(window.innerHeight * 0.56, 360) : 360;
+    const viewW = typeof window !== "undefined" ? Math.min(window.innerWidth * 0.76, 560) : 560;
+    const build = async () => {
+      const entries = await Promise.all(
+        screenBounds.map(async (screen) => {
+          const aspect = screen.height > 0 ? screen.width / screen.height : 16 / 9;
+          const css =
+            axis === "column"
+              ? { width: viewW, height: viewW / aspect }
+              : { width: viewH * aspect, height: viewH };
+          const w = Math.max(2, Math.round(css.width * 2 * dpr));
+          const h = Math.max(2, Math.round(css.height * 2 * dpr));
+          const url = await cropThumb(capture, screen, w, h);
+          return [screenBounds.indexOf(screen), url] as const;
+        }),
+      );
+      if (!cancelled) {
+        setThumbs(Object.fromEntries(entries.filter((e): e is [number, string] => Boolean(e))));
+      }
+    };
+    void build();
+    return () => {
+      cancelled = true;
+    };
+  }, [pickingScreen, capture, screenBounds]);
+
+  const currentRect = useCallback(() => {
+    const bounds = surfaceRef.current?.getBoundingClientRect();
+    return bounds
+      ? imageDisplayRect(bounds, active)
+      : { left: 0, top: 0, width: 0, height: 0 };
+  }, [active]);
 
   const pointFromEvent = useCallback((event: { clientX: number; clientY: number }): Point => {
-    const bounds = surfaceRef.current?.getBoundingClientRect();
-    if (!bounds || bounds.width === 0 || bounds.height === 0) return { x: 0, y: 0 };
+    const rect = currentRect();
+    const point = unconstainPoint(rect, active, event.clientX, event.clientY);
     return {
-      x: clamp(Math.round(((event.clientX - bounds.left) / bounds.width) * capture.width), 0, capture.width),
-      y: clamp(Math.round(((event.clientY - bounds.top) / bounds.height) * capture.height), 0, capture.height),
+      x: clamp(Math.round(point.x), 0, active.width),
+      y: clamp(Math.round(point.y), 0, active.height),
     };
-  }, [capture.height, capture.width]);
+  }, [active, currentRect]);
 
-  const confirm = useCallback(() => {
+  const confirm = useCallback(async () => {
     if (locked || !selection || selection.width < 2 || selection.height < 2) return;
     setLocked(true);
-    onConfirm(selection);
-  }, [locked, onConfirm, selection]);
+    try {
+      const cropped = await cropCapture(active, selection);
+      onConfirm(cropped);
+    } catch {
+      onCancel();
+    }
+  }, [active, locked, onCancel, onConfirm, selection]);
+
+  const backToPicking = useCallback(() => {
+    if (locked) return;
+    setScreenImage(null);
+    setSelection(null);
+  }, [locked]);
 
   const cancel = useCallback(() => {
     if (locked) return;
     setLocked(true);
     onCancel();
   }, [locked, onCancel]);
+
+  const pickScreen = useCallback(
+    async (point: Point) => {
+      const picked = screenAtPoint(screenBounds, point);
+      if (!picked) return;
+      setLocked(true);
+      try {
+        const frame = await cropCapture(capture, picked);
+        setScreenImage(frame);
+        setSelection(null);
+      } finally {
+        setLocked(false);
+      }
+    },
+    [capture, screenBounds],
+  );
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -129,7 +322,7 @@ export function CaptureOverlay({
         cancel();
       } else if (event.key === "Enter" && selection) {
         event.preventDefault();
-        confirm();
+        void confirm();
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -137,27 +330,29 @@ export function CaptureOverlay({
   }, [cancel, confirm, selection]);
 
   const startCreate = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0 || (event.target as HTMLElement).closest(".capture-selection, .capture-actions")) return;
-    const origin = pointFromEvent(event);
-    drag.current = { kind: "create", origin };
-    setSelection({ x: origin.x, y: origin.y, width: 0, height: 0 });
+    if (event.button !== 0 || (event.target as HTMLElement).closest(".capture-selection, .capture-actions, .capture-screen")) return;
+    // Screen-picking phase: clicking the empty area does nothing; the screen
+    // buttons handle selection themselves.
+    if (pickingScreen) return;
+    drag.current = { kind: "create", origin: pointFromEvent(event) };
+    setSelection({ x: drag.current.origin.x, y: drag.current.origin.y, width: 0, height: 0 });
     event.currentTarget.setPointerCapture(event.pointerId);
   };
 
   const updateDrag = (event: React.PointerEvent<HTMLDivElement>) => {
-    const active = drag.current;
-    if (!active) return;
+    const activeDrag = drag.current;
+    if (!activeDrag) return;
     const point = pointFromEvent(event);
-    if (active.kind === "create") {
-      setSelection(normalizeSelection(active.origin, point));
-    } else if (active.kind === "move") {
+    if (activeDrag.kind === "create") {
+      setSelection(normalizeSelection(activeDrag.origin, point));
+    } else if (activeDrag.kind === "move") {
       setSelection(moveSelection(
-        active.initial,
-        { x: point.x - active.origin.x, y: point.y - active.origin.y },
-        capture,
+        activeDrag.initial,
+        { x: point.x - activeDrag.origin.x, y: point.y - activeDrag.origin.y },
+        active,
       ));
     } else {
-      setSelection(resizeSelection(active.initial, active.handle, point, capture));
+      setSelection(resizeSelection(activeDrag.initial, activeDrag.handle, point, active));
     }
   };
 
@@ -184,12 +379,33 @@ export function CaptureOverlay({
     surfaceRef.current?.setPointerCapture(event.pointerId);
   };
 
-  const styleFor = (rect: CaptureSelection) => ({
-    left: `${(rect.x / capture.width) * 100}%`,
-    top: `${(rect.y / capture.height) * 100}%`,
-    width: `${(rect.width / capture.width) * 100}%`,
-    height: `${(rect.height / capture.height) * 100}%`,
-  });
+  const styleFor = (rect: CaptureSelection) => {
+    const display = currentRect();
+    const topLeft = constainPoint(display, active, rect.x, rect.y);
+    const bottomRight = constainPoint(display, active, rect.x + rect.width, rect.y + rect.height);
+    return {
+      left: `${topLeft.x}px`,
+      top: `${topLeft.y}px`,
+      width: `${bottomRight.x - topLeft.x}px`,
+      height: `${bottomRight.y - topLeft.y}px`,
+    };
+  };
+
+  const shadeStyle = (edges: { top?: number; bottom?: number; left?: number; right?: number }) => {
+    const display = currentRect();
+    const p = (x: number, y: number) => constainPoint(display, active, x, y);
+    return {
+      top: edges.top === undefined ? undefined : `${p(0, edges.top).y}px`,
+      height: edges.bottom === undefined ? undefined : `${p(0, edges.bottom).y - p(0, edges.top ?? 0).y}px`,
+      left: edges.left === undefined ? undefined : `${p(edges.left, 0).x}px`,
+      width: edges.right === undefined ? undefined : `${p(edges.right ?? 0, 0).x - p(edges.left ?? 0, 0).x}px`,
+    };
+  };
+
+  const thumbLabel = (screen: ScreenBounds) => {
+    const orientation = screen.width >= screen.height ? "横屏" : "竖屏";
+    return `${screen.width}×${screen.height} · ${orientation}${screen.primary ? " · 主屏" : ""}`;
+  };
 
   return (
     <div
@@ -202,22 +418,39 @@ export function CaptureOverlay({
       onPointerUp={endDrag}
       onPointerCancel={endDrag}
     >
-      <img className="capture-background" src={capture.dataUrl} alt="待截取屏幕" draggable={false} />
-      {selection ? (
+      {!pickingScreen && <img className="capture-background" src={active.dataUrl} alt="待截取屏幕" draggable={false} />}
+      {pickingScreen && (
+        <div className={`capture-picker capture-picker-${screenLayoutAxis(screenBounds)}`}>
+          {screenBounds.map((screen, index) => (
+            <button
+              key={`${screen.x}-${screen.y}`}
+              className="capture-screen"
+              onClick={() => void pickScreen({ x: screen.x + screen.width / 2, y: screen.y + screen.height / 2 })}
+              aria-label={`屏幕 ${index + 1}：${thumbLabel(screen)}`}
+            >
+              {thumbs[index] ? (
+                <img
+                  className="capture-thumb"
+                  src={thumbs[index]}
+                  style={{ aspectRatio: `${screen.width} / ${screen.height}` }}
+                  draggable={false}
+                  alt=""
+                />
+              ) : (
+                <span className="capture-thumb-placeholder" style={{ aspectRatio: `${screen.width} / ${screen.height}` }} />
+              )}
+              <span className="capture-screen-label">{thumbLabel(screen)}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {!pickingScreen && selection ? (
         <>
-          <div className="capture-shade capture-shade-top" style={{ height: `${(selection.y / capture.height) * 100}%` }} />
-          <div className="capture-shade capture-shade-left" style={{
-            top: `${(selection.y / capture.height) * 100}%`,
-            width: `${(selection.x / capture.width) * 100}%`,
-            height: `${(selection.height / capture.height) * 100}%`,
-          }} />
-          <div className="capture-shade capture-shade-right" style={{
-            top: `${(selection.y / capture.height) * 100}%`,
-            left: `${((selection.x + selection.width) / capture.width) * 100}%`,
-            height: `${(selection.height / capture.height) * 100}%`,
-          }} />
-          <div className="capture-shade capture-shade-bottom" style={{ top: `${((selection.y + selection.height) / capture.height) * 100}%` }} />
-          <div className="capture-selection" style={styleFor(selection)} onPointerDown={startMove} onDoubleClick={confirm}>
+          <div className="capture-shade capture-shade-top" style={shadeStyle({ bottom: selection.y })} />
+          <div className="capture-shade capture-shade-left" style={shadeStyle({ top: selection.y, bottom: selection.y + selection.height, right: selection.x })} />
+          <div className="capture-shade capture-shade-right" style={shadeStyle({ top: selection.y, bottom: selection.y + selection.height, left: selection.x + selection.width })} />
+          <div className="capture-shade capture-shade-bottom" style={shadeStyle({ top: selection.y + selection.height })} />
+          <div className="capture-selection" style={styleFor(selection)} onPointerDown={startMove} onDoubleClick={() => void confirm()}>
             <span className="capture-size">{selection.width} × {selection.height}</span>
             {HANDLES.map((handle) => (
               <span
@@ -229,12 +462,15 @@ export function CaptureOverlay({
           </div>
         </>
       ) : (
-        <div className="capture-shade capture-shade-all" />
+        !pickingScreen && <div className="capture-shade capture-shade-all" />
       )}
-      <div className="capture-help">拖动选择区域 · Enter 确认 · Esc 取消</div>
+      <div className="capture-help">{pickingScreen ? "点击选择要截取的屏幕" : "拖动选择区域 · Enter 确认 · Esc 取消"}</div>
       <div className="capture-actions">
+        {multiScreen && !pickingScreen && (
+          <button disabled={locked} onClick={backToPicking} title="返回选择屏幕"><span aria-hidden>←</span>重新选屏</button>
+        )}
         <button disabled={locked} onClick={cancel}><X size={16} />取消</button>
-        <button className="is-primary" disabled={!selection || locked} onClick={confirm}><Check size={16} />确认截图</button>
+        <button className="is-primary" disabled={!selection || locked || pickingScreen} onClick={() => void confirm()}><Check size={16} />确认截图</button>
       </div>
     </div>
   );

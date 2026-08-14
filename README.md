@@ -9,7 +9,7 @@ ScreenPin 是一个面向桌面的非破坏性截图编辑器，目标平台为 
   - Linux Wayland/X11：通过 `xdg-desktop-portal` 非交互采集屏幕像素，再由 ScreenPin 选择区域
   - macOS：静默采集当前显示器，再由 ScreenPin 选择区域
   - Windows：通过 Win32 GDI 静默采集当前显示器，再由 ScreenPin 选择区域
-  - 多显示器：Portal 只能返回整个虚拟桌面，ScreenPin 会裁切出指针所在的显示器，使选区层覆盖的区域与看到的画面一致。裁切按显示器各自的位置和尺寸计算，因此分辨率不同、上下错位、竖排或三屏以上的排布都适用；若 Portal 返回的图像与显示器布局不是等比缩放（例如各显示器缩放比例不同），则不做裁切，改为整幅显示
+  - 多显示器：Portal 只能返回整个虚拟桌面。多屏时先显示选屏界面——每块屏幕按相对方位（左/右或上/下）对齐中心排列、去掉物理摆位的高低差，并标注分辨率与横/竖屏；点击要截的屏幕后，进入该屏**原分辨率**选区层自由框选。不再依赖鼠标所在屏幕，也就规避了 Wayland 下"偶尔锁定同一屏"的问题；确认按钮固定居中在满屏选区层底部，不会落在两屏交界处
   - 应用内采集或选区层不可用时，自动回退到系统交互式截图；取消兜底截图不会截取整个虚拟桌面
   
 - **八种标注工具**：矩形、椭圆、箭头、画笔、荧光笔、区域高亮、文字、马赛克
@@ -78,6 +78,8 @@ cd src-tauri && cargo check && cargo test
 ### Linux 依赖
 
 需要 WebKitGTK、GTK3、DBus 和 `xdg-desktop-portal`。Wayland 不允许普通应用绕过合成器读取其他窗口，因此首次截图或桌面策略要求时，portal 后端仍可能显示安全授权；授权完成后，区域选择由 ScreenPin 自己处理。Hyprland 建议安装并启用 `xdg-desktop-portal-hyprland`。Wayland 全局快捷键使用 `org.freedesktop.portal.GlobalShortcuts`，首次启动或修改快捷键时也可能由桌面门户请求授权。门户的触发器语法与 Tauri 的快捷键写法不同：修饰键只有 `CTRL`、`ALT`、`SHIFT`、`NUM`、`LOGO`（即 `Win` 键，没有 `SUPER`），按键名是区分大小写的 xkb keysym（`s`、`Return`、`Print`），ScreenPin 会在注册前完成转换。托盘图标使用 AppIndicator/StatusNotifier，Waybar 需要启用 `tray` 模块才能显示。
+
+GNOME 的全局快捷键后端要求调用方有一个可解析的应用 ID：ScreenPin 开启了 `app.enableGTKAppId`（GTK 应用 ID 为 `io.screenpin.desktop`），并在注册 host 应用时传入**不带 `.desktop` 后缀**的 ID（`io.screenpin`）——portal 查找桌面文件时会自行追加 `.desktop`。Arch 包会安装 `/usr/share/applications/io.screenpin.desktop`，与这个 ID 对应；其他发行版构建时也需要提供同名的桌面文件，否则 GNOME 会拒绝创建全局快捷键会话（"An app id is required"）。KDE、niri 等桌面同样走该 portal 接口，此机制通用；Windows/macOS 与 Linux X11 会话走 Tauri 插件，不涉及应用 ID。
 
 ### 平铺窗口管理器
 

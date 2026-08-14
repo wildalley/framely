@@ -36,9 +36,9 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
-import { CaptureOverlay, cropCapture, type CaptureSelection } from "./CaptureOverlay";
+import { CaptureOverlay } from "./CaptureOverlay";
 import { EditorCanvas, type EditorCanvasHandle } from "./EditorCanvas";
-import { formatShortcut, heldModifiers, isModifierPress, recordShortcut, shortcutParts } from "./shortcut";
+import { formatShortcut, MODIFIER_ORDER, mainShortcutKey, modifierFromEvent, shortcutParts } from "./shortcut";
 import {
   captureScreen,
   captureWithSystem,
@@ -68,6 +68,7 @@ import {
 import type {
   Annotation,
   AnnotationStyle,
+  CaptureResponse,
   CaptureResult,
   ExportFormat,
   ImageSource,
@@ -119,7 +120,7 @@ export default function App() {
   const projectInput = useRef<HTMLInputElement>(null);
   const demoCapture = useMemo(() => (new URLSearchParams(window.location.search).has("demo") ? createDemoImage() : null), []);
   const [image, setImage] = useState<ImageSource | null>(() => demoCapture ? { ...demoCapture, name: "交付概览" } : null);
-  const [captureDraft, setCaptureDraft] = useState<CaptureResult | null>(null);
+  const [captureDraft, setCaptureDraft] = useState<CaptureResponse | null>(null);
   const [pixelatedImage, setPixelatedImage] = useState<string | null>(null);
   const [mosaicStatus, setMosaicStatus] = useState<"loading" | "ready" | "error">("loading");
   const [title, setTitle] = useState(demoCapture ? "交付概览" : "未命名截图");
@@ -146,7 +147,6 @@ export default function App() {
   const recenter = useRef(true);
   const pixelationRequest = useRef(0);
   const captureInProgress = useRef(false);
-  const startupCaptureStarted = useRef(false);
   const history = useEditorHistory();
   const [savedDocument, setSavedDocument] = useState<SavedDocument | null>(null);
 
@@ -318,11 +318,10 @@ export default function App() {
     }
   }, [isPinned, notify, stage]);
 
-  const confirmCaptureSelection = useCallback(async (selection: CaptureSelection) => {
+  const confirmCaptureSelection = useCallback(async (cropped: CaptureResult) => {
     if (!captureDraft) return;
     setBusy(true);
     try {
-      const cropped = await cropCapture(captureDraft, selection);
       setCaptureDraft(null);
       await exitCaptureMode(isPinned);
       await loadCapture(cropped);
@@ -342,12 +341,6 @@ export default function App() {
       void unlisten.then((dispose) => dispose());
     };
   }, [handleCapture]);
-
-  useEffect(() => {
-    if (!isTauri() || demoCapture || startupCaptureStarted.current) return;
-    startupCaptureStarted.current = true;
-    void handleCapture();
-  }, [demoCapture, handleCapture]);
 
   const handlePaste = useCallback(async () => {
     setPanel("none");
@@ -661,6 +654,7 @@ export default function App() {
     return (
       <CaptureOverlay
         capture={captureDraft}
+        screens={captureDraft.screens}
         onConfirm={confirmCaptureSelection}
         onCancel={cancelCaptureSelection}
       />
@@ -1256,35 +1250,55 @@ function SettingsPanel({
   // shortcut handler would react to the combination being recorded.
   useEffect(() => {
     if (!isRecording) return;
+    // Accumulate held modifiers from the pressed key's code rather than from
+    // `event.metaKey`, which WebKit reports only inconsistently while the Win
+    // key is down. A combination is only saved once a non-modifier key is
+    // pressed while at least one modifier is being held.
+    let held = new Set<string>();
+    const finish = (key: string) => {
+      const modifiers = MODIFIER_ORDER.filter((m) => held.has(m));
+      setShortcut([...modifiers, key].join("+"));
+      setPending([]);
+      setHint(null);
+      setIsRecording(false);
+    };
     const onKeyDown = (event: KeyboardEvent) => {
       event.preventDefault();
       event.stopImmediatePropagation();
-      const result = recordShortcut(event);
-      if (result.status === "recorded") {
-        setShortcut(result.shortcut);
+      const modifier = modifierFromEvent(event);
+      if (modifier) {
+        held.add(modifier);
+        setPending(MODIFIER_ORDER.filter((m) => held.has(m)));
+        setHint(null);
+        return;
+      }
+      if (held.size === 0) {
         setPending([]);
-        setHint(null);
-        setIsRecording(false);
+        setHint("全局快捷键需要至少一个修饰键，例如 Ctrl 或 Win");
         return;
       }
-      if (result.status === "pending") {
-        setPending(result.modifiers);
-        setHint(null);
+      const key = mainShortcutKey(event);
+      if (key === null) {
+        setPending([]);
+        setHint("不支持这个按键，请换一个");
         return;
       }
-      setPending([]);
-      setHint(
-        result.status === "needs-modifier"
-          ? "全局快捷键需要至少一个修饰键，例如 Ctrl 或 Win"
-          : "不支持这个按键，请换一个",
-      );
+      finish(key);
     };
     const onKeyUp = (event: KeyboardEvent) => {
       event.preventDefault();
       event.stopImmediatePropagation();
-      // Releasing a modifier without completing a combination clears the
-      // preview, so a swallowed Win press does not look like it registered.
-      if (isModifierPress(event)) setPending(heldModifiers(event).filter((held) => held !== "Super" || event.metaKey));
+      const modifier = modifierFromEvent(event);
+      if (!modifier) return;
+      held.delete(modifier);
+      // Still holding other modifiers keeps the preview; if everything is
+      // released without a main key, clear it so a swallowed Win press does not
+      // look like it registered.
+      if (held.size > 0) {
+        setPending(MODIFIER_ORDER.filter((m) => held.has(m)));
+      } else {
+        setPending([]);
+      }
     };
     window.addEventListener("keydown", onKeyDown, true);
     window.addEventListener("keyup", onKeyUp, true);
@@ -1334,9 +1348,9 @@ function SettingsPanel({
           {hint ?? (isRecording ? "Win 键可以作为修饰键；部分组合会被桌面环境占用" : "全局快捷键，在任何界面都可触发截图")}
         </span>
       </label>
-      <div className="panel-actions">
-        <button disabled={isSaving} onClick={onClose}>取消</button>
-        <button className="primary-action" disabled={isSaving || isRecording} onClick={() => void saveShortcut()}>
+      <div className="panel-actions panel-actions-form">
+        <button type="button" disabled={isSaving} onClick={onClose}>取消</button>
+        <button type="button" className="primary-action" disabled={isSaving || isRecording} onClick={() => void saveShortcut()}>
           {isSaving ? "正在注册..." : "保存"}
         </button>
       </div>

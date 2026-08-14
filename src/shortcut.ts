@@ -74,14 +74,14 @@ const NAMED_CODES = new Set([
 ]);
 
 /** Modifier order in a recorded shortcut, so equal combinations compare equal. */
-const MODIFIER_ORDER = ["Control", "Shift", "Alt", "Super"] as const;
+export const MODIFIER_ORDER = ["Control", "Shift", "Alt", "Super"] as const;
 
 /**
  * The modifier a key press represents, if any. Reading the code as well as the
  * key matters for the Win key: a lone press reports the `MetaLeft` code, and
  * not every WebKit build also sets `metaKey` on that first event.
  */
-function pressedModifier(event: ShortcutKeyEvent): string | null {
+export function modifierFromEvent(event: ShortcutKeyEvent): string | null {
   const { code, key } = event;
   if (code.startsWith("Control") || key === "Control") return "Control";
   if (code.startsWith("Shift") || key === "Shift") return "Shift";
@@ -103,7 +103,7 @@ function pressedModifier(event: ShortcutKeyEvent): string | null {
 
 /** True when the event is a modifier press rather than a shortcut's main key. */
 export function isModifierPress(event: ShortcutKeyEvent): boolean {
-  return pressedModifier(event) !== null;
+  return modifierFromEvent(event) !== null;
 }
 
 /** Modifiers held down during an event, in canonical order. */
@@ -113,7 +113,7 @@ export function heldModifiers(event: ShortcutKeyEvent): string[] {
   if (event.shiftKey) held.add("Shift");
   if (event.altKey) held.add("Alt");
   if (event.metaKey) held.add("Super");
-  const pressed = pressedModifier(event);
+  const pressed = modifierFromEvent(event);
   if (pressed) held.add(pressed);
   return MODIFIER_ORDER.filter((modifier) => held.has(modifier));
 }

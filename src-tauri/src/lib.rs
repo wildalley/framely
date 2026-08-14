@@ -79,6 +79,20 @@ struct CaptureResult {
     height: u32,
 }
 
+/// One monitor's location inside the captured bitmap, in bitmap pixels. Lets the
+/// frontend render a screen-picker and turn a click on a screen into that
+/// screen's native-resolution frame. `primary` marks the system's primary
+/// monitor, used as the anchor for laying the rest out.
+#[derive(Serialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct ScreenBounds {
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    primary: bool,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CaptureResponse {
@@ -87,6 +101,9 @@ struct CaptureResponse {
     selection_required: bool,
     fallback_used: bool,
     fallback_reason: Option<String>,
+    /// The monitors inside the delivered bitmap, in bitmap pixels. Empty when
+    /// the layout cannot be mapped onto the bitmap.
+    screens: Vec<ScreenBounds>,
 }
 
 fn png_data_url(bytes: &[u8]) -> Result<CaptureResult, String> {
@@ -170,20 +187,18 @@ async fn system_capture(window: &WebviewWindow) -> Result<Vec<u8>, String> {
     portal_capture(window, true).await
 }
 
-/// The pixels to hand the in-app selector, plus the desktop region they cover.
+/// The pixels to hand the in-app selector, plus the desktop region they cover
+/// and where each monitor sits inside the bitmap.
 ///
-/// A capture spanning several monitors is reduced to the one being captured.
-/// The selector stretches its bitmap across its whole window, so the two have
-/// to describe the same region: the Linux portal returns the entire virtual
-/// desktop, no window can cover that, and the compositor clamped the selector
-/// to one screen while it still drew every screen's pixels. With monitors that
-/// do not share a top edge the result looked shifted downwards by the taller
-/// desktop's extra rows.
+/// A capture spanning several monitors is delivered whole, with every monitor's
+/// bounds inside it (in bitmap pixels). The frontend overlays the boundaries so
+/// the user clicks the screen they want, then edits that screen at its native
+/// resolution (cropped from the bitmap, which is already full-resolution).
 fn capture_frame(
     window: &WebviewWindow,
     monitor: &Monitor,
     bytes: &[u8],
-) -> Result<(DynamicImage, CaptureGeometry), String> {
+) -> Result<(DynamicImage, CaptureGeometry, Vec<ScreenBounds>), String> {
     let image =
         image::load_from_memory(bytes).map_err(|error| format!("无法读取桌面门户截图: {error}"))?;
     let monitors = window
@@ -194,35 +209,28 @@ fn capture_frame(
     let monitor_size = *monitor.size();
 
     if is_virtual_desktop_capture(image_size, monitor_size, monitors.len()) {
-        let (desktop_origin, desktop_size) = desktop_bounds(&screen_rects(&monitors))?;
-        match monitor_crop(
+        let rects = screen_rects(&monitors);
+        let (desktop_origin, desktop_size) = desktop_bounds(&rects)?;
+        let primary = window
+            .primary_monitor()
+            .ok()
+            .flatten()
+            .map(|m| *m.position());
+        let screens = monitor_screen_bounds(
             image_size,
             desktop_origin,
             desktop_size,
-            origin,
-            monitor_size,
-        ) {
-            Some((left, top, width, height)) => {
-                return Ok((
-                    image.crop_imm(left, top, width, height),
-                    CaptureGeometry {
-                        origin,
-                        size: monitor_size,
-                    },
-                ));
-            }
-            // Nothing sensible to crop. Show the whole bitmap over the desktop
-            // origin instead of pretending it covers a single screen.
-            None => {
-                return Ok((
-                    image,
-                    CaptureGeometry {
-                        origin: desktop_origin,
-                        size: desktop_size,
-                    },
-                ))
-            }
-        }
+            &rects,
+            primary.as_ref(),
+        );
+        return Ok((
+            image,
+            CaptureGeometry {
+                origin: desktop_origin,
+                size: desktop_size,
+            },
+            screens,
+        ));
     }
 
     Ok((
@@ -231,7 +239,56 @@ fn capture_frame(
             origin,
             size: monitor_size,
         },
+        vec![ScreenBounds {
+            x: 0,
+            y: 0,
+            width: image_size.width,
+            height: image_size.height,
+            primary: true,
+        }],
     ))
+}
+
+/// Where each monitor lands inside a bitmap of the whole virtual desktop, in
+/// bitmap pixels. Empty when the bitmap is not an even scaling of the reported
+/// layout, in which case no monitor rectangle can be trusted. The primary
+/// monitor (matched by its reported layout position) is flagged as an anchor.
+fn monitor_screen_bounds(
+    image_size: PhysicalSize<u32>,
+    desktop_origin: PhysicalPosition<i32>,
+    desktop_size: PhysicalSize<u32>,
+    screens: &[ScreenRect],
+    primary_position: Option<&PhysicalPosition<i32>>,
+) -> Vec<ScreenBounds> {
+    if desktop_size.width == 0 || desktop_size.height == 0 {
+        return Vec::new();
+    }
+    let scale_x = f64::from(image_size.width) / f64::from(desktop_size.width);
+    let scale_y = f64::from(image_size.height) / f64::from(desktop_size.height);
+    if !scales_agree(scale_x, scale_y) {
+        return Vec::new();
+    }
+    screens
+        .iter()
+        .filter_map(|(position, size)| {
+            let left = (f64::from(position.x.saturating_sub(desktop_origin.x)) * scale_x).round();
+            let top = (f64::from(position.y.saturating_sub(desktop_origin.y)) * scale_y).round();
+            let width = (f64::from(size.width) * scale_x).round();
+            let height = (f64::from(size.height) * scale_y).round();
+            if left < 0.0 || top < 0.0 || width < 1.0 || height < 1.0 {
+                return None;
+            }
+            let x = left.min(f64::from(image_size.width)) as u32;
+            let y = top.min(f64::from(image_size.height)) as u32;
+            let width = (width.min(f64::from(image_size.width) - x as f64)) as u32;
+            let height = (height.min(f64::from(image_size.height) - y as f64)) as u32;
+            if width == 0 || height == 0 {
+                return None;
+            }
+            let primary = primary_position.is_some_and(|pp| pp == position);
+            Some(ScreenBounds { x, y, width, height, primary })
+        })
+        .collect()
 }
 
 /// A monitor reduced to plain geometry, so the layout maths can be tested
@@ -243,6 +300,12 @@ fn screen_rects(monitors: &[Monitor]) -> Vec<ScreenRect> {
         .iter()
         .map(|monitor| (*monitor.position(), *monitor.size()))
         .collect()
+}
+
+/// Whether both axes of a bitmap are scaled by the same amount, within the
+/// rounding a whole-pixel bitmap of a whole-pixel layout can introduce.
+fn scales_agree(scale_x: f64, scale_y: f64) -> bool {
+    (scale_x - scale_y).abs() <= 0.01 * scale_x.max(scale_y)
 }
 
 /// Bounding box of every monitor, in physical pixels.
@@ -266,53 +329,6 @@ fn desktop_bounds(screens: &[ScreenRect]) -> Result<ScreenRect, String> {
         PhysicalPosition::new(left, top),
         PhysicalSize::new((right - left).max(0) as u32, (bottom - top).max(0) as u32),
     ))
-}
-
-/// Whether both axes of a bitmap are scaled by the same amount, within the
-/// rounding a whole-pixel bitmap of a whole-pixel layout can introduce.
-fn scales_agree(scale_x: f64, scale_y: f64) -> bool {
-    (scale_x - scale_y).abs() <= 0.01 * scale_x.max(scale_y)
-}
-
-/// Where a monitor sits inside a bitmap of the whole virtual desktop, in bitmap
-/// pixels. `None` when the layout cannot be mapped onto the bitmap.
-fn monitor_crop(
-    image_size: PhysicalSize<u32>,
-    desktop_origin: PhysicalPosition<i32>,
-    desktop_size: PhysicalSize<u32>,
-    monitor_position: PhysicalPosition<i32>,
-    monitor_size: PhysicalSize<u32>,
-) -> Option<(u32, u32, u32, u32)> {
-    if desktop_size.width == 0 || desktop_size.height == 0 {
-        return None;
-    }
-    // The compositor may scale the bitmap relative to the layout it reports, so
-    // map through the ratio rather than assuming one bitmap pixel per layout
-    // pixel.
-    let scale_x = f64::from(image_size.width) / f64::from(desktop_size.width);
-    let scale_y = f64::from(image_size.height) / f64::from(desktop_size.height);
-    // One ratio can only describe a bitmap scaled evenly. If the axes disagree,
-    // the bitmap is not this layout scaled — mixed per-monitor scaling, say —
-    // and any rectangle derived from it would crop the wrong pixels. Better to
-    // hand back the whole capture than a confidently wrong region.
-    if !scales_agree(scale_x, scale_y) {
-        return None;
-    }
-    let left = (f64::from(monitor_position.x.saturating_sub(desktop_origin.x)) * scale_x).round();
-    let top = (f64::from(monitor_position.y.saturating_sub(desktop_origin.y)) * scale_y).round();
-    let width = (f64::from(monitor_size.width) * scale_x).round();
-    let height = (f64::from(monitor_size.height) * scale_y).round();
-    if left < 0.0 || top < 0.0 || width < 1.0 || height < 1.0 {
-        return None;
-    }
-    let left = left as u32;
-    let top = top as u32;
-    let width = (width as u32).min(image_size.width.saturating_sub(left));
-    let height = (height as u32).min(image_size.height.saturating_sub(top));
-    if width == 0 || height == 0 {
-        return None;
-    }
-    Some((left, top, width, height))
 }
 
 /// Whether a capture region is exactly one monitor, which is the only case a
@@ -620,7 +636,7 @@ async fn capture_screen(
         .await
         .and_then(|bytes| capture_frame(&window, &monitor, &bytes))
     {
-        Ok((frame, geometry)) => {
+        Ok((frame, geometry, screens)) => {
             let image = encode_png(&frame)?;
             capture.remember_geometry(Some(geometry))?;
             Ok(CaptureResponse {
@@ -628,6 +644,7 @@ async fn capture_screen(
                 selection_required: true,
                 fallback_used: false,
                 fallback_reason: None,
+                screens,
             })
         }
         Err(primary_error) => {
@@ -645,6 +662,7 @@ async fn capture_screen(
                     selection_required: false,
                     fallback_used: true,
                     fallback_reason: Some(primary_error),
+                    screens: Vec::new(),
                 });
             let _ = window.show();
             let _ = window.set_focus();
@@ -673,27 +691,31 @@ fn enter_capture_mode(
     window
         .set_always_on_top(true)
         .map_err(|error| format!("无法置顶截图选区: {error}"))?;
-    // Cover exactly the desktop region the captured pixels came from, so the
-    // selector's coordinates match the bitmap it draws.
+    // Fullscreen the selector so it reliably covers a whole monitor and the
+    // confirm button always stays reachable. When the capture spans several
+    // monitors the frontend scales the whole desktop to fit (object-fit:
+    // contain) and maps the drag back to native pixels; there is no window that
+    // can physically cover a multi-screen virtual desktop on Wayland, so trying
+    // to size and position the window over it would leaf it shifted and cut off.
     if let Some(geometry) = capture.take_geometry() {
-        window
-            .set_position(geometry.origin)
-            .map_err(|error| format!("无法定位截图选区: {error}"))?;
-        window
-            .set_size(geometry.size)
-            .map_err(|error| format!("无法调整截图选区尺寸: {error}"))?;
-        // Fullscreen is the only reliable way past panels and docks, but it only
-        // works when the region is one whole monitor. A region spanning several
-        // has to make do with an always-on-top window.
         let monitors = window
             .available_monitors()
             .map_err(|error| format!("无法读取显示器布局: {error}"))?;
-        if covers_one_monitor(&screen_rects(&monitors), geometry) {
+        let rects = screen_rects(&monitors);
+        if covers_one_monitor(&rects, geometry) {
+            // A region that is exactly one monitor can be fullscreened 1:1, so
+            // the bitmap maps onto the window without any scaling.
             window
-                .set_fullscreen(true)
-                .map_err(|error| format!("无法打开全屏截图选区: {error}"))?;
+                .set_position(geometry.origin)
+                .map_err(|error| format!("无法定位截图选区: {error}"))?;
+            window
+                .set_size(geometry.size)
+                .map_err(|error| format!("无法调整截图选区尺寸: {error}"))?;
         }
     }
+    window
+        .set_fullscreen(true)
+        .map_err(|error| format!("无法打开全屏截图选区: {error}"))?;
     window
         .show()
         .map_err(|error| format!("无法显示截图选区: {error}"))?;
@@ -1085,6 +1107,27 @@ async fn prepare_wayland_shortcut(
         CreateSessionOptions,
     };
     use futures_util::StreamExt;
+
+    // GNOME's global-shortcuts backend rejects a host (non-sandboxed) caller
+    // whose D-Bus connection is not associated with an app id. Register this
+    // process's application id once so session creation is not rejected with
+    // "An app id is required". Repeated registration on the same connection
+    // would fail ("already associated"), so the attempt is idempotent and
+    // non-fatal: if the connection already has an app id, that is good enough.
+    static HOST_APP_REGISTERED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if !HOST_APP_REGISTERED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        // The host portal appends ".desktop" itself when looking up the desktop
+        // file, so pass the id WITHOUT the suffix: it resolves to
+        // `io.screenpin.desktop` (which the package installs). Passing
+        // "io.screenpin.desktop" would make the portal search for
+        // "io.screenpin.desktop.desktop" and fail with "App info not found".
+        let app_id = ashpd::AppID::try_from("io.screenpin")
+            .map_err(|error| format!("应用 ID 无效: {error}"))?;
+        match ashpd::register_host_app(app_id).await {
+            Ok(()) => eprintln!("ScreenPin: host app id registered"),
+            Err(error) => eprintln!("ScreenPin: register_host_app failed (continuing): {error}"),
+        }
+    }
 
     let portal = GlobalShortcuts::new()
         .await
@@ -1498,126 +1541,58 @@ mod tests {
         assert!(desktop_bounds(&[]).is_err());
     }
 
-    /// The heart of the offset bug: the portal's bitmap spans both screens, so
-    /// the region belonging to the captured monitor has to be cut out of it.
+    /// With a bitmap exactly matching the reported layout, each screen maps to
+    /// its own rectangle, so a click on it can be turned into that screen's
+    /// native-resolution frame.
     #[test]
-    fn finds_a_monitor_inside_a_virtual_desktop_capture() {
+    fn maps_each_monitor_into_the_virtual_desktop_bitmap() {
         let screens = staggered_screens();
-        let (desktop_origin, desktop_size) = desktop_bounds(&screens).unwrap();
-        let image = PhysicalSize::new(5120, 1622);
-
-        let (position, size) = screens[0];
+        let (origin, size) = desktop_bounds(&screens).unwrap();
+        let image_size = PhysicalSize::new(5120, 1622);
+        let primary = screens[0].0;
+        let bounds = monitor_screen_bounds(image_size, origin, size, &screens, Some(&primary));
         assert_eq!(
-            monitor_crop(image, desktop_origin, desktop_size, position, size),
-            Some((0, 182, 2560, 1440))
-        );
-
-        let (position, size) = screens[1];
-        assert_eq!(
-            monitor_crop(image, desktop_origin, desktop_size, position, size),
-            Some((2560, 0, 2560, 1440))
+            bounds,
+            vec![
+                ScreenBounds { x: 0, y: 182, width: 2560, height: 1440, primary: true },
+                ScreenBounds { x: 2560, y: 0, width: 2560, height: 1440, primary: false },
+            ]
         );
     }
 
-    /// A compositor may hand back a bitmap scaled relative to the layout it
-    /// reports, so the crop has to be mapped through that ratio.
+    /// When the bitmap is scaled relative to the reported layout, the screen
+    /// rectangles follow that scale so a later crop stays native.
     #[test]
-    fn scales_the_crop_to_the_returned_bitmap() {
+    fn maps_screens_through_the_bitmap_scale() {
         let screens = staggered_screens();
-        let (desktop_origin, desktop_size) = desktop_bounds(&screens).unwrap();
-        let (position, size) = screens[0];
+        let (origin, size) = desktop_bounds(&screens).unwrap();
+        let image_size = PhysicalSize::new(2560, 811);
+        let bounds = monitor_screen_bounds(image_size, origin, size, &screens, None);
         assert_eq!(
-            monitor_crop(
-                PhysicalSize::new(2560, 811),
-                desktop_origin,
-                desktop_size,
-                position,
-                size
-            ),
-            Some((0, 91, 1280, 720))
+            bounds,
+            vec![
+                ScreenBounds { x: 0, y: 91, width: 1280, height: 720, primary: false },
+                ScreenBounds { x: 1280, y: 0, width: 1280, height: 720, primary: false },
+            ]
         );
     }
 
-    /// A bitmap whose axes are scaled differently is not this layout scaled, so
-    /// there is no honest way to locate a monitor in it. Cropping anyway would
-    /// silently return the wrong part of the desktop.
+    /// Uneven per-axis scaling means the layout cannot be trusted; do not hand
+    /// the frontend rectangles it would crop incorrectly.
     #[test]
-    fn refuses_to_crop_an_unevenly_scaled_bitmap() {
-        let desktop_origin = PhysicalPosition::new(0, 0);
-        let desktop_size = PhysicalSize::new(3840, 2160);
-        assert_eq!(
-            monitor_crop(
-                PhysicalSize::new(3840, 1080),
-                desktop_origin,
-                desktop_size,
-                PhysicalPosition::new(1920, 0),
-                PhysicalSize::new(1920, 1080)
-            ),
-            None
+    fn refuses_to_map_screens_when_the_bitmap_is_unevenly_scaled() {
+        let screens = staggered_screens();
+        let (origin, size) = desktop_bounds(&screens).unwrap();
+        let bounds = monitor_screen_bounds(
+            PhysicalSize::new(2560, 1080),
+            origin,
+            size,
+            &screens,
+            None,
         );
-        // Rounding a whole-pixel bitmap of an odd-sized layout still counts as
-        // even scaling.
-        assert!(scales_agree(1.0, 1.0));
-        assert!(scales_agree(0.5, 811.0 / 1622.0));
-        assert!(scales_agree(2560.0 / 5121.0, 811.0 / 1622.0));
-        assert!(!scales_agree(1.0, 0.5));
+        assert!(bounds.is_empty());
     }
 
-    #[test]
-    fn clamps_a_crop_to_the_bitmap_it_came_from() {
-        let desktop_origin = PhysicalPosition::new(0, 0);
-        let desktop_size = PhysicalSize::new(3840, 1080);
-        let image = PhysicalSize::new(3840, 1080);
-        // A monitor reaching past the bitmap is trimmed rather than asking the
-        // image crate for pixels that do not exist.
-        assert_eq!(
-            monitor_crop(
-                image,
-                desktop_origin,
-                desktop_size,
-                PhysicalPosition::new(1920, 0),
-                PhysicalSize::new(2400, 1080)
-            ),
-            Some((1920, 0, 1920, 1080))
-        );
-        // Nothing to crop when the monitor starts at or past the far edge.
-        assert_eq!(
-            monitor_crop(
-                image,
-                desktop_origin,
-                desktop_size,
-                PhysicalPosition::new(3840, 0),
-                PhysicalSize::new(1920, 1080)
-            ),
-            None
-        );
-        // A monitor left of the desktop origin cannot be located in the bitmap.
-        assert_eq!(
-            monitor_crop(
-                image,
-                PhysicalPosition::new(0, 0),
-                desktop_size,
-                PhysicalPosition::new(-1920, 0),
-                PhysicalSize::new(1920, 1080)
-            ),
-            None
-        );
-        // A degenerate layout must not divide by zero.
-        assert_eq!(
-            monitor_crop(
-                image,
-                desktop_origin,
-                PhysicalSize::new(0, 0),
-                PhysicalPosition::new(0, 0),
-                PhysicalSize::new(1920, 1080)
-            ),
-            None
-        );
-    }
-
-    /// Only a region matching one monitor exactly may go fullscreen; the
-    /// compositor would otherwise shrink the selector to a single screen while
-    /// it still draws a bitmap covering several.
     #[test]
     fn goes_fullscreen_only_for_a_single_monitor_region() {
         let screens = staggered_screens();
