@@ -22,6 +22,8 @@ export const enterCaptureMode = () => invoke<void>("enter_capture_mode");
 
 export const exitCaptureMode = (pinned: boolean) => invoke<void>("exit_capture_mode", { pinned });
 
+export const showMainWindow = () => invoke<void>("show_editor_window");
+
 export const pasteImage = () => invoke<CaptureResult>("read_clipboard_image");
 
 export const copyImage = (dataUrl: string) => invoke<void>("copy_image", { dataUrl });

@@ -673,6 +673,14 @@ async fn capture_screen(
         Ok((frame, geometry, screens)) => {
             let image = encode_png(&frame)?;
             capture.remember_geometry(Some(geometry))?;
+            // Anchor the editor to the monitor being captured so it opens there
+            // even when there is no screen-picker step (single-monitor capture).
+            // Multi-screen captures overwrite this with the screen the user
+            // actually picks.
+            let monitors = window.available_monitors().unwrap_or_default();
+            if covers_one_monitor(&screen_rects(&monitors), geometry) {
+                capture.remember_target(Some(geometry.origin))?;
+            }
             Ok(CaptureResponse {
                 image,
                 selection_required: true,
@@ -769,25 +777,35 @@ fn enter_capture_mode(
 
 #[tauri::command]
 fn exit_capture_mode(window: WebviewWindow, pinned: bool) -> Result<(), String> {
-    // Keep the previous editor from flashing while React swaps the selector
-    // back to the document view.
+    // Leave the window hidden after exiting fullscreen: the compositor
+    // restores the pre-fullscreen geometry asynchronously, and if the editor
+    // were shown (and re-fitted) during that transition the restore would land
+    // on top of the new geometry and leave the window at a stale position.
+    // The frontend re-fits the window while it is hidden, then explicitly shows
+    // it (see `show_editor_window`).
     let _ = window.hide();
-    let fullscreen_result = window
+    window
         .set_fullscreen(false)
-        .map_err(|error| format!("无法退出全屏截图选区: {error}"));
-    let pinned_result = window
+        .map_err(|error| format!("无法退出全屏截图选区: {error}"))?;
+    window
         .set_always_on_top(pinned)
-        .map_err(|error| format!("无法恢复窗口置顶状态: {error}"));
-    let show_result = window
+        .map_err(|error| format!("无法恢复窗口置顶状态: {error}"))?;
+    Ok(())
+}
+
+/// Show the editor window after the capture selector has been torn down and
+/// the window has been re-fitted to the new image. Showing it here — after the
+/// geometry was applied while hidden — is what keeps the window on the monitor
+/// the user picked instead of wherever the fullscreen restore left it.
+#[tauri::command]
+fn show_editor_window(window: WebviewWindow) -> Result<(), String> {
+    window
         .show()
-        .map_err(|error| format!("无法恢复主窗口: {error}"));
-    let focus_result = window
+        .map_err(|error| format!("无法显示主窗口: {error}"))?;
+    let _ = window.unminimize();
+    window
         .set_focus()
-        .map_err(|error| format!("无法聚焦主窗口: {error}"));
-    fullscreen_result?;
-    pinned_result?;
-    show_result?;
-    focus_result
+        .map_err(|error| format!("无法聚焦主窗口: {error}"))
 }
 
 #[tauri::command]
@@ -1049,13 +1067,16 @@ struct WorkArea {
 }
 
 /// The monitor the window itself sits on. Used for window geometry so the
-/// editor never jumps to another screen on its own.
+/// editor never jumps to another screen on its own. A hidden window reports no
+/// current monitor, so the primary monitor is the fallback — this is what lets
+/// the welcome page be centred while the window is hidden and only shown later.
 fn active_monitor(window: &WebviewWindow) -> Result<Monitor, String> {
     let monitor = window
         .current_monitor()
-        .or_else(|_| window.primary_monitor())
-        .map_err(|error| format!("无法读取显示器信息: {error}"))?;
-    monitor.ok_or_else(|| "没有可用的显示器".to_string())
+        .map_err(|error| format!("无法读取显示器信息: {error}"))?
+        .or_else(|| window.primary_monitor().ok().flatten())
+        .ok_or_else(|| "没有可用的显示器".to_string())?;
+    Ok(monitor)
 }
 
 /// The monitor a screenshot should cover. This follows the pointer rather than
@@ -1188,7 +1209,17 @@ fn start_drag(window: WebviewWindow) -> Result<(), String> {
 fn hide_window(window: WebviewWindow) -> Result<(), String> {
     window
         .hide()
-        .map_err(|error| format!("隐藏窗口失败: {error}"))
+        .map_err(|error| format!("隐藏窗口失败: {error}"))?;
+    let _ = window.emit("closed-to-tray", ());
+    Ok(())
+}
+
+/// Close-to-tray is the end of an editing session: tell the frontend to reset
+/// to the welcome page so the next "显示窗口" opens a fresh editor instead of
+/// the previous screenshot.
+fn close_to_tray(window: &tauri::Window) {
+    let _ = window.hide();
+    let _ = window.emit("closed-to-tray", ());
 }
 
 #[tauri::command]
@@ -1704,7 +1735,7 @@ pub fn run() {
             if window.label() == "main" {
                 if let WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
-                    let _ = window.hide();
+                    close_to_tray(window);
                 }
             }
         })
@@ -1715,6 +1746,7 @@ pub fn run() {
             set_capture_target,
             enter_capture_mode,
             exit_capture_mode,
+            show_editor_window,
             read_clipboard_image,
             copy_image,
             copy_text,

@@ -64,6 +64,7 @@ import {
   saveImageAs,
   saveProject,
   setMainPinned,
+  showMainWindow,
   startWindowDrag,
   stitchImages,
   validateProjectImage,
@@ -249,7 +250,10 @@ export default function App() {
       ? { width: Math.max(MIN_WINDOW_WIDTH, stage.width), height: stage.height + barHeight }
       : EMPTY_WINDOW;
     void fitWindow(size.width, size.height, center).catch(() => undefined);
-  }, [stage?.width, stage?.height, barHeight]);
+    // `image` is in the deps so loading a same-size image still re-fits the
+    // window — needed after a capture confirm, where the geometry must be
+    // re-applied even when the new screenshot happens to match the old size.
+  }, [stage?.width, stage?.height, barHeight, image]);
 
   useEffect(() => {
     const bar = barRef.current;
@@ -306,11 +310,14 @@ export default function App() {
       } catch {
         setCaptureDraft(null);
         await exitCaptureMode(isPinned).catch(() => undefined);
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 150));
         await loadCapture(await captureWithSystem());
+        if (isTauri()) await showMainWindow().catch(() => undefined);
         notify("应用内选区不可用，已切换系统截图");
       }
     } catch (error) {
       await exitCaptureMode(isPinned).catch(() => undefined);
+      if (isTauri()) await showMainWindow().catch(() => undefined);
       notify(errorMessage(error));
     } finally {
       captureInProgress.current = false;
@@ -322,11 +329,20 @@ export default function App() {
     setCaptureDraft(null);
     try {
       await exitCaptureMode(isPinned);
+      // The compositor restores the window from fullscreen asynchronously; let
+      // that settle before re-fitting geometry, or the restore can land after
+      // fitWindow and leave the window at a stale position.
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 150));
       const size = stage
         ? { width: Math.max(MIN_WINDOW_WIDTH, stage.width), height: stage.height + barHeightRef.current }
         : EMPTY_WINDOW;
       await fitWindow(size.width, size.height, false);
+      // exit_capture_mode leaves the window hidden so the fit above applies to
+      // a settled window; show it now that its geometry is correct.
+      if (isTauri()) await showMainWindow();
     } catch (error) {
+      // Make sure the window is visible again even if the exit/fit failed.
+      if (isTauri()) await showMainWindow().catch(() => undefined);
       notify(errorMessage(error));
     }
   }, [isPinned, notify, stage]);
@@ -337,10 +353,19 @@ export default function App() {
     try {
       setCaptureDraft(null);
       await exitCaptureMode(isPinned);
+      // Wait for the fullscreen-exit restore to finish so the editor window
+      // opens centred on the picked screen instead of where the selector left
+      // the window (see exit_capture_mode / the restore race).
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 150));
       await loadCapture(cropped);
+      // The window is still hidden: the load above fitted its geometry, so
+      // showing it now reveals the editor already centred on the picked screen.
+      if (isTauri()) await showMainWindow();
     } catch (error) {
       setCaptureDraft(null);
       await exitCaptureMode(isPinned).catch(() => undefined);
+      // Keep the window visible after a failed confirm.
+      if (isTauri()) await showMainWindow().catch(() => undefined);
       notify(errorMessage(error));
     } finally {
       setBusy(false);
@@ -499,6 +524,36 @@ export default function App() {
       notify(errorMessage(error));
     }
   }, [notify]);
+
+  // Closing to the tray ends the editing session: drop the current document so
+  // the next "显示窗口" opens a fresh welcome page instead of the previous
+  // screenshot. The window is hidden at this point, so the fit that follows
+  // centres the empty window while hidden and the tray-show reveals it there.
+  const resetEditor = useCallback(() => {
+    ++pixelationRequest.current;
+    setPixelatedImage(null);
+    setMosaicStatus("loading");
+    setImage(null);
+    setTitle("未命名截图");
+    setCreatedAt(new Date().toISOString());
+    setSelectedId(null);
+    setTool("select");
+    setPanel("none");
+    setOcrText(null);
+    setStitchSources([]);
+    history.reset();
+    setSavedDocument(null);
+    setZoom(1);
+    recenter.current = true;
+  }, [history.reset]);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    const unlisten = listen("closed-to-tray", resetEditor);
+    return () => {
+      void unlisten.then((dispose) => dispose());
+    };
+  }, [resetEditor]);
   const loadProject = useCallback(
     async (project: ScreenPinProject) => {
       if (!isScreenPinProject(project)) throw new Error("不是有效的 ScreenPin 工程");
@@ -598,6 +653,9 @@ export default function App() {
     setScrollCaptureActive(false);
     try {
       await exitCaptureMode(isPinned);
+      // Let the fullscreen-exit restore settle before the following
+      // loadCapture re-fits the window geometry (same race as capture confirm).
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 150));
     } catch {
       // Non-fatal: the window may already be in its normal state.
     }
@@ -607,8 +665,10 @@ export default function App() {
     async (result: CaptureResult) => {
       await closeScrollCapture();
       await loadCapture(result, `滚动截图 ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`);
+      // The window is hidden at this point; reveal it after the fit above.
+      if (isTauri()) await showMainWindow();
     },
-    [closeScrollCapture, loadCapture],
+    [closeScrollCapture, isTauri, loadCapture, showMainWindow],
   );
 
   useEffect(() => {
@@ -763,7 +823,11 @@ export default function App() {
     return (
       <ScrollCaptureOverlay
         onFinish={(result) => void finishScrollCapture(result)}
-        onCancel={() => void closeScrollCapture()}
+        onCancel={() => {
+          void closeScrollCapture().then(() => {
+            if (isTauri()) return showMainWindow();
+          });
+        }}
       />
     );
   }
