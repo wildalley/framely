@@ -815,7 +815,18 @@ struct OcrResult {
 fn ocr_image(data_url: String) -> Result<OcrResult, String> {
     let bytes = decode_data_url(&data_url)?;
     let path = temporary_capture_path();
-    fs::write(&path, &bytes).map_err(|error| format!("无法写入待识别图片: {error}"))?;
+
+    // Preprocess for better recognition: small text on low-resolution captures
+    // is the usual failure mode, so upscale short images and drop color, which
+    // tesseract handles best.
+    let prepared = match prepare_ocr_image(&bytes) {
+        Ok(png) => png,
+        Err(error) => {
+            let _ = fs::remove_file(&path);
+            return Err(error);
+        }
+    };
+    fs::write(&path, &prepared).map_err(|error| format!("无法写入待识别图片: {error}"))?;
 
     let languages = installed_languages().inspect_err(|_| {
         let _ = fs::remove_file(&path);
@@ -839,6 +850,10 @@ fn ocr_image(data_url: String) -> Result<OcrResult, String> {
         .arg("stdout")
         .arg("-l")
         .arg(&lang_arg)
+        // Automatic page segmentation: treat the whole image as a single text
+        // block, which is the right model for screenshots and photos of text.
+        .arg("--psm")
+        .arg("3")
         .output()
         .map_err(|error| {
             let _ = fs::remove_file(&path);
@@ -860,6 +875,28 @@ fn ocr_image(data_url: String) -> Result<OcrResult, String> {
         text,
         setup_error: None,
     })
+}
+
+/// Decode an image, upscale it if it is small, and re-encode as grayscale PNG
+/// so tesseract sees the most recognizable form of the pixels.
+fn prepare_ocr_image(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    let image = image::load_from_memory(bytes).map_err(|error| format!("无法读取待识别图片: {error}"))?;
+    let (width, height) = image.dimensions();
+    let short_side = width.min(height);
+    // Tesseract's built-in OSD assumes roughly 300 dpi; screenshots are often
+    // captured at a much lower effective resolution, so double small captures.
+    let scale = if short_side < 1000 { 2 } else { 1 };
+    let gray = image.grayscale();
+    let resized = if scale > 1 {
+        gray.resize(width * scale, height * scale, image::imageops::FilterType::Lanczos3)
+    } else {
+        gray
+    };
+    let mut png = Cursor::new(Vec::new());
+    resized
+        .write_to(&mut png, ImageFormat::Png)
+        .map_err(|error| format!("无法编码待识别图片: {error}"))?;
+    Ok(png.into_inner())
 }
 
 /// Languages for which `tesseract --list-langs` reports trained data.

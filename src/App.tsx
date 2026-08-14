@@ -123,7 +123,7 @@ export default function App() {
   const barRef = useRef<HTMLDivElement>(null);
   const imageInput = useRef<HTMLInputElement>(null);
   const projectInput = useRef<HTMLInputElement>(null);
-  const stitchInput = useRef<HTMLInputElement>(null);
+  const stitchFileInput = useRef<HTMLInputElement>(null);
   const demoCapture = useMemo(() => (new URLSearchParams(window.location.search).has("demo") ? createDemoImage() : null), []);
   const [image, setImage] = useState<ImageSource | null>(() => demoCapture ? { ...demoCapture, name: "交付概览" } : null);
   const [captureDraft, setCaptureDraft] = useState<CaptureResponse | null>(null);
@@ -137,10 +137,12 @@ export default function App() {
   const [isPinned, setIsPinned] = useState(false);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
-  const [panel, setPanel] = useState<"none" | "style" | "menu" | "shortcuts" | "settings" | "ocr">("none");
+  const [panel, setPanel] = useState<"none" | "style" | "menu" | "shortcuts" | "settings" | "ocr" | "stitch">("none");
   const [ocrText, setOcrText] = useState<string | null>(null);
   const [ocrSetupError, setOcrSetupError] = useState<string | null>(null);
   const [ocrBusy, setOcrBusy] = useState(false);
+  const [stitchSources, setStitchSources] = useState<CaptureResult[]>([]);
+  const [stitchDirection, setStitchDirection] = useState<StitchDirection>("vertical");
   const [styles, setStyles] = useState<Record<Annotation["type"], AnnotationStyle>>(() =>
     DRAW_TOOLS.reduce(
       (all, id) => ({ ...all, [id]: defaultStyle(id) }),
@@ -549,24 +551,36 @@ export default function App() {
   }, [confirmReplace, loadProject, notify]);
 
   // Long screenshot: pick several images in order and join them into one image.
-  const handleStitchPicked = useCallback(
-    async (files: FileList | null, direction: StitchDirection) => {
+  // Long screenshot: gather images in the stitch panel, then join them.
+  const addStitchFiles = useCallback(
+    async (files: FileList | null) => {
       if (!files || files.length === 0) return;
-      if (!(await confirmReplace())) return;
-      setBusy(true);
-      setPanel("none");
       try {
         const sources = await Promise.all(Array.from(files).map(imageFromFile));
-        const stitched = await stitchImages(sources, direction);
-        await loadCapture(stitched, `长截图 ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`);
+        setStitchSources((current) => [...current, ...sources]);
       } catch (error) {
         notify(errorMessage(error));
-      } finally {
-        setBusy(false);
       }
     },
-    [confirmReplace, loadCapture, notify],
+    [notify],
   );
+
+  const confirmStitch = useCallback(async () => {
+    if (stitchSources.length < 2) return;
+    if (!(await confirmReplace())) return;
+    setBusy(true);
+    setPanel("none");
+    try {
+      const stitched = await stitchImages(stitchSources, stitchDirection);
+      await loadCapture(stitched, `长截图 ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`);
+      setStitchSources([]);
+    } catch (error) {
+      setPanel("stitch");
+      notify(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  }, [confirmReplace, loadCapture, notify, stitchDirection, stitchSources]);
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -759,10 +773,8 @@ export default function App() {
         <FilePickers
           imageInput={imageInput}
           projectInput={projectInput}
-          stitchInput={stitchInput}
           onImage={loadCapture}
           onProject={loadProject}
-          onStitch={handleStitchPicked}
           onBeforeReplace={confirmReplace}
           onError={notify}
         />
@@ -834,12 +846,44 @@ export default function App() {
           onExportFormat={setExportFormat}
           onExportQuality={setExportQuality}
           onSaveImage={handleSaveImage}
-          onStitch={(direction) => {
-            setPanel("none");
-            stitchInput.current?.setAttribute("data-direction", direction);
-            stitchInput.current?.click();
-          }}
+          onStitch={() => setPanel("stitch")}
         />
+      )}
+
+      {panel === "stitch" && (
+        <>
+          <input
+            ref={stitchFileInput}
+            hidden
+            type="file"
+            multiple
+            accept="image/png,image/jpeg,image/webp"
+            onChange={async (event) => {
+              const files = event.target.files;
+              event.target.value = "";
+              if (!files || files.length === 0) return;
+              await addStitchFiles(files);
+            }}
+          />
+          <StitchPanel
+            sources={stitchSources}
+            direction={stitchDirection}
+            busy={busy}
+            onAddFiles={() => stitchFileInput.current?.click()}
+            onDirection={setStitchDirection}
+            onReorder={(from, to) =>
+              setStitchSources((current) => {
+                const next = [...current];
+                const [moved] = next.splice(from, 1);
+                next.splice(to, 0, moved);
+                return next;
+              })
+            }
+            onRemove={(index) => setStitchSources((current) => current.filter((_, i) => i !== index))}
+            onStitch={() => void confirmStitch()}
+            onClose={() => setPanel("none")}
+          />
+        </>
       )}
 
       {panel === "shortcuts" && <ShortcutsPanel exportFormat={exportFormat} captureShortcut={appConfig?.captureShortcut} />}
@@ -937,10 +981,8 @@ export default function App() {
       <FilePickers
         imageInput={imageInput}
         projectInput={projectInput}
-        stitchInput={stitchInput}
         onImage={loadCapture}
         onProject={loadProject}
-        onStitch={handleStitchPicked}
         onBeforeReplace={confirmReplace}
         onError={notify}
       />
@@ -1113,7 +1155,7 @@ function MenuPanel({
   onExportFormat: (format: ExportFormat) => void;
   onExportQuality: (quality: number) => void;
   onSaveImage: () => void;
-  onStitch: (direction: StitchDirection) => void;
+  onStitch: () => void;
 }) {
   return (
     <div className="pin-panel is-menu" role="dialog" aria-label="更多">
@@ -1159,13 +1201,7 @@ function MenuPanel({
         <button onClick={onOpenImage}><ImagePlus size={15} />打开图片</button>
         <button onClick={onOpenProject}><FolderOpen size={15} />打开工程</button>
         <button onClick={onSaveProject}><FileArchive size={15} />保存工程 (Ctrl+Shift+S)</button>
-      </div>
-      <div className="panel-stitch">
-        <span className="panel-stitch-label">长截图：按顺序拼接图片</span>
-        <div className="panel-stitch-actions">
-          <button disabled={busy} onClick={() => onStitch("vertical")}>垂直拼接</button>
-          <button disabled={busy} onClick={() => onStitch("horizontal")}>水平拼接</button>
-        </div>
+        <button disabled={busy} onClick={onStitch}><MoveUpRight size={15} />长截图拼接…</button>
       </div>
       <div className="panel-meta">{image.width} × {image.height} · {isTauri() ? "桌面" : "预览"}</div>
     </div>
@@ -1220,19 +1256,15 @@ function EmptyState({
 function FilePickers({
   imageInput,
   projectInput,
-  stitchInput,
   onImage,
   onProject,
-  onStitch,
   onBeforeReplace,
   onError,
 }: {
   imageInput: React.RefObject<HTMLInputElement | null>;
   projectInput: React.RefObject<HTMLInputElement | null>;
-  stitchInput: React.RefObject<HTMLInputElement | null>;
   onImage: (capture: CaptureResult, name?: string) => Promise<void>;
   onProject: (project: ScreenPinProject) => Promise<void>;
-  onStitch: (files: FileList | null, direction: StitchDirection) => Promise<void>;
   onBeforeReplace: () => Promise<boolean>;
   onError: (message: string) => void;
 }) {
@@ -1272,24 +1304,6 @@ function FilePickers({
           }
         }}
       />
-      <input
-        ref={stitchInput}
-        hidden
-        type="file"
-        multiple
-        accept="image/png,image/jpeg,image/webp"
-        onChange={async (event) => {
-          const files = event.target.files;
-          const direction = event.currentTarget.getAttribute("data-direction") as StitchDirection | null;
-          event.target.value = "";
-          if (!files || files.length === 0) return;
-          try {
-            await onStitch(files, direction ?? "vertical");
-          } catch (error) {
-            onError(errorMessage(error));
-          }
-        }}
-      />
     </>
   );
 }
@@ -1300,6 +1314,80 @@ function toolName(tool: Annotation["type"]) {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function StitchPanel({
+  sources,
+  direction,
+  busy,
+  onAddFiles,
+  onDirection,
+  onReorder,
+  onRemove,
+  onStitch,
+  onClose,
+}: {
+  sources: CaptureResult[];
+  direction: StitchDirection;
+  busy: boolean;
+  onAddFiles: () => void;
+  onDirection: (direction: StitchDirection) => void;
+  onReorder: (from: number, to: number) => void;
+  onRemove: (index: number) => void;
+  onStitch: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="pin-panel is-stitch" role="dialog" aria-label="长截图拼接">
+      <div className="panel-title">
+        <span className="ocr-title"><MoveUpRight size={14} />长截图拼接</span>
+        <button className="panel-close" title="关闭" aria-label="关闭" onClick={onClose}><X size={13} /></button>
+      </div>
+      <div className="stitch-dir">
+        <span className="panel-stitch-label">拼接方向</span>
+        <div className="stitch-dir-options">
+          <button
+            type="button"
+            className={direction === "vertical" ? "is-active" : ""}
+            onClick={() => onDirection("vertical")}
+          >
+            垂直 <ArrowDown size={13} />
+          </button>
+          <button
+            type="button"
+            className={direction === "horizontal" ? "is-active" : ""}
+            onClick={() => onDirection("horizontal")}
+          >
+            水平 <ArrowUp size={13} />
+          </button>
+        </div>
+      </div>
+      <div className="stitch-list">
+        {sources.length === 0 ? (
+          <div className="ocr-status">还没有图片，点击下方"添加图片"选择多张截图，可调整顺序后再拼接。</div>
+        ) : (
+          sources.map((source, index) => (
+            <div key={`${index}-${source.dataUrl.slice(0, 24)}`} className="stitch-item">
+              <span className="stitch-index">{index + 1}</span>
+              <img className="stitch-thumb" src={source.dataUrl} alt={`第 ${index + 1} 张`} draggable={false} />
+              <span className="stitch-size">{source.width} × {source.height}</span>
+              <div className="stitch-item-actions">
+                <button title="上移" aria-label="上移" disabled={index === 0} onClick={() => onReorder(index, index - 1)}><ArrowUp size={13} /></button>
+                <button title="下移" aria-label="下移" disabled={index === sources.length - 1} onClick={() => onReorder(index, index + 1)}><ArrowDown size={13} /></button>
+                <button title="移除" aria-label="移除" onClick={() => onRemove(index)}><Trash2 size={13} /></button>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+      <div className="panel-actions panel-actions-form">
+        <button type="button" disabled={busy} onClick={onAddFiles}><ImagePlus size={14} />添加图片</button>
+        <button type="button" className="primary-action" disabled={busy || sources.length < 2} onClick={onStitch}>
+          <MoveUpRight size={14} />拼接并载入
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function OcrPanel({
@@ -1317,33 +1405,41 @@ function OcrPanel({
   onCopy: () => void;
   onClose: () => void;
 }) {
+  const lineCount = text ? text.split("\n").filter((line) => line.trim().length > 0).length : 0;
+  const charCount = text ? Array.from(text.replace(/\s+/g, "")).length : 0;
   return (
     <div className="pin-panel is-ocr" role="dialog" aria-label="识别文字">
       <div className="panel-title">
-        <span>识别文字 (OCR)</span>
+        <span className="ocr-title"><ScanText size={14} />识别文字 (OCR)</span>
         <button className="panel-close" title="关闭" aria-label="关闭" onClick={onClose}><X size={13} /></button>
       </div>
       {setupError ? (
         <div className="ocr-setup-error">{setupError}</div>
       ) : busy ? (
-        <div className="ocr-status">正在识别…</div>
-      ) : text ? (
-        <textarea
-          className="ocr-text"
-          readOnly
-          value={text}
-          onFocus={(event) => event.currentTarget.select()}
-          aria-label="识别出的文字"
-        />
+        <div className="ocr-loading">
+          <span className="ocr-spinner" aria-hidden />
+          <span>正在识别…</span>
+        </div>
+      ) : text !== null && text.length > 0 ? (
+        <>
+          <textarea
+            className="ocr-text"
+            readOnly
+            value={text}
+            onFocus={(event) => event.currentTarget.select()}
+            aria-label="识别出的文字"
+          />
+          <div className="ocr-meta">{lineCount} 行 · {charCount} 字符</div>
+        </>
       ) : (
-        <div className="ocr-status">没有识别到文字。</div>
+        <div className="ocr-status">没有识别到文字，换个画面试试。</div>
       )}
       <div className="panel-actions panel-actions-form">
-        {!setupError && text !== null && (
-          <button type="button" disabled={busy || !text} onClick={onCopy}><Copy size={14} />复制文字</button>
+        {!setupError && text !== null && text.length > 0 && (
+          <button type="button" className="primary-action" disabled={busy} onClick={onCopy}><Copy size={14} />复制文字</button>
         )}
         <button type="button" disabled={busy} onClick={onRetry}>重新识别</button>
-        <button type="button" className="primary-action" onClick={onClose}>关闭</button>
+        <button type="button" onClick={onClose}>关闭</button>
       </div>
     </div>
   );
