@@ -124,7 +124,7 @@ export default function App() {
   useEffect(() => {
     void refreshArea();
     if (isTauri()) {
-      void getConfig().then(setAppConfig).catch(() => setAppConfig({ captureShortcut: "CommandOrControl+Shift+A" }));
+      void getConfig().then(setAppConfig).catch(() => setAppConfig({ captureShortcut: "Super+Shift+S" }));
     }
   }, [refreshArea]);
   const loadCapture = useCallback(

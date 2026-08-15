@@ -1,10 +1,12 @@
 use std::sync::Mutex;
 
-use tauri::{Emitter, WindowEvent};
+use tauri::{Emitter, Manager, WindowEvent};
 use tauri_plugin_global_shortcut::ShortcutState;
 
 mod capture;
 mod config;
+#[cfg(target_os = "linux")]
+mod ipc;
 mod lifecycle;
 mod media;
 mod shortcuts;
@@ -20,6 +22,9 @@ use window::{
     fit_window, hide_window, set_main_pinned, show_editor_window, start_drag, work_area,
     CaptureState,
 };
+
+#[cfg(target_os = "linux")]
+pub use ipc::request_running_capture;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -51,7 +56,14 @@ pub fn run() {
         .manage(CaptureState::default())
         .setup(|app| {
             tray::setup_tray(app)?;
+            #[cfg(target_os = "linux")]
+            ipc::setup_capture_listener(app.handle())?;
             shortcuts::setup_global_shortcut(app)?;
+            if std::env::args_os().any(|argument| argument == "--hidden") {
+                if let Some(window) = app.get_webview_window("main") {
+                    window.hide()?;
+                }
+            }
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -85,7 +97,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{media::decode_data_url, shortcuts::validate_shortcut};
+    use super::{config::AppConfig, media::decode_data_url, shortcuts::validate_shortcut};
 
     #[test]
     fn decodes_a_data_url() {
@@ -95,6 +107,7 @@ mod tests {
 
     #[test]
     fn validates_shortcuts_with_a_modifier_and_key() {
+        assert!(validate_shortcut("Super+Shift+S").is_ok());
         assert!(validate_shortcut("CommandOrControl+Shift+A").is_ok());
         assert!(validate_shortcut("Alt+PrintScreen").is_ok());
         assert!(validate_shortcut("Ctrl+Frobnozzle").is_err());
@@ -102,6 +115,11 @@ mod tests {
         assert!(validate_shortcut("Shift").is_err());
         assert!(validate_shortcut("A").is_err());
         assert!(validate_shortcut("").is_err());
+    }
+
+    #[test]
+    fn uses_win_shift_s_as_the_default_capture_shortcut() {
+        assert_eq!(AppConfig::default().capture_shortcut, "Super+Shift+S");
     }
 
     #[cfg(target_os = "linux")]

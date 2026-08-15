@@ -22,7 +22,7 @@ export function EmptyState({ busy, onDrag, onCapture, onOpen, onOpenProject, onC
         <button className="secondary-action" onClick={onOpen}><ImagePlus size={16} />打开图片</button>
         <button className="secondary-action" onClick={onOpenProject}><FolderOpen size={16} />工程</button>
       </div>
-      <div className="shortcut-row"><kbd>Ctrl</kbd><span>+</span><kbd>Shift</kbd><span>+</span><kbd>A</kbd></div>
+      <div className="shortcut-row"><kbd>Win</kbd><span>+</span><kbd>Shift</kbd><span>+</span><kbd>S</kbd></div>
     </div>
   );
 }

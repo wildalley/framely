@@ -13,7 +13,7 @@ pub struct AppConfig {
 }
 
 fn default_capture_shortcut() -> String {
-    "CommandOrControl+Shift+A".to_string()
+    "Super+Shift+S".to_string()
 }
 
 impl Default for AppConfig {

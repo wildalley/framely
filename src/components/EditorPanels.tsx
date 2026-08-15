@@ -255,7 +255,7 @@ interface ShortcutsPanelProps {
 }
 
 export function ShortcutsPanel({ exportFormat, captureShortcut }: ShortcutsPanelProps) {
-  const displayShortcut = captureShortcut?.replace("CommandOrControl", "Ctrl") || "Ctrl+Shift+A";
+  const displayShortcut = formatShortcut(captureShortcut || "Super+Shift+S");
   const shortcuts = [
     { keys: displayShortcut.split("+"), action: "截取屏幕（全局）" },
     { keys: ["V"], action: "选择工具" },
@@ -322,7 +322,11 @@ export function SettingsPanel({ config, onSave, onClose }: SettingsPanelProps) {
     event.stopPropagation();
 
     const parts: string[] = [];
-    if (event.ctrlKey || event.metaKey) parts.push("CommandOrControl");
+    if (event.metaKey) {
+      parts.push(/Mac/i.test(navigator.platform) ? "CommandOrControl" : "Super");
+    } else if (event.ctrlKey) {
+      parts.push("CommandOrControl");
+    }
     if (event.shiftKey) parts.push("Shift");
     if (event.altKey) parts.push("Alt");
 
@@ -346,7 +350,7 @@ export function SettingsPanel({ config, onSave, onClose }: SettingsPanelProps) {
         <div className="shortcut-input-wrapper">
           <input
             className="shortcut-input"
-            value={shortcut.replace("CommandOrControl", "Ctrl")}
+            value={formatShortcut(shortcut)}
             readOnly
             placeholder="点击录制按钮设置快捷键"
           />
@@ -364,4 +368,10 @@ export function SettingsPanel({ config, onSave, onClose }: SettingsPanelProps) {
       </div>
     </div>
   );
+}
+
+function formatShortcut(shortcut: string) {
+  return shortcut
+    .replace("CommandOrControl", "Ctrl")
+    .replace("Super", "Win");
 }

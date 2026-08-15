@@ -5,7 +5,7 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
 
 use crate::config::AppConfig;
 
-pub const DEFAULT_CAPTURE_SHORTCUT: &str = "CommandOrControl+Shift+A";
+pub const DEFAULT_CAPTURE_SHORTCUT: &str = "Super+Shift+S";
 
 #[derive(Default)]
 pub struct ShortcutRuntime {
