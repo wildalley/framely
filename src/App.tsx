@@ -38,7 +38,6 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { CaptureOverlay } from "./CaptureOverlay";
-import { ScrollCaptureOverlay } from "./ScrollCapture";
 import { EditorCanvas, type EditorCanvasHandle } from "./EditorCanvas";
 import { formatShortcut, MODIFIER_ORDER, mainShortcutKey, modifierFromEvent, shortcutParts } from "./shortcut";
 import {
@@ -145,7 +144,6 @@ export default function App() {
   const [ocrBusy, setOcrBusy] = useState(false);
   const [stitchSources, setStitchSources] = useState<CaptureResult[]>([]);
   const [stitchDirection, setStitchDirection] = useState<StitchDirection>("vertical");
-  const [scrollCaptureActive, setScrollCaptureActive] = useState(false);
   const [styles, setStyles] = useState<Record<Annotation["type"], AnnotationStyle>>(() =>
     DRAW_TOOLS.reduce(
       (all, id) => ({ ...all, [id]: defaultStyle(id) }),
@@ -639,37 +637,10 @@ export default function App() {
     }
   }, [confirmReplace, loadCapture, notify, stitchDirection, stitchSources]);
 
-  const openScrollCapture = useCallback(async () => {
-    setPanel("none");
-    try {
-      await enterCaptureMode();
-      setScrollCaptureActive(true);
-    } catch (error) {
-      notify(errorMessage(error));
-    }
+  const openScrollCapture = useCallback(() => {
+    setPanel("stitch");
+    notify("滚动截图已改为手动拼接，请添加滚动过程中的多张截图");
   }, [notify]);
-
-  const closeScrollCapture = useCallback(async () => {
-    setScrollCaptureActive(false);
-    try {
-      await exitCaptureMode(isPinned);
-      // Let the fullscreen-exit restore settle before the following
-      // loadCapture re-fits the window geometry (same race as capture confirm).
-      await new Promise<void>((resolve) => window.setTimeout(resolve, 150));
-    } catch {
-      // Non-fatal: the window may already be in its normal state.
-    }
-  }, [isPinned]);
-
-  const finishScrollCapture = useCallback(
-    async (result: CaptureResult) => {
-      await closeScrollCapture();
-      await loadCapture(result, `滚动截图 ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`);
-      // The window is hidden at this point; reveal it after the fit above.
-      if (isTauri()) await showMainWindow();
-    },
-    [closeScrollCapture, isTauri, loadCapture, showMainWindow],
-  );
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -819,18 +790,6 @@ export default function App() {
     if (event.button !== 0 || target.closest("button, input, textarea")) return;
     if (isTauri()) void startWindowDrag().catch(() => undefined);
   };
-  if (scrollCaptureActive) {
-    return (
-      <ScrollCaptureOverlay
-        onFinish={(result) => void finishScrollCapture(result)}
-        onCancel={() => {
-          void closeScrollCapture().then(() => {
-            if (isTauri()) return showMainWindow();
-          });
-        }}
-      />
-    );
-  }
   if (captureDraft) {
     return (
       <CaptureOverlay

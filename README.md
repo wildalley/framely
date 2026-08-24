@@ -10,6 +10,7 @@ ScreenPin 是一个面向桌面的非破坏性截图编辑器，目标平台为 
   - macOS：静默采集当前显示器，再由 ScreenPin 选择区域
   - Windows：通过 Win32 GDI 静默采集当前显示器，再由 ScreenPin 选择区域
   - 多显示器：Portal 只能返回整个虚拟桌面。多屏时先显示选屏界面——每块屏幕按相对方位（左/右或上/下）对齐中心排列、去掉物理摆位的高低差，并标注分辨率与横/竖屏；点击要截的屏幕后，进入该屏**原分辨率**选区层自由框选。不再依赖鼠标所在屏幕，也就规避了 Wayland 下"偶尔锁定同一屏"的问题；确认按钮固定居中在满屏选区层底部，不会落在两屏交界处。截图确认后，编辑窗口会居中出现在你选中的那块屏幕，而不是停留在上一次的位置（单屏截图同样跟随所截屏幕）
+  - GNOME Wayland 可能仍会先显示系统安全确认层，其圆形拍照按钮由 GNOME 固定在主屏；门户返回桌面图像后，实际选屏与区域框选由 ScreenPin 完成，主屏和副屏都可选择
   - 应用内采集或选区层不可用时，自动回退到系统交互式截图；取消兜底截图不会截取整个虚拟桌面
   
 - **八种标注工具**：矩形、椭圆、箭头、画笔、荧光笔、区域高亮、文字、马赛克
@@ -23,7 +24,7 @@ ScreenPin 是一个面向桌面的非破坏性截图编辑器，目标平台为 
 - **长截图（画布拼接）**
   - "更多"菜单的"长截图拼接…"打开拼接面板：多次添加截图、缩略图列表、上下调整顺序、移除单张、切换垂直/水平方向，确认后拼接为一张长图再标注/导出
   - 各图在拼接轴上按顺序排列、另一轴居中对齐；适合手工滚动截图后拼接
-  - "滚动截图…"：全屏框选目标区域后开始采集，你在目标窗口里手动滚动，应用通过重叠像素匹配自动去重并拼成长图（垂直/水平可选）。Wayland 无法自动滚动其他窗口，因此由你滚动、应用负责连续采集与拼接
+  - "滚动截图…"：当前版本在所有平台统一打开长截图拼接面板，将滚动过程中的多张截图按顺序拼成长图（垂直/水平可选）。连续区域采集已关闭，避免 Wayland 截图门户反复弹出请求以及停止操作失效
   
 - **实时编辑**
   - 选中对象后移动、四角缩放、改颜色、调粗细/透明度、调整图层和删除
@@ -87,7 +88,7 @@ cd src-tauri && cargo check && cargo test
 
 ### Linux 依赖
 
-需要 WebKitGTK、GTK3、DBus 和 `xdg-desktop-portal`。OCR 需要 `tesseract` 及语言数据，建议安装 `tesseract-data-eng`（英文）和 `tesseract-data-chi_sim`（简体中文），未安装时识别会提示如何补齐。Wayland 不允许普通应用绕过合成器读取其他窗口，因此首次截图或桌面策略要求时，portal 后端仍可能显示安全授权；授权完成后，区域选择由 ScreenPin 自己处理。Hyprland 建议安装并启用 `xdg-desktop-portal-hyprland`。Wayland 全局快捷键使用 `org.freedesktop.portal.GlobalShortcuts`，首次启动或修改快捷键时也可能由桌面门户请求授权。门户的触发器语法与 Tauri 的快捷键写法不同：修饰键只有 `CTRL`、`ALT`、`SHIFT`、`NUM`、`LOGO`（即 `Win` 键，没有 `SUPER`），按键名是区分大小写的 xkb keysym（`s`、`Return`、`Print`），ScreenPin 会在注册前完成转换。托盘图标使用 AppIndicator/StatusNotifier，Waybar 需要启用 `tray` 模块才能显示。
+需要 WebKitGTK、GTK3、DBus 和 `xdg-desktop-portal`。OCR 需要 `tesseract` 及语言数据，建议安装 `tesseract-data-eng`（英文）和 `tesseract-data-chi_sim`（简体中文），未安装时识别会提示如何补齐。Wayland 不允许普通应用绕过合成器读取其他窗口，因此首次截图或桌面策略要求时，portal 后端仍可能显示安全授权；GNOME 的确认控件可能只显示在主屏，确认后 ScreenPin 会提供自己的多屏选择界面。Hyprland 建议安装并启用 `xdg-desktop-portal-hyprland`。Wayland 全局快捷键使用 `org.freedesktop.portal.GlobalShortcuts`，首次启动或修改快捷键时也可能由桌面门户请求授权。门户的触发器语法与 Tauri 的快捷键写法不同：修饰键只有 `CTRL`、`ALT`、`SHIFT`、`NUM`、`LOGO`（即 `Win` 键，没有 `SUPER`），按键名是区分大小写的 xkb keysym（`s`、`Return`、`Print`），ScreenPin 会在注册前完成转换。托盘图标使用 AppIndicator/StatusNotifier，菜单只保留截图、显示主窗口和退出；Waybar 需要启用 `tray` 模块才能显示。
 
 GNOME 的全局快捷键后端要求调用方有一个可解析的应用 ID：ScreenPin 开启了 `app.enableGTKAppId`（GTK 应用 ID 为 `io.screenpin.desktop`），并在注册 host 应用时传入**不带 `.desktop` 后缀**的 ID（`io.screenpin`）——portal 查找桌面文件时会自行追加 `.desktop`。Arch 包会安装 `/usr/share/applications/io.screenpin.desktop`，与这个 ID 对应；其他发行版构建时也需要提供同名的桌面文件，否则 GNOME 会拒绝创建全局快捷键会话（"An app id is required"）。KDE、niri 等桌面同样走该 portal 接口，此机制通用；Windows/macOS 与 Linux X11 会话走 Tauri 插件，不涉及应用 ID。
 
@@ -123,7 +124,7 @@ windowrulev2 = noanim, class:^(ScreenPin)$
 
 区域高亮对象使用 `type: "area-highlight"`，并保存选区的 `x`、`y`、`width`、`height`、颜色和压暗强度。工程打开时会校验图片能否解码、真实尺寸、时间字段、标注类型、数值范围和对象 ID，非法、损坏或伪造图片尺寸的工程会被拒绝加载。
 
-后续版本可以在保持原图和对象坐标兼容的前提下增加 GIF/视频录制、滚动截图自动捕获（受平台限制：Wayland 下 portal 无法控制其他窗口滚动，当前以"框选 + 手动滚动自动拼接"提供，自动滚动仅 X11/macOS/Windows 可行）、云同步和多图画布。OCR 与手工画布拼接已在当前版本提供。
+后续版本可以在保持原图和对象坐标兼容的前提下增加 GIF/视频录制、基于持久 ScreenCast/PipeWire 会话的滚动截图自动捕获、云同步和多图画布。OCR 与手工画布拼接已在当前版本提供。
 
 ## 技术栈
 

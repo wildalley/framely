@@ -105,11 +105,17 @@ export function findScrollOffset(
   const a = sampleImage(prev, step);
   const b = sampleImage(next, step);
 
-  const probeLength = Math.max(8, Math.floor(axis / step / 4));
+  const sampledAxis = direction === "vertical" ? a.height : a.width;
+  const probeLength = Math.max(8, Math.floor(sampledAxis / 4));
+  // Ignore a small strip on both ends of the scroll axis. Web pages commonly
+  // contain sticky headers, cookie bars or floating toolbars there; comparing
+  // the interior content keeps those stationary elements from hiding a valid
+  // scroll match.
+  const edgeInset = Math.min(Math.floor(sampledAxis / 8), Math.max(0, sampledAxis - 12));
   // The overlap strip must be at least this long (in sampled pixels) for the
   // match to be meaningful. Cap the search at half the frame so we never
   // accept a match that implies more than half the frame is new content.
-  const maxDelta = Math.floor(axis / step / 2);
+  const maxDelta = Math.floor(sampledAxis / 2);
   const minProbe = Math.max(4, Math.floor(maxDelta / 2));
 
   let best: { delta: number; cost: number } | null = null;
@@ -118,10 +124,10 @@ export function findScrollOffset(
     // Content scrolled along the axis by `delta`: the new frame's top strip is
     // exactly the old frame's strip that started at row/column `delta`. So
     // compare prev[delta..delta+avail] against next[0..avail].
-    const available = Math.min(axis / step - delta, probeLength);
+    const available = Math.min(sampledAxis - edgeInset - delta, probeLength);
     if (available < minProbe) continue;
-    const aStart = delta;
-    const bStart = 0;
+    const aStart = edgeInset + delta;
+    const bStart = edgeInset;
     const cost = bandDifference(a, b, direction, aStart, bStart, available);
     costs.push(cost);
     if (best === null || cost < best.cost) {
@@ -135,14 +141,23 @@ export function findScrollOffset(
   // yields several similar costs with no standout winner.
   const sorted = [...costs].sort((x, y) => x - y);
   const median = sorted[Math.floor(sorted.length / 2)];
+  const distinctRunnerUp = costs
+    .map((cost, index) => ({ cost, delta: index + 1 }))
+    .filter((candidate) => Math.abs(candidate.delta - best.delta) > 2)
+    .sort((x, y) => x.cost - y.cost)[0];
+  // Equal frames mean the page has not moved. Checking this explicitly avoids
+  // accepting a tiny false offset on flat or repetitive content.
+  const unchangedCost = bandDifference(a, b, direction, 0, 0, sampledAxis);
+  if (unchangedCost < 1.5) return null;
   if (median <= 0 || best.cost >= 0.5 * median) return null;
-  return { delta: best.delta * step, confidence: 1 - best.cost / median };
+  if (distinctRunnerUp && best.cost >= 0.8 * distinctRunnerUp.cost) return null;
+  return { delta: Math.min(axis, best.delta * step), confidence: Math.max(0, 1 - best.cost / median) };
 }
 
 /**
- * Append a new frame to a running long canvas, skipping the `delta` pixels of
- * overlap with the previous frame. The first call (empty canvas) seeds the
- * long image with the whole frame. Returns the new canvas.
+ * Append the `delta` newly revealed pixels from a new frame to a running long
+ * canvas. The first call (empty canvas) seeds the long image with the whole
+ * frame. Returns the new canvas.
  */
 export function appendFrame(
   canvas: HTMLCanvasElement,
@@ -161,7 +176,8 @@ export function appendFrame(
 
   const oldWidth = canvas.width;
   const oldHeight = canvas.height;
-  const added = Math.max(0, isVertical ? frame.height - delta : frame.width - delta);
+  const frameAxis = isVertical ? frame.height : frame.width;
+  const added = Math.min(frameAxis, Math.max(0, Math.round(delta)));
   const nextWidth = isVertical ? Math.max(oldWidth, frame.width) : oldWidth + added;
   const nextHeight = isVertical ? oldHeight + added : Math.max(oldHeight, frame.height);
 
@@ -172,11 +188,10 @@ export function appendFrame(
   if (!outContext) return canvas;
   outContext.drawImage(canvas, 0, 0);
   if (isVertical) {
-    // Content scrolled up: the frame's top `delta` rows overlap the previous
-    // bottom; append the newly revealed bottom rows.
-    outContext.drawImage(src, 0, delta, frame.width, added, 0, oldHeight, frame.width, added);
+    // Content scrolled up: only the bottom `added` rows are new.
+    outContext.drawImage(src, 0, frame.height - added, frame.width, added, 0, oldHeight, frame.width, added);
   } else {
-    outContext.drawImage(src, delta, 0, added, frame.height, oldWidth, 0, added, frame.height);
+    outContext.drawImage(src, frame.width - added, 0, added, frame.height, oldWidth, 0, added, frame.height);
   }
   return out;
 }

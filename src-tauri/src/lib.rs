@@ -92,6 +92,13 @@ struct CaptureResult {
     height: u32,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ScrollCaptureCapability {
+    supported: bool,
+    reason: Option<String>,
+}
+
 /// One monitor's location inside the captured bitmap, in bitmap pixels. Lets the
 /// frontend render a screen-picker and turn a click on a screen into that
 /// screen's native-resolution frame. `primary` marks the system's primary
@@ -665,7 +672,10 @@ async fn capture_screen(
     // first would make the pointer lookup fall back to the primary monitor.
     let monitor = capture_monitor(&window)?;
     let _ = window.hide();
-    std::thread::sleep(std::time::Duration::from_millis(180));
+    // Give the compositor a short moment to remove the editor before the
+    // portal captures the desktop. The app overlay then handles screen choice
+    // on every monitor instead of relying on GNOME's primary-screen controls.
+    std::thread::sleep(std::time::Duration::from_millis(80));
     match primary_capture(&window, &monitor)
         .await
         .and_then(|bytes| capture_frame(&window, &monitor, &bytes))
@@ -784,6 +794,7 @@ fn exit_capture_mode(window: WebviewWindow, pinned: bool) -> Result<(), String> 
     // The frontend re-fits the window while it is hidden, then explicitly shows
     // it (see `show_editor_window`).
     let _ = window.hide();
+    let _ = window.set_ignore_cursor_events(false);
     window
         .set_fullscreen(false)
         .map_err(|error| format!("无法退出全屏截图选区: {error}"))?;
@@ -853,7 +864,17 @@ fn copy_text(text: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn capture_region(window: WebviewWindow, x: u32, y: u32, width: u32, height: u32) -> Result<CaptureResult, String> {
+async fn capture_region(
+    window: WebviewWindow,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+) -> Result<CaptureResult, String> {
+    if cfg!(target_os = "linux") {
+        return Err("Linux 桌面暂不启用连续区域采集，请使用长截图拼接".to_string());
+    }
+
     if width == 0 || height == 0 {
         return Err("区域尺寸无效".to_string());
     }
@@ -862,17 +883,14 @@ async fn capture_region(window: WebviewWindow, x: u32, y: u32, width: u32, heigh
     // window reports no current monitor), then scale to physical pixels and
     // translate to global desktop coordinates — the coordinate space of the
     // portal bitmap.
-    let monitor = window.current_monitor().ok().flatten();
-    let (origin, scale) = monitor
-        .as_ref()
-        .map(|monitor| (*monitor.position(), monitor.scale_factor()))
-        .or_else(|| {
-            window
-                .outer_position()
-                .ok()
-                .map(|position| (position, 1.0))
-        })
-        .unwrap_or((PhysicalPosition::new(0, 0), 1.0));
+    let monitor = window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| window.primary_monitor().ok().flatten())
+        .ok_or_else(|| "没有可用的显示器".to_string())?;
+    let origin = *monitor.position();
+    let scale = monitor.scale_factor();
     let px = |logical: u32| (logical as f64 * scale).round() as i32;
     let gx = origin.x + px(x);
     let gy = origin.y + px(y);
@@ -883,23 +901,52 @@ async fn capture_region(window: WebviewWindow, x: u32, y: u32, width: u32, heigh
     // Let the compositor actually remove the window before grabbing pixels;
     // otherwise the portal captures our own fullscreen selector → black frame.
     std::thread::sleep(std::time::Duration::from_millis(180));
-    let bytes = primary_capture(&window, &active_monitor(&window)?)
-        .await
-        .map_err(|error| format!("无法采集区域画面: {error}"))?;
-    let image =
-        image::load_from_memory(&bytes).map_err(|error| format!("无法读取区域画面: {error}"))?;
-    let (image_w, image_h) = image.dimensions();
-    let left = (gx.max(0) as u32).min(image_w);
-    let top = (gy.max(0) as u32).min(image_h);
-    let width = gw.min(image_w - left);
-    let height = gh.min(image_h - top);
-    if width == 0 || height == 0 {
-        return Err("区域超出桌面范围".to_string());
+    let result = async {
+        let bytes = primary_capture(&window, &monitor)
+            .await
+            .map_err(|error| format!("无法采集区域画面: {error}"))?;
+        let (image, geometry, _) = capture_frame(&window, &monitor, &bytes)?;
+        let image_w = image.width();
+        let image_h = image.height();
+        let left = (gx - geometry.origin.x).max(0) as u32;
+        let top = (gy - geometry.origin.y).max(0) as u32;
+        let left = left.min(image_w);
+        let top = top.min(image_h);
+        let width = gw.min(image_w - left);
+        let height = gh.min(image_h - top);
+        if width == 0 || height == 0 {
+            return Err("区域超出桌面范围".to_string());
+        }
+        encode_png(&image.crop_imm(left, top, width, height))
     }
-    let frame = image.crop_imm(left, top, width, height);
+    .await;
     let _ = window.show();
+    // Cursor events pass through to the page being scrolled, but the selector
+    // still needs keyboard focus so Escape can reliably stop the capture.
     let _ = window.set_focus();
-    encode_png(&frame)
+    result
+}
+
+#[tauri::command]
+fn scroll_capture_capability() -> ScrollCaptureCapability {
+    #[cfg(target_os = "linux")]
+    {
+        ScrollCaptureCapability {
+            supported: false,
+            reason: Some("Linux 桌面已禁用连续滚动采集，请使用长截图拼接，避免反复触发系统截图请求".to_string()),
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        ScrollCaptureCapability { supported: true, reason: None }
+    }
+}
+
+#[tauri::command]
+fn set_capture_passthrough(window: WebviewWindow, enabled: bool) -> Result<(), String> {
+    window
+        .set_ignore_cursor_events(enabled)
+        .map_err(|error| format!("无法切换截图穿透: {error}"))
 }
 
 #[tauri::command]
@@ -1743,9 +1790,11 @@ pub fn run() {
             capture_screen,
             capture_with_system,
             capture_region,
+            scroll_capture_capability,
             set_capture_target,
             enter_capture_mode,
             exit_capture_mode,
+            set_capture_passthrough,
             show_editor_window,
             read_clipboard_image,
             copy_image,

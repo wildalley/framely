@@ -264,6 +264,26 @@ button:disabled {
   background: rgb(35 131 226 / 8%);
 }
 
+.scroll-background {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  pointer-events: none;
+}
+
+.scroll-overlay.is-capturing {
+  background: transparent;
+  pointer-events: none;
+}
+
+html:has(.scroll-overlay.is-capturing),
+body:has(.scroll-overlay.is-capturing),
+#root:has(.scroll-overlay.is-capturing) {
+  background: transparent;
+}
+
 .scroll-controls {
   position: fixed;
   z-index: 5;
@@ -333,6 +353,20 @@ button:disabled {
 .scroll-controls > button:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+.scroll-stop-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #ffffff;
+  font-size: 12px;
+}
+
+.scroll-stop-hint::after {
+  content: "· 托盘菜单可强制停止";
+  color: #aeb9b5;
+  margin-left: 3px;
 }
 
 .scroll-preview {

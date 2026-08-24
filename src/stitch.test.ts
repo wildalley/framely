@@ -79,9 +79,29 @@ describe("findScrollOffset", () => {
     expect(result!.delta).toBeLessThanOrEqual(40);
   });
 
+  it("ignores a fixed header while matching scrolled page content", () => {
+    const width = 80;
+    const height = 200;
+    const scroll = 28;
+    const header = 24;
+    const page = pageImage(width, height + scroll);
+    const prev = windowImage(page, width, height, 0);
+    const next = windowImage(page, width, height, scroll);
+    // Simulate a sticky header that stays unchanged at the top of both frames.
+    next.data.set(prev.data.subarray(0, header * width * 4), 0);
+    const result = findScrollOffset(prev, next, "vertical");
+    expect(result).not.toBeNull();
+    expect(result!.delta).toBeGreaterThanOrEqual(18);
+    expect(result!.delta).toBeLessThanOrEqual(38);
+  });
+
   it("returns null when frames are unrelated", () => {
     const a = pageImage(60, 120);
-    const b = pageImage(60, 120); // Different seed, unrelated content.
+    const b = pageImage(60, 120);
+    for (let offset = 0; offset < b.length; offset += 4) {
+      b[offset] ^= 0xff;
+      b[offset + 1] = (b[offset + 1] + 91) & 0xff;
+    }
     const prev = windowImage(a, 60, 120, 0);
     const next = windowImage(b, 60, 120, 0);
     const result = findScrollOffset(prev, next, "vertical");
@@ -89,6 +109,33 @@ describe("findScrollOffset", () => {
       // A false positive must not look like a confident small scroll.
       expect(result.confidence).toBeLessThan(0.5);
     }
+  });
+
+  it("returns null when the page has not moved", () => {
+    const page = pageImage(60, 120);
+    const frame = windowImage(page, 60, 120, 0);
+    expect(findScrollOffset(frame, frame, "vertical")).toBeNull();
+  });
+
+  it("detects horizontal scrolling", () => {
+    const height = 80;
+    const width = 200;
+    const scroll = 36;
+    const page = pageImage(height, width + scroll);
+    const transpose = (left: number): ImageData => {
+      const data = new Uint8ClampedArray(width * height * 4);
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const source = ((left + x) * height + y) * 4;
+          data.set(page.subarray(source, source + 4), (y * width + x) * 4);
+        }
+      }
+      return { width, height, data } as ImageData;
+    };
+    const result = findScrollOffset(transpose(0), transpose(scroll), "horizontal");
+    expect(result).not.toBeNull();
+    expect(result!.delta).toBeGreaterThanOrEqual(25);
+    expect(result!.delta).toBeLessThanOrEqual(45);
   });
 
   it("rejects frames of different sizes", () => {
@@ -114,10 +161,19 @@ describe("appendFrame", () => {
     const page = pageImage(40, 120);
     const first = windowImage(page, 40, 50, 0);
     const seeded = appendFrame(canvas, first, "vertical", 0, () => makeCanvas() as unknown as HTMLCanvasElement);
-    // Second frame scrolls down by 10 rows: 10 overlap, 40 new rows.
+    // Second frame scrolls down by 10 rows, revealing 10 new rows.
     const second = windowImage(page, 40, 50, 10);
     const out = appendFrame(seeded, second, "vertical", 10, () => makeCanvas() as unknown as HTMLCanvasElement);
-    expect(out.height).toBe(50 + 40);
+    expect(out.height).toBe(50 + 10);
     expect(out.width).toBe(40);
+  });
+
+  it("appends only the newly revealed columns after horizontal scrolling", () => {
+    const canvas = makeCanvas() as unknown as HTMLCanvasElement;
+    const first = windowImage(pageImage(50, 40), 50, 40, 0);
+    const seeded = appendFrame(canvas, first, "horizontal", 0, () => makeCanvas() as unknown as HTMLCanvasElement);
+    const out = appendFrame(seeded, first, "horizontal", 12, () => makeCanvas() as unknown as HTMLCanvasElement);
+    expect(out.width).toBe(62);
+    expect(out.height).toBe(40);
   });
 });

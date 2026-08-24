@@ -22,6 +22,15 @@ export const enterCaptureMode = () => invoke<void>("enter_capture_mode");
 
 export const exitCaptureMode = (pinned: boolean) => invoke<void>("exit_capture_mode", { pinned });
 
+export const setCapturePassthrough = (enabled: boolean) => invoke<void>("set_capture_passthrough", { enabled });
+
+export interface ScrollCaptureCapability {
+  supported: boolean;
+  reason?: string | null;
+}
+
+export const scrollCaptureCapability = () => invoke<ScrollCaptureCapability>("scroll_capture_capability");
+
 export const showMainWindow = () => invoke<void>("show_editor_window");
 
 export const pasteImage = () => invoke<CaptureResult>("read_clipboard_image");

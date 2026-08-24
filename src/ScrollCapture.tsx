@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, MoveUpRight, Play, Square, X } from "lucide-react";
+import { listen } from "@tauri-apps/api/event";
+import { Play, Square, X } from "lucide-react";
 import type { CaptureResult } from "./types";
-import { captureRegion } from "./platform";
+import { captureRegion, setCapturePassthrough } from "./platform";
 import { appendFrame, findScrollOffset, type ScrollDirection } from "./stitch";
 
 export interface RegionRect {
@@ -15,8 +16,6 @@ interface DragState {
   origin: { x: number; y: number };
   current: { x: number; y: number };
 }
-
-const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
 /** Frame at the current captured region, in the overlay's own coordinate space. */
 function readFrameImage(result: CaptureResult): Promise<ImageData> {
@@ -36,15 +35,27 @@ function readFrameImage(result: CaptureResult): Promise<ImageData> {
   });
 }
 
+/** Keep live preview encoding cheap as the assembled canvas grows. */
+function previewDataUrl(source: HTMLCanvasElement): string {
+  const scale = Math.min(1, 220 / source.width, 480 / source.height);
+  const preview = document.createElement("canvas");
+  preview.width = Math.max(1, Math.round(source.width * scale));
+  preview.height = Math.max(1, Math.round(source.height * scale));
+  preview.getContext("2d")?.drawImage(source, 0, 0, preview.width, preview.height);
+  return preview.toDataURL("image/jpeg", 0.72);
+}
+
 /**
  * Fullscreen scroll-capture overlay: drag a region, then the app captures that
  * region repeatedly while the user scrolls, de-duplicating the overlap and
  * assembling a long image.
  */
 export function ScrollCaptureOverlay({
+  capture,
   onFinish,
   onCancel,
 }: {
+  capture: CaptureResult;
   onFinish: (result: CaptureResult) => void;
   onCancel: () => void;
 }) {
@@ -55,7 +66,7 @@ export function ScrollCaptureOverlay({
   const [capturing, setCapturing] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [height, setHeight] = useState(0);
+  const [assembledSize, setAssembledSize] = useState({ width: 0, height: 0 });
   const [status, setStatus] = useState<string>("拖动框选要滚动截取的屏幕区域");
 
   // Live capture loop state kept in refs so the interval never re-subscribes.
@@ -64,6 +75,8 @@ export function ScrollCaptureOverlay({
   const longCanvas = useRef<HTMLCanvasElement | null>(null);
   const busyRef = useRef(false);
   const cancelRef = useRef(false);
+  const stoppingRef = useRef(false);
+  const maxDurationRef = useRef<number | null>(null);
   const directionRef = useRef(direction);
   directionRef.current = direction;
 
@@ -109,7 +122,9 @@ export function ScrollCaptureOverlay({
     busyRef.current = true;
     try {
       const frame = await captureRegion(region.x, region.y, region.width, region.height);
+      if (cancelRef.current) return;
       const imageData = await readFrameImage(frame);
+      if (cancelRef.current) return;
       const canvas = longCanvas.current;
       if (!previousFrame.current) {
         // First frame seeds the long image.
@@ -119,9 +134,9 @@ export function ScrollCaptureOverlay({
         seed.getContext("2d")?.putImageData(imageData, 0, 0);
         longCanvas.current = seed;
         previousFrame.current = imageData;
-        setHeight(imageData.height);
+        setAssembledSize({ width: imageData.width, height: imageData.height });
         setStatus("滚动页面，正在自动拼接…");
-        setPreviewUrl(seed.toDataURL("image/png"));
+        setPreviewUrl(previewDataUrl(seed));
         return;
       }
       const match = findScrollOffset(previousFrame.current, imageData, directionRef.current);
@@ -133,10 +148,14 @@ export function ScrollCaptureOverlay({
       const nextCanvas = appendFrame(canvas!, imageData, directionRef.current, match.delta);
       longCanvas.current = nextCanvas;
       previousFrame.current = imageData;
-      setHeight(nextCanvas.height);
-      setPreviewUrl(nextCanvas.toDataURL("image/png"));
-      setStatus(`已拼接 ${nextCanvas.height} 像素，继续滚动或点击停止`);
+      setAssembledSize({ width: nextCanvas.width, height: nextCanvas.height });
+      setPreviewUrl(previewDataUrl(nextCanvas));
+      const length = directionRef.current === "vertical" ? nextCanvas.height : nextCanvas.width;
+      setStatus(`已拼接 ${length} 像素，继续滚动或按快捷键停止`);
     } catch (error) {
+      cancelRef.current = true;
+      setCapturing(false);
+      void setCapturePassthrough(false).catch(() => undefined);
       setStatus(error instanceof Error ? error.message : String(error));
     } finally {
       busyRef.current = false;
@@ -162,20 +181,35 @@ export function ScrollCaptureOverlay({
 
   const intervalRef = useRef<number | null>(null);
 
-  const startCapture = () => {
+  const startCapture = async () => {
     if (!selection) return;
+    try {
+      await setCapturePassthrough(true);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+      return;
+    }
     activeRegion.current = selection;
     previousFrame.current = null;
     longCanvas.current = null;
     setPreviewUrl(null);
-    setHeight(0);
+    setAssembledSize({ width: 0, height: 0 });
+    setStatus("请滚动目标页面，按 Esc 或再次按截图快捷键停止");
     setCapturing(true);
   };
 
   const stopCapture = async () => {
-    if (stopping) return;
+    if (stoppingRef.current) return;
+    stoppingRef.current = true;
     setStopping(true);
+    cancelRef.current = true;
     setCapturing(false);
+    if (intervalRef.current) window.clearInterval(intervalRef.current);
+    intervalRef.current = null;
+    await setCapturePassthrough(false).catch(() => undefined);
+    while (busyRef.current) {
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 20));
+    }
     const canvas = longCanvas.current;
     if (canvas && canvas.width > 0 && canvas.height > 0) {
       const dataUrl = canvas.toDataURL("image/png");
@@ -189,6 +223,29 @@ export function ScrollCaptureOverlay({
     if (capturing) return;
     onCancel();
   };
+
+  useEffect(() => {
+    if (!capturing) return;
+    maxDurationRef.current = window.setTimeout(() => {
+      setStatus("滚动截图已达到 2 分钟上限，正在停止…");
+      void stopCapture();
+    }, 120_000);
+    const unlisten = listen("capture-requested", () => void stopCapture());
+    const unlistenStop = listen("scroll-capture-stop", () => void stopCapture());
+    return () => {
+      if (maxDurationRef.current) window.clearTimeout(maxDurationRef.current);
+      maxDurationRef.current = null;
+      void unlisten.then((dispose) => dispose());
+      void unlistenStop.then((dispose) => dispose());
+    };
+    // stopCapture intentionally follows the latest capture state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [capturing, stopping]);
+
+  useEffect(() => () => {
+    cancelRef.current = true;
+    void setCapturePassthrough(false).catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -218,7 +275,7 @@ export function ScrollCaptureOverlay({
   return (
     <div
       ref={surfaceRef}
-      className="capture-overlay scroll-overlay"
+      className={`capture-overlay scroll-overlay${capturing ? " is-capturing" : ""}`}
       role="dialog"
       aria-label="滚动截图"
       onPointerDown={startDrag}
@@ -226,6 +283,7 @@ export function ScrollCaptureOverlay({
       onPointerUp={endDrag}
       onPointerCancel={endDrag}
     >
+      {!capturing && <img className="scroll-background" src={capture.dataUrl} alt="待框选桌面" draggable={false} />}
       {!capturing && selection && (
         <div className="scroll-selection" style={styleFor(selection)} />
       )}
@@ -233,7 +291,7 @@ export function ScrollCaptureOverlay({
       {capturing && previewUrl && (
         <div className="scroll-preview">
           <img src={previewUrl} alt="长图预览" draggable={false} />
-          <span className="scroll-preview-size">{height}px</span>
+          <span className="scroll-preview-size">{assembledSize.width} × {assembledSize.height}</span>
         </div>
       )}
 
@@ -245,16 +303,14 @@ export function ScrollCaptureOverlay({
               <button className={direction === "vertical" ? "is-active" : ""} onClick={() => setDirection("vertical")}>垂直</button>
               <button className={direction === "horizontal" ? "is-active" : ""} onClick={() => setDirection("horizontal")}>水平</button>
             </div>
-            <button className="is-primary" disabled={!selection || selection.width < 8} onClick={startCapture}>
+            <button className="is-primary" disabled={!selection || selection.width < 8} onClick={() => void startCapture()}>
               <Play size={15} />开始滚动拼接
             </button>
             <button onClick={cancel}><X size={15} />取消</button>
           </>
         )}
         {capturing && (
-          <button className="is-primary" disabled={stopping} onClick={() => void stopCapture()}>
-            <Square size={15} />停止 ({height}px)
-          </button>
+          <span className="scroll-stop-hint"><Square size={13} />Esc / 截图快捷键停止</span>
         )}
       </div>
 
