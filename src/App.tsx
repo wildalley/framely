@@ -33,6 +33,7 @@ import {
   confirmDiscardChanges,
   copyImage,
   createDemoImage,
+  getAutostart,
   getConfig,
   hideWindow,
   imageFromFile,
@@ -43,6 +44,7 @@ import {
   quitApp,
   saveConfig,
   saveImageAs,
+  setAutostart,
   saveProject,
   setMainPinned,
   showMainWindow,
@@ -88,6 +90,9 @@ export default function App() {
   const [exportFormat, setExportFormat] = useState<ExportFormat>("png");
   const [exportQuality, setExportQuality] = useState(0.92);
   const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
+  // Null until the OS answers, and again if it cannot: autostart lives in the
+  // desktop entry / login item, never in config.json.
+  const [autostart, setAutostartState] = useState<boolean | null>(null);
   const pixelationRequest = useRef(0);
   const captureInProgress = useRef(false);
   const history = useEditorHistory();
@@ -109,12 +114,23 @@ export default function App() {
     () => history.annotations.find((annotation) => annotation.id === selectedId) ?? null,
     [history.annotations, selectedId],
   );
-  const hasUnsavedChanges = isDocumentDirty(image, title, createdAt, history.annotations, savedDocument);
+  // Comparing against the saved snapshot stringifies every annotation, so it
+  // stays out of render: only a replace that could discard work needs to ask.
+  const documentRef = useRef({ image, title, createdAt, annotations: history.annotations, savedDocument });
+  documentRef.current = { image, title, createdAt, annotations: history.annotations, savedDocument };
 
   const confirmReplace = useCallback(async () => {
-    if (!hasUnsavedChanges) return true;
+    const current = documentRef.current;
+    const dirty = isDocumentDirty(
+      current.image,
+      current.title,
+      current.createdAt,
+      current.annotations,
+      current.savedDocument,
+    );
+    if (!dirty) return true;
     return confirmDiscardChanges();
-  }, [hasUnsavedChanges]);
+  }, []);
 
   const notify = useCallback((message: string) => {
     setToast(message);
@@ -125,8 +141,34 @@ export default function App() {
     void refreshArea();
     if (isTauri()) {
       void getConfig().then(setAppConfig).catch(() => setAppConfig({ captureShortcut: "Super+Shift+S" }));
+      void getAutostart().then(setAutostartState).catch(() => setAutostartState(null));
     }
   }, [refreshArea]);
+
+  // The tray has its own autostart checkbox; follow it so the panel agrees.
+  useEffect(() => {
+    if (!isTauri()) return;
+    const unlisten = listen<boolean>("autostart-changed", (event) => setAutostartState(event.payload));
+    return () => {
+      void unlisten.then((dispose) => dispose());
+    };
+  }, []);
+
+  const handleAutostart = useCallback(
+    async (enabled: boolean) => {
+      // Optimistic, then reconciled with what the OS actually reports.
+      setAutostartState(enabled);
+      try {
+        await setAutostart(enabled);
+        notify(enabled ? "已开启开机自启" : "已关闭开机自启");
+      } catch (error) {
+        notify(errorMessage(error));
+      } finally {
+        await getAutostart().then(setAutostartState).catch(() => setAutostartState(null));
+      }
+    },
+    [notify],
+  );
   const loadCapture = useCallback(
     async (capture: CaptureResult, name = `截图 ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`) => {
       const request = ++pixelationRequest.current;
@@ -561,6 +603,8 @@ export default function App() {
       {panel === "settings" && appConfig && (
         <SettingsPanel
           config={appConfig}
+          autostart={autostart}
+          onAutostartChange={handleAutostart}
           onSave={async (newConfig) => {
             try {
               await saveConfig(newConfig);

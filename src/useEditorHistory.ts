@@ -1,7 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import type { Annotation } from "./types";
-
-const same = (left: Annotation[], right: Annotation[]) => JSON.stringify(left) === JSON.stringify(right);
+import { sameAnnotations as same } from "./types";
 
 export function useEditorHistory(initial: Annotation[] = []) {
   const [past, setPast] = useState<Annotation[][]>([]);

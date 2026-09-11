@@ -269,9 +269,11 @@ button:disabled {
 }
 
 .panel-hint {
-  color: var(--muted);
+  margin-top: 4px;
+  color: #737b80;
   font-size: 10px;
   font-weight: 500;
+  line-height: 1.4;
 }
 
 .color-row {
@@ -536,13 +538,6 @@ button:disabled {
   }
 }
 
-.panel-hint {
-  margin-top: 4px;
-  color: #737b80;
-  font-size: 10px;
-  line-height: 1.4;
-}
-
 .pin-window.is-empty {
   background: var(--surface);
 }
@@ -648,4 +643,39 @@ kbd {
   border: 0;
   border-radius: 4px;
   cursor: pointer;
+}
+
+.panel-toggle {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  color: #5e6669;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.panel-toggle input {
+  width: 14px;
+  height: 14px;
+  margin-top: 1px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.panel-toggle input:disabled {
+  cursor: progress;
+}
+
+.panel-toggle-text {
+  display: grid;
+  gap: 3px;
+}
+
+.panel-toggle-text > span:first-child {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.panel-toggle-text .panel-hint {
+  margin-top: 0;
 }

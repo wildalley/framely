@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import type { Annotation, AnnotationStyle, ExportFormat, ImageSource, Point, Tool } from "./types";
 import { createAnnotation, mimeForFormat, normalizeBox } from "./types";
@@ -63,6 +63,23 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
     [annotations, selectedId],
   );
 
+  // One pass instead of a `.some()` plus three `.filter()` sweeps per render;
+  // this runs on every pointermove while drawing.
+  const { areaHighlights, mosaics, dimmerOpacity } = useMemo(() => {
+    const areas: Annotation[] = [];
+    const mosaicList: Annotation[] = [];
+    let opacity = 0;
+    for (const annotation of annotations) {
+      if (annotation.type === "area-highlight") {
+        areas.push(annotation);
+        opacity = Math.max(opacity, annotation.opacity);
+      } else if (annotation.type === "mosaic") {
+        mosaicList.push(annotation);
+      }
+    }
+    return { areaHighlights: areas, mosaics: mosaicList, dimmerOpacity: opacity };
+  }, [annotations]);
+
   const renderToDataUrl = async (format: ExportFormat, quality: number) => {
     const svg = svgRef.current;
     if (!svg) throw new Error("编辑画布尚未就绪");
@@ -107,19 +124,51 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
     exportImage: (format: ExportFormat, quality: number) => renderToDataUrl(format, quality),
   }));
 
-  const pointFromEvent = (event: ReactPointerEvent<SVGElement>): Point => {
-    const bounds = svgRef.current!.getBoundingClientRect();
-    return {
-      x: ((event.clientX - bounds.left) / bounds.width) * image.width,
-      y: ((event.clientY - bounds.top) / bounds.height) * image.height,
-    };
-  };
+  // Reading the geometry per pointermove forces a synchronous layout flush on
+  // every event, which is most of why dragging stutters on a high-polling-rate
+  // mouse. It cannot change mid-drag, so measure it once when the drag begins.
+  const dragMatrix = useRef<DOMMatrix | null>(null);
+  const pendingPoints = useRef<Point[]>([]);
+  const frame = useRef<number | null>(null);
 
-  const updateOne = (id: string, update: (annotation: Annotation) => Annotation) => {
-    const next = liveAnnotations.current.map((item) => (item.id === id ? update(item) : item));
-    liveAnnotations.current = next;
-    onTransientChange(next);
-  };
+  useEffect(() => () => {
+    if (frame.current !== null) cancelAnimationFrame(frame.current);
+  }, []);
+
+  /**
+   * The stage can be shorter than the image asks for — it is `flex: 0 1 auto`,
+   * so a compositor that dictates the window size shrinks it — and the default
+   * `preserveAspectRatio` then scales the viewBox down and centres it inside the
+   * box. Dividing by the box size ignores that scale and offset, which is why
+   * annotations landed away from the cursor. The SVG's own inverse screen matrix
+   * accounts for it exactly, whatever the layout does.
+   */
+  const clientToImage = useCallback((clientX: number, clientY: number): Point => {
+    const matrix = dragMatrix.current ?? svgRef.current?.getScreenCTM()?.inverse();
+    if (!matrix) return { x: 0, y: 0 };
+    const point = new DOMPoint(clientX, clientY).matrixTransform(matrix);
+    return { x: point.x, y: point.y };
+  }, []);
+
+  const pointFromEvent = useCallback(
+    (event: ReactPointerEvent<SVGElement>): Point => clientToImage(event.clientX, event.clientY),
+    [clientToImage],
+  );
+
+  /** Pins the mapping used for this drag, then routes events to us until pointerup. */
+  const beginPointerTracking = useCallback((event: ReactPointerEvent<SVGElement>) => {
+    dragMatrix.current = svgRef.current?.getScreenCTM()?.inverse() ?? null;
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }, []);
+
+  const updateOne = useCallback(
+    (id: string, update: (annotation: Annotation) => Annotation) => {
+      const next = liveAnnotations.current.map((item) => (item.id === id ? update(item) : item));
+      liveAnnotations.current = next;
+      onTransientChange(next);
+    },
+    [onTransientChange],
+  );
 
   const handleCanvasPointerDown = (event: ReactPointerEvent<SVGSVGElement>) => {
     if (event.button !== 0) return;
@@ -128,7 +177,7 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
       return;
     }
     if (tool === "mosaic" && !pixelatedImage) return;
-    event.currentTarget.setPointerCapture(event.pointerId);
+    beginPointerTracking(event);
     const start = pointFromEvent(event);
     const annotation = createAnnotation(tool, start, style);
     if (tool === "text") {
@@ -143,23 +192,38 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
     interaction.current = { kind: "draw", id: annotation.id, start };
   };
 
-  const handleObjectPointerDown = (event: ReactPointerEvent<SVGElement>, annotation: Annotation) => {
-    if (tool !== "select" || event.button !== 0) return;
-    event.stopPropagation();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    const start = pointFromEvent(event);
-    onSelect(annotation.id);
-    onBegin();
-    interaction.current = { kind: "move", id: annotation.id, start, original: annotation };
-  };
+  const handleObjectPointerDown = useCallback(
+    (event: ReactPointerEvent<SVGElement>, annotation: Annotation) => {
+      if (tool !== "select" || event.button !== 0) return;
+      event.stopPropagation();
+      beginPointerTracking(event);
+      const start = pointFromEvent(event);
+      onSelect(annotation.id);
+      onBegin();
+      interaction.current = { kind: "move", id: annotation.id, start, original: annotation };
+    },
+    [beginPointerTracking, onBegin, onSelect, pointFromEvent, tool],
+  );
 
-  const startTextEditing = (annotation: Annotation) => {
-    if (annotation.type !== "text") return;
-    onSelect(annotation.id);
-    onBegin();
-    setEditingTextId(annotation.id);
-    setEditingTextValue(annotation.text ?? "");
-  };
+  const startTextEditing = useCallback(
+    (annotation: Annotation) => {
+      if (annotation.type !== "text") return;
+      onSelect(annotation.id);
+      onBegin();
+      setEditingTextId(annotation.id);
+      setEditingTextValue(annotation.text ?? "");
+    },
+    [onBegin, onSelect],
+  );
+
+  const handleObjectDoubleClick = useCallback(
+    (event: ReactMouseEvent<SVGElement>, annotation: Annotation) => {
+      if (annotation.type !== "text") return;
+      event.stopPropagation();
+      startTextEditing(annotation);
+    },
+    [startTextEditing],
+  );
 
   const finishTextEditing = () => {
     if (!editingTextId) return;
@@ -182,7 +246,7 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
     handle: ResizeHandle,
   ) => {
     event.stopPropagation();
-    event.currentTarget.setPointerCapture(event.pointerId);
+    beginPointerTracking(event);
     onBegin();
     interaction.current = {
       kind: "resize",
@@ -193,34 +257,63 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
     };
   };
 
+  const applyPoints = useCallback(
+    (points: Point[]) => {
+      const active = interaction.current;
+      const point = points.at(-1);
+      if (!active || !point) return;
+      if (active.kind === "draw") {
+        updateOne(active.id, (annotation) => {
+          if (annotation.type === "pen" || annotation.type === "highlighter") {
+            return { ...annotation, points: [...(annotation.points ?? []), ...points] };
+          }
+          if (annotation.type === "arrow") {
+            return { ...annotation, endX: point.x, endY: point.y, width: point.x - active.start.x, height: point.y - active.start.y };
+          }
+          if (annotation.type === "text") return annotation;
+          return { ...annotation, width: point.x - active.start.x, height: point.y - active.start.y };
+        });
+        return;
+      }
+      const dx = point.x - active.start.x;
+      const dy = point.y - active.start.y;
+      if (active.kind === "move") {
+        updateOne(active.id, () => moveAnnotation(active.original, dx, dy));
+        return;
+      }
+      updateOne(active.id, () => resizeAnnotation(active.original, active.handle, dx, dy));
+    },
+    [updateOne],
+  );
+
+  const flushPendingPoints = useCallback(() => {
+    frame.current = null;
+    const points = pendingPoints.current;
+    pendingPoints.current = [];
+    applyPoints(points);
+  }, [applyPoints]);
+
+  // A mouse can report several hundred pointermove events per second, and each
+  // one used to re-render the whole SVG. Buffer them and repaint once per frame
+  // instead; freehand strokes keep every sampled point, so nothing is lost.
   const handlePointerMove = (event: ReactPointerEvent<SVGSVGElement>) => {
-    const active = interaction.current;
-    if (!active) return;
-    const point = pointFromEvent(event);
-    if (active.kind === "draw") {
-      updateOne(active.id, (annotation) => {
-        if (annotation.type === "pen" || annotation.type === "highlighter") {
-          return { ...annotation, points: [...(annotation.points ?? []), point] };
-        }
-        if (annotation.type === "arrow") {
-          return { ...annotation, endX: point.x, endY: point.y, width: point.x - active.start.x, height: point.y - active.start.y };
-        }
-        if (annotation.type === "text") return annotation;
-        return { ...annotation, width: point.x - active.start.x, height: point.y - active.start.y };
-      });
-      return;
-    }
-    const dx = point.x - active.start.x;
-    const dy = point.y - active.start.y;
-    if (active.kind === "move") {
-      updateOne(active.id, () => moveAnnotation(active.original, dx, dy));
-      return;
-    }
-    updateOne(active.id, () => resizeAnnotation(active.original, active.handle, dx, dy));
+    if (!interaction.current) return;
+    pendingPoints.current.push(pointFromEvent(event));
+    if (frame.current === null) frame.current = requestAnimationFrame(flushPendingPoints);
   };
 
   const finishInteraction = () => {
     if (!interaction.current) return;
+    if (frame.current !== null) {
+      cancelAnimationFrame(frame.current);
+      frame.current = null;
+    }
+    // Land the last buffered move before committing, so releasing the mouse
+    // mid-frame cannot drop the final few pixels of the drag.
+    const trailing = pendingPoints.current;
+    pendingPoints.current = [];
+    if (trailing.length > 0) applyPoints(trailing);
+    dragMatrix.current = null;
     const active = interaction.current;
     interaction.current = null;
     let next = liveAnnotations.current.map((annotation) => {
@@ -262,31 +355,27 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
       onPointerCancel={finishInteraction}
     >
       <defs>
-        {annotations.some((annotation) => annotation.type === "area-highlight") && (
+        {areaHighlights.length > 0 && (
           <mask id="area-highlight-mask" maskUnits="userSpaceOnUse" x="0" y="0" width={image.width} height={image.height}>
             <rect width={image.width} height={image.height} fill="white" />
-            {annotations
-              .filter((annotation) => annotation.type === "area-highlight")
-              .map((annotation) => (
-                <rect
-                  key={annotation.id}
-                  x={annotation.x}
-                  y={annotation.y}
-                  width={annotation.width}
-                  height={annotation.height}
-                  rx="3"
-                  fill="black"
-                />
-              ))}
+            {areaHighlights.map((annotation) => (
+              <rect
+                key={annotation.id}
+                x={annotation.x}
+                y={annotation.y}
+                width={annotation.width}
+                height={annotation.height}
+                rx="3"
+                fill="black"
+              />
+            ))}
           </mask>
         )}
-        {annotations
-          .filter((annotation) => annotation.type === "mosaic")
-          .map((annotation) => (
-            <clipPath id={`clip-${annotation.id}`} key={`clip-${annotation.id}`}>
-              <rect x={annotation.x} y={annotation.y} width={annotation.width} height={annotation.height} rx="3" />
-            </clipPath>
-          ))}
+        {mosaics.map((annotation) => (
+          <clipPath id={`clip-${annotation.id}`} key={`clip-${annotation.id}`}>
+            <rect x={annotation.x} y={annotation.y} width={annotation.width} height={annotation.height} rx="3" />
+          </clipPath>
+        ))}
       </defs>
       <image href={image.dataUrl} width={image.width} height={image.height} preserveAspectRatio="none" />
       {annotations.map((annotation) => (
@@ -297,20 +386,16 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
           pixelatedImage={pixelatedImage}
           selected={annotation.id === selectedId}
           onPointerDown={handleObjectPointerDown}
-          onDoubleClick={(event, item) => {
-            if (item.type !== "text") return;
-            event.stopPropagation();
-            startTextEditing(item);
-          }}
+          onDoubleClick={handleObjectDoubleClick}
         />
       ))}
-      {annotations.some((annotation) => annotation.type === "area-highlight") && (
+      {areaHighlights.length > 0 && (
         <rect
           className="area-highlight-dimmer"
           width={image.width}
           height={image.height}
           fill="#000000"
-          opacity={Math.max(...annotations.filter((annotation) => annotation.type === "area-highlight").map((annotation) => annotation.opacity))}
+          opacity={dimmerOpacity}
           mask="url(#area-highlight-mask)"
           pointerEvents="none"
         />
@@ -376,7 +461,8 @@ const TextEditor = forwardRef<HTMLTextAreaElement, {
   );
 });
 
-function AnnotationElement({
+/** Memoized so dragging one annotation does not re-render every other one. */
+const AnnotationElement = memo(function AnnotationElement({
   annotation,
   image,
   pixelatedImage,
@@ -510,7 +596,7 @@ function AnnotationElement({
         />
       );
   }
-}
+});
 
 function Selection({
   annotation,

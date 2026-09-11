@@ -2,7 +2,7 @@ use std::{borrow::Cow, fs, io::Cursor, path::Path};
 
 use arboard::{Clipboard, ImageData};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use image::{DynamicImage, GenericImageView, ImageFormat, RgbaImage};
+use image::{DynamicImage, GenericImageView, ImageFormat, ImageReader, RgbaImage};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -14,6 +14,22 @@ pub struct CaptureResult {
 }
 
 pub(crate) fn png_data_url(bytes: &[u8]) -> Result<CaptureResult, String> {
+    // Every capture path already hands us PNG. Decoding and re-compressing a
+    // full-screen image just to arrive at the same bytes is the most expensive
+    // step on the capture path, so read the dimensions out of the header and
+    // pass the original bytes through. Anything else still round-trips below.
+    if image::guess_format(bytes).ok() == Some(ImageFormat::Png) {
+        if let Ok((width, height)) =
+            ImageReader::with_format(Cursor::new(bytes), ImageFormat::Png).into_dimensions()
+        {
+            return Ok(CaptureResult {
+                data_url: format!("data:image/png;base64,{}", STANDARD.encode(bytes)),
+                width,
+                height,
+            });
+        }
+    }
+
     let image = image::load_from_memory(bytes).map_err(|error| format!("无法读取截图: {error}"))?;
     let (width, height) = image.dimensions();
     let mut png = Cursor::new(Vec::new());
@@ -90,4 +106,49 @@ pub fn write_project(path: String, contents: String) -> Result<(), String> {
 #[tauri::command]
 pub fn read_project(path: String) -> Result<String, String> {
     fs::read_to_string(Path::new(&path)).map_err(|error| format!("读取工程失败: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::png_data_url;
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    use image::{DynamicImage, ImageFormat, RgbaImage};
+    use std::io::Cursor;
+
+    fn png_bytes(width: u32, height: u32) -> Vec<u8> {
+        let mut encoded = Cursor::new(Vec::new());
+        DynamicImage::ImageRgba8(RgbaImage::new(width, height))
+            .write_to(&mut encoded, ImageFormat::Png)
+            .unwrap();
+        encoded.into_inner()
+    }
+
+    #[test]
+    fn passes_png_through_untouched_with_real_dimensions() {
+        let bytes = png_bytes(37, 19);
+        let result = png_data_url(&bytes).unwrap();
+        assert_eq!((result.width, result.height), (37, 19));
+        // The fast path must hand back the original bytes, not a re-encode.
+        let encoded = result
+            .data_url
+            .strip_prefix("data:image/png;base64,")
+            .unwrap();
+        assert_eq!(STANDARD.decode(encoded).unwrap(), bytes);
+    }
+
+    #[test]
+    fn still_converts_other_formats_to_png() {
+        let mut jpeg = Cursor::new(Vec::new());
+        DynamicImage::ImageRgb8(image::RgbImage::new(24, 11))
+            .write_to(&mut jpeg, ImageFormat::Jpeg)
+            .unwrap();
+        let result = png_data_url(&jpeg.into_inner()).unwrap();
+        assert_eq!((result.width, result.height), (24, 11));
+        assert!(result.data_url.starts_with("data:image/png;base64,"));
+    }
+
+    #[test]
+    fn rejects_data_that_is_not_an_image() {
+        assert!(png_data_url(b"not an image at all").is_err());
+    }
 }

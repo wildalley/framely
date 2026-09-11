@@ -6,6 +6,7 @@ import {
   isScreenPinProject,
   mimeForFormat,
   normalizeBox,
+  sameAnnotations,
   type Annotation,
   type ScreenPinProject,
 } from "./types";
@@ -88,6 +89,45 @@ describe("isDocumentDirty", () => {
     expect(isDocumentDirty(image, "demo", saved.createdAt, [annotation], saved)).toBe(false);
     expect(isDocumentDirty(image, "renamed", saved.createdAt, [annotation], saved)).toBe(true);
     expect(isDocumentDirty(image, "demo", saved.createdAt, [{ ...annotation, x: 101 }], saved)).toBe(true);
+  });
+});
+
+describe("sameAnnotations", () => {
+  const stroke: Annotation = {
+    ...annotation,
+    id: "pen-1",
+    type: "pen",
+    points: [
+      { x: 1, y: 2 },
+      { x: 3, y: 4 },
+    ],
+  };
+
+  it("treats the same contents as unchanged", () => {
+    expect(sameAnnotations([annotation], [annotation])).toBe(true);
+    expect(sameAnnotations([annotation], [{ ...annotation }])).toBe(true);
+    expect(sameAnnotations([], [])).toBe(true);
+  });
+
+  it("notices edits, additions and removals", () => {
+    expect(sameAnnotations([annotation], [{ ...annotation, x: 101 }])).toBe(false);
+    expect(sameAnnotations([annotation], [])).toBe(false);
+    expect(sameAnnotations([annotation], [annotation, stroke])).toBe(false);
+    expect(sameAnnotations([annotation, stroke], [stroke, annotation])).toBe(false);
+  });
+
+  it("compares stroke points, including a growing stroke", () => {
+    expect(sameAnnotations([stroke], [{ ...stroke, points: [...stroke.points!] }])).toBe(true);
+    expect(sameAnnotations([stroke], [{ ...stroke, points: [...stroke.points!, { x: 5, y: 6 }] }])).toBe(false);
+    expect(sameAnnotations([stroke], [{ ...stroke, points: [{ x: 1, y: 2 }, { x: 3, y: 9 }] }])).toBe(false);
+  });
+
+  // Key order and absent-vs-undefined both change JSON.stringify output but
+  // not the annotation, so a field compare is the more accurate answer here.
+  it("ignores property order and absent optional fields", () => {
+    const reordered = Object.fromEntries(Object.entries(annotation).reverse()) as Annotation;
+    expect(sameAnnotations([annotation], [reordered])).toBe(true);
+    expect(sameAnnotations([annotation], [{ ...annotation, endX: undefined }])).toBe(true);
   });
 });
 

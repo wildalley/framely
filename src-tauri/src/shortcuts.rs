@@ -76,6 +76,14 @@ pub fn save_config(
     Ok(())
 }
 
+/// Spells a configured shortcut the way a user reads it, matching the wording the
+/// settings panel uses so the tray label and the panel cannot disagree.
+pub(crate) fn display_shortcut(shortcut: &str) -> String {
+    shortcut
+        .replace("CommandOrControl", "Ctrl")
+        .replace("Super", "Win")
+}
+
 pub(crate) fn validate_shortcut(shortcut: &str) -> Result<(), String> {
     if shortcut.len() > 100 {
         return Err("快捷键格式无效或包含不受支持的按键".to_string());
@@ -158,14 +166,67 @@ fn is_wayland_session() -> bool {
     std::env::var("XDG_SESSION_TYPE").as_deref() == Ok("wayland")
 }
 
+/// Rewrites a Tauri accelerator into an XDG "shortcuts" trigger.
+///
+/// The two spellings disagree in ways that a blanket `to_uppercase` gets wrong:
+/// the portal names the Windows key `LOGO` rather than `SUPER`, and the key
+/// itself is an XKB keysym, where `a` and `A` are *different* symbols. Sending
+/// `SUPER+SHIFT+A` therefore binds nothing, which is why a configured shortcut
+/// looked registered but never fired.
 #[cfg(target_os = "linux")]
 pub(crate) fn portal_shortcut(shortcut: &str) -> Result<String, String> {
     validate_shortcut(shortcut)?;
-    Ok(shortcut
-        .replace("CommandOrControl", "CTRL")
-        .replace("Control", "CTRL")
-        .replace("Ctrl", "CTRL")
-        .to_uppercase())
+    let mut parts = Vec::new();
+    let mut tokens = shortcut
+        .split('+')
+        .filter(|token| !token.is_empty())
+        .peekable();
+    while let Some(token) = tokens.next() {
+        // The last token is the key; everything before it is a modifier.
+        if tokens.peek().is_none() {
+            parts.push(portal_keysym(token));
+        } else {
+            parts.push(portal_modifier(token).to_string());
+        }
+    }
+    Ok(parts.join("+"))
+}
+
+#[cfg(target_os = "linux")]
+fn portal_modifier(token: &str) -> &'static str {
+    match token.to_ascii_uppercase().as_str() {
+        "SUPER" | "META" | "COMMAND" | "CMD" | "WIN" => "LOGO",
+        "SHIFT" => "SHIFT",
+        "ALT" | "OPTION" => "ALT",
+        _ => "CTRL",
+    }
+}
+
+/// Maps an accelerator key onto its XKB keysym name.
+#[cfg(target_os = "linux")]
+fn portal_keysym(token: &str) -> String {
+    match token.to_ascii_uppercase().as_str() {
+        "ENTER" | "RETURN" => "Return".to_string(),
+        "SPACE" => "space".to_string(),
+        "ESCAPE" | "ESC" => "Escape".to_string(),
+        "TAB" => "Tab".to_string(),
+        "BACKSPACE" => "BackSpace".to_string(),
+        "DELETE" | "DEL" => "Delete".to_string(),
+        "INSERT" => "Insert".to_string(),
+        "HOME" => "Home".to_string(),
+        "END" => "End".to_string(),
+        "PAGEUP" => "Prior".to_string(),
+        "PAGEDOWN" => "Next".to_string(),
+        "ARROWUP" | "UP" => "Up".to_string(),
+        "ARROWDOWN" | "DOWN" => "Down".to_string(),
+        "ARROWLEFT" | "LEFT" => "Left".to_string(),
+        "ARROWRIGHT" | "RIGHT" => "Right".to_string(),
+        "PRINTSCREEN" | "PRINT" => "Print".to_string(),
+        // Function keys keep their name; letters and digits are lowercase
+        // keysyms, so `A` has to become `a` to match an unshifted key.
+        upper if upper.starts_with('F') && upper[1..].parse::<u8>().is_ok() => upper.to_string(),
+        _ => token.to_ascii_lowercase(),
+    }
 }
 
 #[cfg(target_os = "linux")]

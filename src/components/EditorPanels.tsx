@@ -308,11 +308,20 @@ export function ShortcutsPanel({ exportFormat, captureShortcut }: ShortcutsPanel
 
 interface SettingsPanelProps {
   config: AppConfig;
+  /** Read back from the OS, so it can be null while still unknown. */
+  autostart: boolean | null;
+  onAutostartChange: (enabled: boolean) => void;
   onSave: (config: AppConfig) => void;
   onClose: () => void;
 }
 
-export function SettingsPanel({ config, onSave, onClose }: SettingsPanelProps) {
+export function SettingsPanel({
+  config,
+  autostart,
+  onAutostartChange,
+  onSave,
+  onClose,
+}: SettingsPanelProps) {
   const [shortcut, setShortcut] = useState(config.captureShortcut);
   const [isRecording, setIsRecording] = useState(false);
 
@@ -360,6 +369,22 @@ export function SettingsPanel({ config, onSave, onClose }: SettingsPanelProps) {
         </div>
         <span className="panel-hint">全局快捷键，在任何界面都可触发截图</span>
       </label>
+      {isTauri() && (
+        <label className="panel-toggle">
+          <input
+            type="checkbox"
+            checked={autostart ?? false}
+            disabled={autostart === null}
+            onChange={(event) => onAutostartChange(event.target.checked)}
+          />
+          <span className="panel-toggle-text">
+            <span>开机自启</span>
+            {/* Autostart lives in the OS, not in config.json, so it takes effect
+                immediately instead of waiting for the save button below. */}
+            <span className="panel-hint">登录后自动在后台启动，随时用快捷键截图（改动立即生效）</span>
+          </span>
+        </label>
+      )}
       <div className="panel-actions">
         <button onClick={onClose}>取消</button>
         <button className="primary-action" onClick={() => onSave({ captureShortcut: shortcut })}>

@@ -3,6 +3,7 @@ use std::sync::Mutex;
 use tauri::{Emitter, Manager, WindowEvent};
 use tauri_plugin_global_shortcut::ShortcutState;
 
+mod autostart;
 mod capture;
 mod config;
 #[cfg(target_os = "linux")]
@@ -13,6 +14,7 @@ mod shortcuts;
 mod tray;
 mod window;
 
+use autostart::{get_autostart, set_autostart, AutostartMenu};
 use capture::capture_screen;
 use config::AppConfig;
 use lifecycle::quit_app;
@@ -42,6 +44,11 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        // Autostart into the tray rather than popping the editor open on login.
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--hidden"]),
+        ))
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(move |app, _shortcut, event| {
@@ -54,6 +61,7 @@ pub fn run() {
         .manage(Mutex::new(config))
         .manage(ShortcutRuntime::default())
         .manage(CaptureState::default())
+        .manage(AutostartMenu::default())
         .setup(|app| {
             tray::setup_tray(app)?;
             #[cfg(target_os = "linux")]
@@ -89,7 +97,9 @@ pub fn run() {
             show_editor_window,
             quit_app,
             get_config,
-            save_config
+            save_config,
+            get_autostart,
+            set_autostart
         ])
         .run(tauri::generate_context!())
         .expect("failed to run ScreenPin");
@@ -125,13 +135,19 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn converts_configured_shortcuts_for_the_wayland_portal() {
+        use super::shortcuts::portal_shortcut;
         assert_eq!(
-            super::shortcuts::portal_shortcut("CommandOrControl+Shift+S").unwrap(),
-            "CTRL+SHIFT+S"
+            portal_shortcut("CommandOrControl+Shift+S").unwrap(),
+            "CTRL+SHIFT+s"
         );
-        assert_eq!(
-            super::shortcuts::portal_shortcut("Alt+PrintScreen").unwrap(),
-            "ALT+PRINTSCREEN"
-        );
+        // The portal spells the Windows key LOGO, and a letter key is the
+        // lowercase keysym. `SUPER+SHIFT+A` binds nothing at all.
+        assert_eq!(portal_shortcut("Super+Shift+A").unwrap(), "LOGO+SHIFT+a");
+        assert_eq!(portal_shortcut("Alt+PrintScreen").unwrap(), "ALT+Print");
+        // Named keys keep the capitalization XKB gives them.
+        assert_eq!(portal_shortcut("Super+F5").unwrap(), "LOGO+F5");
+        assert_eq!(portal_shortcut("Alt+Space").unwrap(), "ALT+space");
+        assert_eq!(portal_shortcut("Ctrl+PageUp").unwrap(), "CTRL+Prior");
+        assert!(portal_shortcut("Frobnozzle").is_err());
     }
 }

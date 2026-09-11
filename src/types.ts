@@ -126,6 +126,45 @@ export const normalizeBox = (annotation: Annotation): Annotation => {
   };
 };
 
+/**
+ * Compares annotation lists without serialising them. Callers rebuild the list
+ * on every pointer move but replace only the annotation being edited, so the
+ * identity check below skips the untouched ones and the field compare bails at
+ * the first difference.
+ */
+export function sameAnnotations(left: Annotation[], right: Annotation[]) {
+  if (left === right) return true;
+  if (left.length !== right.length) return false;
+  return left.every((annotation, index) => sameAnnotation(annotation, right[index]));
+}
+
+function sameAnnotation(left: Annotation, right: Annotation) {
+  if (left === right) return true;
+  return (
+    left.id === right.id &&
+    left.type === right.type &&
+    left.x === right.x &&
+    left.y === right.y &&
+    left.width === right.width &&
+    left.height === right.height &&
+    left.endX === right.endX &&
+    left.endY === right.endY &&
+    left.text === right.text &&
+    left.color === right.color &&
+    left.fill === right.fill &&
+    left.strokeWidth === right.strokeWidth &&
+    left.opacity === right.opacity &&
+    left.fontSize === right.fontSize &&
+    samePoints(left.points, right.points)
+  );
+}
+
+function samePoints(left: Point[] | undefined, right: Point[] | undefined) {
+  if (left === right) return true;
+  if (!left || !right || left.length !== right.length) return false;
+  return left.every((point, index) => point.x === right[index].x && point.y === right[index].y);
+}
+
 export function isDocumentDirty(
   image: ImageSource | null,
   title: string,

@@ -42,3 +42,7 @@ export const confirmDiscardChanges = () =>
         cancelLabel: "取消",
       })
     : Promise.resolve(window.confirm("当前工程有未保存的修改，继续将丢失这些修改。"));
+
+export const getAutostart = () => invoke<boolean>("get_autostart");
+
+export const setAutostart = (enabled: boolean) => invoke<void>("set_autostart", { enabled });
