@@ -1,5 +1,8 @@
 use std::sync::Mutex;
 
+#[cfg(target_os = "linux")]
+use std::future::Future;
+
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
 
@@ -9,6 +12,7 @@ pub const DEFAULT_CAPTURE_SHORTCUT: &str = "Super+Shift+S";
 
 #[derive(Default)]
 pub struct ShortcutRuntime {
+    updating: tauri::async_runtime::Mutex<()>,
     #[cfg(target_os = "linux")]
     wayland: Mutex<WaylandShortcutRuntime>,
 }
@@ -30,11 +34,16 @@ pub fn get_config(config: State<Mutex<AppConfig>>) -> Result<AppConfig, String> 
 }
 
 #[tauri::command]
-pub fn save_config(
+pub async fn save_config(
     new_config: AppConfig,
-    config: State<Mutex<AppConfig>>,
+    config: State<'_, Mutex<AppConfig>>,
     app: AppHandle,
 ) -> Result<(), String> {
+    let runtime = app.state::<ShortcutRuntime>();
+    let _updating = runtime
+        .updating
+        .try_lock()
+        .map_err(|_| "正在保存快捷键，请等待当前操作完成后再试".to_string())?;
     validate_shortcut(&new_config.capture_shortcut)?;
     let old_shortcut = config
         .lock()
@@ -48,12 +57,22 @@ pub fn save_config(
 
     #[cfg(target_os = "linux")]
     if is_wayland_session() {
-        new_config.save()?;
-        config
+        // Keep the current listener alive while the portal asks for permission.
+        // Do not time out a dialog that is still waiting for the user.
+        let listener = bind_wayland_shortcut(app.clone(), new_config.capture_shortcut.clone())
+            .await
+            .map_err(|error| format!("注册快捷键失败，未替换原快捷键: {error}"))?;
+        let mut wayland = runtime
+            .wayland
             .lock()
-            .map_err(|error| format!("锁定配置失败: {error}"))?
-            .clone_from(&new_config);
-        restart_wayland_shortcut(&app, new_config.capture_shortcut.clone())?;
+            .map_err(|error| format!("锁定快捷键任务失败: {error}"))?;
+        let mut current_config = config
+            .lock()
+            .map_err(|error| format!("锁定配置失败: {error}"))?;
+        // Dropping the unstarted listener closes its session if saving fails.
+        new_config.save()?;
+        current_config.clone_from(&new_config);
+        replace_wayland_listener(&app, &mut wayland, new_config.capture_shortcut, listener);
         return Ok(());
     }
 
@@ -114,8 +133,33 @@ pub(crate) fn configure_linux_webview_backend() {
     }
 }
 
+/// ashpd does not close a session when its proxy is dropped. Close it explicitly
+/// after a failed bind/save or when replacing (aborting) an active listener.
 #[cfg(target_os = "linux")]
-async fn run_wayland_shortcut(app: AppHandle, configured_shortcut: String) -> Result<(), String> {
+struct WaylandSession(
+    Option<ashpd::desktop::Session<ashpd::desktop::global_shortcuts::GlobalShortcuts>>,
+);
+
+#[cfg(target_os = "linux")]
+impl Drop for WaylandSession {
+    fn drop(&mut self) {
+        if let Some(session) = self.0.take() {
+            tauri::async_runtime::spawn(async move {
+                if let Err(error) = session.close().await {
+                    eprintln!("ScreenPin: failed to close shortcut session: {error}");
+                }
+            });
+        }
+    }
+}
+
+/// Waits for authorization, then returns a listener that owns the new session.
+/// The caller can persist the configuration before replacing the old listener.
+#[cfg(target_os = "linux")]
+async fn bind_wayland_shortcut(
+    app: AppHandle,
+    configured_shortcut: String,
+) -> Result<impl Future<Output = Result<(), String>> + Send + 'static, String> {
     use ashpd::desktop::{
         global_shortcuts::{BindShortcutsOptions, GlobalShortcuts, NewShortcut},
         CreateSessionOptions,
@@ -129,36 +173,58 @@ async fn run_wayland_shortcut(app: AppHandle, configured_shortcut: String) -> Re
         .receive_activated()
         .await
         .map_err(|error| format!("无法监听全局快捷键: {error}"))?;
-    let session = portal
-        .create_session(CreateSessionOptions::default())
-        .await
-        .map_err(|error| format!("无法创建全局快捷键会话: {error}"))?;
+    let session = WaylandSession(Some(
+        portal
+            .create_session(CreateSessionOptions::default())
+            .await
+            .map_err(|error| format!("无法创建全局快捷键会话: {error}"))?,
+    ));
+    let session_ref = session.0.as_ref().expect("session was just created");
+    // Session's public serialization exposes its D-Bus object path. Activated
+    // signals are shared by all sessions, including the previous binding.
+    let session_path = serde_json::to_value(session_ref)
+        .map_err(|error| format!("无法读取快捷键会话标识: {error}"))?;
     let trigger = portal_shortcut(&configured_shortcut)?;
     let shortcut =
         NewShortcut::new("capture", "截取屏幕").preferred_trigger(Some(trigger.as_str()));
     let response = portal
-        .bind_shortcuts(&session, &[shortcut], None, BindShortcutsOptions::default())
+        .bind_shortcuts(
+            session_ref,
+            &[shortcut],
+            None,
+            BindShortcutsOptions::default(),
+        )
         .await
         .map_err(|error| format!("无法请求全局快捷键授权: {error}"))?
         .response()
         .map_err(|error| format!("全局快捷键未授权: {error}"))?;
 
-    if !response
-        .shortcuts()
-        .iter()
-        .any(|shortcut| shortcut.id() == "capture")
-    {
-        return Err("桌面门户没有绑定截图快捷键".to_string());
-    }
+    validate_portal_binding(&response)?;
 
     eprintln!("ScreenPin: Wayland global shortcut registered");
-    while let Some(event) = activated.next().await {
-        if event.shortcut_id() == "capture" {
-            let _ = app.emit("capture-requested", ());
+    Ok(async move {
+        let _session = session;
+        while let Some(event) = activated.next().await {
+            if session_path == event.session_handle().as_str() && event.shortcut_id() == "capture" {
+                let _ = app.emit("capture-requested", ());
+            }
         }
-    }
 
-    Err("全局快捷键门户会话已结束".to_string())
+        Err("全局快捷键门户会话已结束".to_string())
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn validate_portal_binding(
+    response: &ashpd::desktop::global_shortcuts::BindShortcuts,
+) -> Result<(), String> {
+    if response.shortcuts().iter().any(|shortcut| {
+        shortcut.id() == "capture" && !shortcut.trigger_description().trim().is_empty()
+    }) {
+        Ok(())
+    } else {
+        Err("桌面门户没有为截图操作分配快捷键".to_string())
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -229,6 +295,7 @@ fn portal_keysym(token: &str) -> String {
     }
 }
 
+/// Starts registration in the background at launch, with X11 as a fallback.
 #[cfg(target_os = "linux")]
 fn restart_wayland_shortcut(app: &AppHandle, shortcut: String) -> Result<(), String> {
     let runtime = app.state::<ShortcutRuntime>();
@@ -236,6 +303,23 @@ fn restart_wayland_shortcut(app: &AppHandle, shortcut: String) -> Result<(), Str
         .wayland
         .lock()
         .map_err(|error| format!("锁定快捷键任务失败: {error}"))?;
+    let app_handle = app.clone();
+    let configured_shortcut = shortcut.clone();
+    replace_wayland_listener(app, &mut wayland, shortcut, async move {
+        bind_wayland_shortcut(app_handle, configured_shortcut)
+            .await?
+            .await
+    });
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn replace_wayland_listener(
+    app: &AppHandle,
+    wayland: &mut WaylandShortcutRuntime,
+    shortcut: String,
+    listener: impl Future<Output = Result<(), String>> + Send + 'static,
+) {
     wayland.generation = wayland.generation.wrapping_add(1);
     let generation = wayland.generation;
     if let Some(previous) = wayland.task.take() {
@@ -246,9 +330,16 @@ fn restart_wayland_shortcut(app: &AppHandle, shortcut: String) -> Result<(), Str
     }
 
     let app_handle = app.clone();
-    let fallback_shortcut = shortcut.clone();
+    let fallback_shortcut = shortcut;
     wayland.task = Some(tauri::async_runtime::spawn(async move {
-        if let Err(error) = run_wayland_shortcut(app_handle.clone(), shortcut).await {
+        if let Err(error) = listener.await {
+            let runtime = app_handle.state::<ShortcutRuntime>();
+            let Ok(mut wayland) = runtime.wayland.lock() else {
+                return;
+            };
+            if wayland.generation != generation {
+                return;
+            }
             eprintln!("ScreenPin: {error}; falling back to X11 shortcut registration");
             let registered_shortcut = match app_handle
                 .global_shortcut()
@@ -279,20 +370,9 @@ fn restart_wayland_shortcut(app: &AppHandle, shortcut: String) -> Result<(), Str
                 }
             };
 
-            let runtime = app_handle.state::<ShortcutRuntime>();
-            match runtime.wayland.lock() {
-                Ok(mut wayland) if wayland.generation == generation => {
-                    wayland.fallback = Some(registered_shortcut);
-                }
-                _ => {
-                    let _ = app_handle
-                        .global_shortcut()
-                        .unregister(registered_shortcut.as_str());
-                }
-            };
+            wayland.fallback = Some(registered_shortcut);
         }
     }));
-    Ok(())
 }
 
 pub(crate) fn setup_global_shortcut(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
@@ -332,5 +412,60 @@ fn repair_shortcut_config(app: &AppHandle) {
     }
     if let Err(error) = default_config.save() {
         eprintln!("ScreenPin: failed to repair shortcut configuration: {error}");
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::validate_portal_binding;
+    use ashpd::{
+        desktop::global_shortcuts::BindShortcuts,
+        zvariant::{serialized::Context, to_bytes, Value, LE},
+    };
+    use std::collections::HashMap;
+
+    fn portal_response(
+        shortcuts: &[(&str, Option<&str>)],
+    ) -> Result<BindShortcuts, ashpd::zvariant::Error> {
+        // Exercise the actual D-Bus variant dictionaries returned by the portal.
+        let shortcuts: Vec<_> = shortcuts
+            .iter()
+            .map(|(id, trigger)| {
+                let mut properties = HashMap::from([("description", Value::from("截取屏幕"))]);
+                if let Some(trigger) = trigger {
+                    properties.insert("trigger_description", Value::from(*trigger));
+                }
+                (*id, properties)
+            })
+            .collect();
+        let response = HashMap::from([("shortcuts", Value::new(shortcuts))]);
+        let encoded = to_bytes(Context::new_dbus(LE, 0), &response).unwrap();
+        encoded.deserialize().map(|(response, _)| response)
+    }
+
+    #[test]
+    fn accepts_a_capture_shortcut_assigned_by_the_portal() {
+        let response = portal_response(&[("capture", Some("Super+Shift+S"))]).unwrap();
+        assert!(validate_portal_binding(&response).is_ok());
+    }
+
+    #[test]
+    fn rejects_a_capture_id_without_an_assigned_trigger() {
+        assert!(portal_response(&[("capture", None)]).is_err());
+        for trigger in [Some(""), Some("  ")] {
+            let response = portal_response(&[("capture", trigger)]).unwrap();
+            assert!(validate_portal_binding(&response).is_err());
+        }
+    }
+
+    #[test]
+    fn rejects_portal_responses_without_the_capture_action() {
+        for response in [
+            serde_json::from_str("{}").unwrap(),
+            portal_response(&[]).unwrap(),
+            portal_response(&[("other", Some("Super+Shift+S"))]).unwrap(),
+        ] {
+            assert!(validate_portal_binding(&response).is_err());
+        }
     }
 }
