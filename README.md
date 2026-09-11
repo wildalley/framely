@@ -2,6 +2,8 @@
 
 ScreenPin 是一个面向桌面的非破坏性截图编辑器，目标平台为 Linux、Windows 和 macOS。它借鉴 PixPin 的”截图后继续工作”思路，但把标注保留为可编辑对象：工程文件保存原图、对象坐标、样式和图层顺序，PNG 只是导出格式。
 
+版本变更见 [更新日志](CHANGELOG.md)，当前进度和后续计划见 [改进记录与计划](IMPROVEMENTS.md)。
+
 ## 特性
 
 - **跨平台截图采集**
@@ -26,6 +28,7 @@ ScreenPin 是一个面向桌面的非破坏性截图编辑器，目标平台为 
   - 马赛克处理失败时不会回退到原图，相关工具会被禁用，含马赛克的导出也会被阻止
   - 置顶窗口继续修改，再次点击取消置顶
   - 默认使用桌面级 `Win + Shift + S` 全局快捷键，可在设置面板中录制并保存其他组合键
+  - Wayland 下保存快捷键会等待桌面门户授权；新绑定和配置写入都成功后才替换旧绑定，失败时保留原绑定和配置
   - 开机自启可在设置面板或托盘菜单开关，登录后静默启动到托盘；状态以操作系统的注册项为准，两处显示同步
   - 系统托盘菜单：截图、显示主窗口、开机自启、退出；关闭主窗口隐藏到托盘
 
@@ -72,12 +75,29 @@ SCREENPIN_GDK_BACKEND=wayland npm run tauri -- dev
 ```bash
 npm run build
 npm test
-cd src-tauri && cargo check && cargo test
+cargo check --manifest-path src-tauri/Cargo.toml --locked
+cargo test --manifest-path src-tauri/Cargo.toml --locked
 ```
+
+### 快捷键与自启设置
+
+在工具栏打开设置，点击“录制”、按下包含修饰键的组合，再点击“保存”。Linux 配置通常位于 `~/.config/screenpin/config.json`（遵循系统配置目录设置），默认内容为：
+
+```json
+{
+  "captureShortcut": "Super+Shift+S"
+}
+```
+
+`Super` 在界面中显示为 `Win`；`CommandOrControl` 在 Windows/Linux 上对应 Ctrl，在 macOS 上对应 Cmd。开机自启由系统注册项管理，切换后立即生效，不写入此 JSON，也无需再点击“保存”。
+
+Wayland 下，门户授权窗口可能在保存时出现，请完成授权后等待应用返回结果。授权期间原快捷键继续工作，重复保存会被拒绝。门户拒绝授权、未返回已分配的截图快捷键或配置写入失败时，应用会显示错误并保留原绑定；不要把门户仍在等待授权理解为保存成功。最终按键分配由桌面门户决定，仍需实际按键确认。
 
 ### Linux 依赖
 
 需要 WebKitGTK、GTK3、DBus 和 `xdg-desktop-portal`。Wayland 下截图权限与交互界面由桌面环境的 portal 后端决定；Hyprland 建议安装并启用 `xdg-desktop-portal-hyprland`。Wayland 全局快捷键使用 `org.freedesktop.portal.GlobalShortcuts`，首次启动或修改快捷键时可能由桌面门户请求授权。托盘图标使用 AppIndicator/StatusNotifier，Waybar 需要启用 `tray` 模块才能显示。
+
+启动时若全局快捷键门户失败，应用会尝试 X11 快捷键注册；它在 Wayland 桌面的覆盖范围取决于合成器。如果需要桌面环境直接管理组合键，可将按键绑定到 `screenpin --capture`，并让 ScreenPin 保持后台运行。
 
 ### 平铺窗口管理器
 
