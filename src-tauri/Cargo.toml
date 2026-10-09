@@ -28,3 +28,4 @@ url = "2.5.8"
 [target.'cfg(target_os = "linux")'.dependencies]
 ashpd = { version = "0.13.12", features = ["global_shortcuts", "screenshot"] }
 futures-util = "0.3"
+gtk = "0.18.2"

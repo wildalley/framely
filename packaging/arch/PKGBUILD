@@ -35,7 +35,8 @@ package() {
   local _build_root="$srcdir/repo"
 
   install -Dm755 "$_build_root/src-tauri/target/release/screenpin" "$pkgdir/usr/bin/screenpin"
-  install -Dm644 "$startdir/screenpin.desktop" "$pkgdir/usr/share/applications/screenpin.desktop"
+  # Named after the app id that ScreenPin registers with xdg-desktop-portal.
+  install -Dm644 "$startdir/io.screenpin.desktop.desktop" "$pkgdir/usr/share/applications/io.screenpin.desktop.desktop"
   install -Dm644 "$_build_root/src-tauri/icons/32x32.png" "$pkgdir/usr/share/icons/hicolor/32x32/apps/screenpin.png"
   install -Dm644 "$_build_root/src-tauri/icons/64x64.png" "$pkgdir/usr/share/icons/hicolor/64x64/apps/screenpin.png"
   install -Dm644 "$_build_root/src-tauri/icons/128x128.png" "$pkgdir/usr/share/icons/hicolor/128x128/apps/screenpin.png"

@@ -133,6 +133,37 @@ pub(crate) fn configure_linux_webview_backend() {
     }
 }
 
+/// Desktop-entry id the portals know this app by. It must match the installed
+/// `<id>.desktop` file and the Tauri `identifier`.
+#[cfg(target_os = "linux")]
+pub(crate) const PORTAL_APP_ID: &str = "io.screenpin.desktop";
+
+/// Host (non-Flatpak) apps have no app id unless the launcher put them in an
+/// `app-<id>-*.scope`, so starting from a terminal makes GlobalShortcuts reject
+/// the session with "An app id is required". Register the id with the portal
+/// Registry once, before the first portal call on the shared connection.
+#[cfg(target_os = "linux")]
+pub(crate) async fn register_portal_app() {
+    static REGISTERED: tauri::async_runtime::Mutex<bool> =
+        tauri::async_runtime::Mutex::const_new(false);
+    let mut registered = REGISTERED.lock().await;
+    if *registered {
+        return;
+    }
+    // A registration can only happen once per connection; an older portal
+    // without the Registry simply keeps its previous behaviour.
+    *registered = true;
+    let result = match PORTAL_APP_ID.parse::<ashpd::AppID>() {
+        Ok(app_id) => ashpd::register_host_app(app_id)
+            .await
+            .map_err(|error| error.to_string()),
+        Err(error) => Err(error.to_string()),
+    };
+    if let Err(error) = result {
+        eprintln!("ScreenPin: failed to register portal app id: {error}");
+    }
+}
+
 /// ashpd does not close a session when its proxy is dropped. Close it explicitly
 /// after a failed bind/save or when replacing (aborting) an active listener.
 #[cfg(target_os = "linux")]
@@ -166,6 +197,7 @@ async fn bind_wayland_shortcut(
     };
     use futures_util::StreamExt;
 
+    register_portal_app().await;
     let portal = GlobalShortcuts::new()
         .await
         .map_err(|error| format!("全局快捷键门户不可用: {error}"))?;
