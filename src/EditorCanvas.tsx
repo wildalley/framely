@@ -188,7 +188,10 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
     const next = [...annotations, annotation];
     liveAnnotations.current = next;
     onTransientChange(next);
-    onSelect(annotation.id);
+    // Shapes stay selected so they can be adjusted right away. Freehand strokes
+    // are drawn in runs: a selection box would flash around every stroke, and
+    // the style panel would then restyle the last stroke instead of the next.
+    onSelect(tool === "pen" || tool === "highlighter" ? null : annotation.id);
     interaction.current = { kind: "draw", id: annotation.id, start };
   };
 

@@ -20,6 +20,9 @@ interface UseEditorShortcutsOptions {
   setTool: Dispatch<SetStateAction<Tool>>;
   undo: () => void;
   zoom: number;
+  hasSelection: boolean;
+  tool: Tool;
+  onClose: () => Promise<void>;
 }
 
 export function useEditorShortcuts({
@@ -38,6 +41,9 @@ export function useEditorShortcuts({
   setTool,
   undo,
   zoom,
+  hasSelection,
+  tool,
+  onClose,
 }: UseEditorShortcutsOptions) {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -85,12 +91,19 @@ export function useEditorShortcuts({
 
       if (event.key === "Delete" || event.key === "Backspace") onDeleteSelected();
       if (event.key === "Escape") {
+        // Peel back one layer per press: panel, then selection or tool, then
+        // the window itself, like other pinned-screenshot tools.
         if (panel !== "none") {
           setPanel("none");
           return;
         }
-        setSelectedId(null);
-        setTool("select");
+        if (hasSelection || tool !== "select") {
+          setSelectedId(null);
+          setTool("select");
+          return;
+        }
+        void onClose();
+        return;
       }
       if (key === "?") {
         setPanel((current) => (current === "shortcuts" ? "none" : "shortcuts"));
@@ -123,5 +136,8 @@ export function useEditorShortcuts({
     setTool,
     undo,
     zoom,
+    hasSelection,
+    tool,
+    onClose,
   ]);
 }

@@ -65,8 +65,11 @@ button:disabled {
 .pin-stage {
   position: relative;
   display: flex;
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   align-self: center;
+  /* The window may grow past the image to fit a popover; keep the toolbar at
+     the bottom edge, where the popovers are anchored. */
+  margin-block: auto;
   min-height: 0;
   background: #ffffff;
 }
@@ -348,6 +351,27 @@ button:disabled {
   border-top: 1px solid #ebedec;
 }
 
+/* Text buttons in a popover footer size to their label, not to an icon. */
+.pin-panel.is-settings .panel-actions button {
+  width: auto;
+  min-width: 64px;
+  height: 32px;
+  padding: 0 14px;
+  font-size: 12px;
+}
+
+/* `.panel-actions button` is more specific than `.primary-action` and would
+   otherwise blank out the save button's fill. */
+.pin-panel .panel-actions .primary-action {
+  color: #ffffff;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+}
+
+.pin-panel .panel-actions .primary-action:hover {
+  background: var(--accent-strong);
+}
+
 .panel-actions .danger {
   color: var(--danger);
 }
@@ -487,29 +511,48 @@ button:disabled {
 }
 
 .pin-panel.is-settings {
-  width: min(380px, calc(100% - 16px));
+  gap: 12px;
+  width: min(420px, calc(100% - 16px));
+  padding: 14px 16px 14px;
+}
+
+.pin-panel.is-settings .panel-field,
+.pin-panel.is-settings .panel-toggle {
+  font-size: 12px;
+}
+
+.pin-panel.is-settings .panel-field > span:first-child {
+  color: #25292b;
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .shortcut-input-wrapper {
   display: flex;
-  gap: 6px;
+  gap: 8px;
   align-items: center;
 }
 
-.shortcut-input {
+.panel-field .shortcut-input {
   flex: 1;
-  height: 32px;
-  padding: 0 10px;
-  font-size: 12px;
+  min-width: 0;
+  height: 38px;
+  padding: 0 12px;
+  color: #25292b;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
   background: #ffffff;
   border: 1px solid #ced2d2;
   border-radius: 5px;
 }
 
 .shortcut-input-wrapper button {
-  height: 32px;
-  padding: 0 12px;
-  font-size: 11px;
+  flex: 0 0 auto;
+  min-width: 96px;
+  height: 38px;
+  padding: 0 14px;
+  font-size: 12px;
   font-weight: 600;
   background: #ffffff;
   border: 1px solid #ced2d2;
@@ -671,6 +714,28 @@ kbd {
   gap: 3px;
 }
 
+.access-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.access-row button {
+  flex: 0 0 auto;
+  min-width: 64px;
+  height: 30px;
+  padding: 0 12px;
+}
+
+.access-status.is-granted {
+  color: #2f7d4f;
+}
+
+.access-status.is-denied {
+  color: #b5452f;
+}
+
 .panel-toggle-text > span:first-child {
   font-size: 12px;
   font-weight: 650;
@@ -678,4 +743,66 @@ kbd {
 
 .panel-toggle-text .panel-hint {
   margin-top: 0;
+}
+
+/* Region picker overlay, one per monitor. */
+.selection-overlay {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: #000000;
+  cursor: crosshair;
+  user-select: none;
+  touch-action: none;
+}
+
+.selection-shot {
+  position: absolute;
+  max-width: none;
+  pointer-events: none;
+}
+
+.selection-dim {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: start center;
+  padding-top: 48px;
+  background: rgb(0 0 0 / 38%);
+  pointer-events: none;
+}
+
+.selection-hint {
+  padding: 7px 14px;
+  color: #ffffff;
+  font-size: 13px;
+  background: rgb(20 24 25 / 82%);
+  border-radius: 6px;
+}
+
+.selection-rect {
+  position: absolute;
+  outline: 1px solid var(--accent);
+  /* Dims everything outside the region without a separate mask. */
+  box-shadow: 0 0 0 100vmax rgb(0 0 0 / 38%);
+  pointer-events: none;
+}
+
+.selection-size {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  padding: 2px 6px;
+  color: #ffffff;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  background: var(--accent-strong);
+  border-radius: 4px;
+}
+
+.selection-size.is-inside {
+  top: 6px;
+  bottom: auto;
+  left: 6px;
 }

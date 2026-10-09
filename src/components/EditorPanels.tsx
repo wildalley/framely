@@ -1,4 +1,4 @@
-import { useState, type KeyboardEvent } from "react";
+import { useEffect, useState, type KeyboardEvent } from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -14,7 +14,13 @@ import {
   ZoomOut,
 } from "lucide-react";
 import { toolName } from "../editor/constants";
-import { isTauri, type AppConfig } from "../platform";
+import {
+  getScreenshotAccess,
+  isTauri,
+  requestScreenshotAccess,
+  type AppConfig,
+  type ScreenshotAccess,
+} from "../platform";
 import {
   COLORS,
   EXPORT_FORMATS,
@@ -278,7 +284,7 @@ export function ShortcutsPanel({ exportFormat, captureShortcut }: ShortcutsPanel
     { keys: ["Ctrl", "0"], action: "重置缩放" },
     { keys: ["Delete"], action: "删除所选" },
     { keys: ["Backspace"], action: "删除所选" },
-    { keys: ["Esc"], action: "取消选择/关闭面板" },
+    { keys: ["Esc"], action: "关闭面板 → 取消选择 → 收回托盘" },
     { keys: ["?"], action: "显示/隐藏快捷键" },
   ];
 
@@ -323,6 +329,7 @@ export function SettingsPanel({
   onClose,
 }: SettingsPanelProps) {
   const [shortcut, setShortcut] = useState(config.captureShortcut);
+  const [hideAfterCopy, setHideAfterCopy] = useState(config.hideAfterCopy);
   const [isRecording, setIsRecording] = useState(false);
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -385,11 +392,70 @@ export function SettingsPanel({
           </span>
         </label>
       )}
+      {isTauri() && <ScreenshotAccessRow />}
+      <label className="panel-toggle">
+        <input
+          type="checkbox"
+          checked={hideAfterCopy}
+          onChange={(event) => setHideAfterCopy(event.target.checked)}
+        />
+        <span className="panel-toggle-text">
+          <span>复制后收回托盘</span>
+          <span className="panel-hint">适合截完就贴；窗口置顶时不收回</span>
+        </span>
+      </label>
       <div className="panel-actions">
         <button onClick={onClose}>取消</button>
-        <button className="primary-action" onClick={() => onSave({ captureShortcut: shortcut })}>
+        <button className="primary-action" onClick={() => onSave({ captureShortcut: shortcut, hideAfterCopy })}>
           保存
         </button>
+      </div>
+    </div>
+  );
+}
+
+const ACCESS_TEXT: Record<Exclude<ScreenshotAccess, "unsupported">, string> = {
+  granted: "已授权，截图时直接进入 ScreenPin 选区",
+  unknown: "尚未授权，截图会改用系统的选区界面",
+  denied: "已被拒绝；可在系统设置的「应用 → ScreenPin」里重新允许截图",
+};
+
+/**
+ * Silent screenshots need a one-time grant. GNOME only shows that dialog for
+ * the focused app, which a shortcut-triggered capture often is not, so offer
+ * it here where the click itself focuses the window.
+ */
+function ScreenshotAccessRow() {
+  const [access, setAccess] = useState<ScreenshotAccess | null>(null);
+  const [asking, setAsking] = useState(false);
+
+  useEffect(() => {
+    void getScreenshotAccess().then(setAccess).catch(() => setAccess("unsupported"));
+  }, []);
+
+  if (!access || access === "unsupported") return null;
+
+  const ask = async () => {
+    setAsking(true);
+    try {
+      setAccess(await requestScreenshotAccess());
+    } catch {
+      setAccess(await getScreenshotAccess().catch(() => access));
+    } finally {
+      setAsking(false);
+    }
+  };
+
+  return (
+    <div className="panel-field">
+      <span>静默截图</span>
+      <div className="access-row">
+        <span className={`panel-hint access-status is-${access}`}>{ACCESS_TEXT[access]}</span>
+        {access === "unknown" && (
+          <button disabled={asking} onClick={() => void ask()}>
+            {asking ? "等待授权…" : "授权"}
+          </button>
+        )}
       </div>
     </div>
   );

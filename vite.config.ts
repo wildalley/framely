@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { configDefaults, defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
 export default defineConfig({
@@ -8,5 +8,9 @@ export default defineConfig({
     host: "127.0.0.1",
     port: 1420,
     strictPort: true,
+  },
+  test: {
+    // makepkg copies the whole repository into packaging/arch/src.
+    exclude: [...configDefaults.exclude, "packaging/**"],
   },
 });

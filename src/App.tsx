@@ -20,6 +20,7 @@ import {
 } from "./components/EditorPanels";
 import { EditorCanvas, type EditorCanvasHandle } from "./EditorCanvas";
 import {
+  CAPTURE_CANCELLED,
   CAPTURE_SETTLE_DELAY,
   DRAW_TOOLS,
   errorMessage,
@@ -102,18 +103,27 @@ export default function App() {
     barHeight,
     barHeightRef,
     barRef,
+    displayZoom,
     refreshArea,
     requestRecenter,
     stage,
     stageRef,
     waitForWindowFit,
     zoomToScreen,
-  } = useEditorWindowLayout({ image, zoom, setZoom });
+  } = useEditorWindowLayout({ image, zoom, setZoom, panel });
 
   const selected = useMemo(
     () => history.annotations.find((annotation) => annotation.id === selectedId) ?? null,
     [history.annotations, selectedId],
   );
+
+  // Picking a drawing tool starts something new. A selection left over from
+  // before would make the style panel restyle that old annotation instead of
+  // setting up the tool, e.g. choosing the pen after a rectangle and changing
+  // the colour recoloured the rectangle.
+  useEffect(() => {
+    if (tool !== "select") setSelectedId(null);
+  }, [tool]);
   // Comparing against the saved snapshot stringifies every annotation, so it
   // stays out of render: only a replace that could discard work needs to ask.
   const documentRef = useRef({ image, title, createdAt, annotations: history.annotations, savedDocument });
@@ -140,7 +150,9 @@ export default function App() {
   useEffect(() => {
     void refreshArea();
     if (isTauri()) {
-      void getConfig().then(setAppConfig).catch(() => setAppConfig({ captureShortcut: "Super+Shift+S" }));
+      void getConfig()
+        .then(setAppConfig)
+        .catch(() => setAppConfig({ captureShortcut: "Super+Shift+S", hideAfterCopy: false }));
       void getAutostart().then(setAutostartState).catch(() => setAutostartState(null));
     }
   }, [refreshArea]);
@@ -177,14 +189,23 @@ export default function App() {
       const source = { ...capture, name };
       const fitted = zoomToFit(source, await refreshArea(), barHeightRef.current);
       if (request !== pixelationRequest.current) return;
+      const freshTitle = name.replace(/\.[^.]+$/, "");
+      const freshCreatedAt = new Date().toISOString();
       setImage(source);
-      setTitle(name.replace(/\.[^.]+$/, ""));
-      setCreatedAt(new Date().toISOString());
+      setTitle(freshTitle);
+      setCreatedAt(freshCreatedAt);
       setSelectedId(null);
       setTool("select");
       setPanel("none");
       history.reset();
-      setSavedDocument(null);
+      // A capture nobody has touched has nothing to lose; only edits since this
+      // baseline should ask before being replaced.
+      setSavedDocument({
+        imageDataUrl: source.dataUrl,
+        title: freshTitle,
+        createdAt: freshCreatedAt,
+        annotations: JSON.stringify([]),
+      });
       setZoom(fitted);
       requestRecenter();
       try {
@@ -230,6 +251,9 @@ export default function App() {
       await waitForWindowFit();
       await showMainWindow();
     } catch (error) {
+      // Backing out of the picker is not an error, and the native side already
+      // restored the window if it was showing before.
+      if (errorMessage(error) === CAPTURE_CANCELLED) return;
       // Capture failures can happen after the native window was hidden. Make
       // the editor recoverable even when the command failed mid-flight.
       await showMainWindow().catch(() => undefined);
@@ -285,11 +309,16 @@ export default function App() {
         const blob = await (await fetch(dataUrl)).blob();
         await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
       }
+      // A pinned window is being kept on screen on purpose; leave it there.
+      if (isTauri() && appConfig?.hideAfterCopy && !isPinned) {
+        await hideWindow();
+        return;
+      }
       notify("已复制到剪贴板");
     } catch (error) {
       notify(errorMessage(error));
     }
-  }, [exportImage, notify]);
+  }, [appConfig?.hideAfterCopy, exportImage, isPinned, notify]);
 
   const handlePin = useCallback(async () => {
     if (!image) return;
@@ -476,7 +505,10 @@ export default function App() {
     setSelectedId,
     setTool,
     undo: history.undo,
-    zoom,
+    zoom: displayZoom,
+    hasSelection: Boolean(selectedId),
+    tool,
+    onClose: handleClose,
   });
 
   // Dragging the picture itself moves the window, the way a pinned note behaves.
@@ -550,7 +582,7 @@ export default function App() {
           annotations={history.annotations}
           selectedId={selectedId}
           tool={tool}
-          zoom={zoom}
+          zoom={displayZoom}
           style={styles[tool === "select" ? "rectangle" : tool]}
           onSelect={setSelectedId}
           onToolChange={setTool}
@@ -580,7 +612,7 @@ export default function App() {
         <MenuPanel
           title={title}
           image={image}
-          zoom={zoom}
+          zoom={displayZoom}
           busy={busy}
           onTitle={setTitle}
           onCapture={handleCapture}

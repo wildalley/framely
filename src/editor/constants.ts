@@ -42,6 +42,13 @@ export const MAX_ZOOM = 3;
 export const MIN_WINDOW_WIDTH = 320;
 export const EMPTY_WINDOW = { width: 460, height: 300 };
 export const ASSUMED_BAR_HEIGHT = 46;
+/** Width each popover is designed for; the window grows to fit it while open. */
+export const PANEL_WIDTH: Record<Exclude<EditorPanel, "none">, number> = {
+  style: 248,
+  menu: 248,
+  shortcuts: 340,
+  settings: 420,
+};
 export const CAPTURE_SETTLE_DELAY = 150;
 
 export const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
@@ -59,6 +66,9 @@ export function zoomToFit(image: ImageSource, area: { width: number; height: num
 export function toolName(tool: Annotation["type"]) {
   return TOOL_ITEMS.find((item) => item.id === tool)?.label ?? tool;
 }
+
+/** Matches `CAPTURE_CANCELLED` in capture.rs. */
+export const CAPTURE_CANCELLED = "截图已取消";
 
 export function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);

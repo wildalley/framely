@@ -85,6 +85,12 @@ describe("isDocumentDirty", () => {
     expect(isDocumentDirty(image, "demo", saved.createdAt, [], null)).toBe(true);
   });
 
+  it("keeps an untouched capture clean against its baseline until it is edited", () => {
+    const baseline = { ...saved, annotations: JSON.stringify([]) };
+    expect(isDocumentDirty(image, "demo", saved.createdAt, [], baseline)).toBe(false);
+    expect(isDocumentDirty(image, "demo", saved.createdAt, [annotation], baseline)).toBe(true);
+  });
+
   it("tracks editable project fields against the saved snapshot", () => {
     expect(isDocumentDirty(image, "demo", saved.createdAt, [annotation], saved)).toBe(false);
     expect(isDocumentDirty(image, "renamed", saved.createdAt, [annotation], saved)).toBe(true);
