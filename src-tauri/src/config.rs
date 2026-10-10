@@ -10,6 +10,9 @@ use std::{ffi::OsStr, os::windows::ffi::OsStrExt, path::Path};
 pub struct AppConfig {
     #[serde(default = "default_capture_shortcut")]
     pub capture_shortcut: String,
+    /// Hide the editor to the tray once the image is copied.
+    #[serde(default)]
+    pub hide_after_copy: bool,
 }
 
 fn default_capture_shortcut() -> String {
@@ -20,6 +23,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             capture_shortcut: default_capture_shortcut(),
+            hide_after_copy: false,
         }
     }
 }

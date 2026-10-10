@@ -7,7 +7,7 @@ ScreenPin 是一个面向桌面的非破坏性截图编辑器，目标平台为 
 ## 特性
 
 - **跨平台截图采集**
-  - Linux Wayland/X11：通过 `xdg-desktop-portal` 交互式截图，选择区域由系统门户处理
+  - Linux Wayland/X11：通过 `xdg-desktop-portal` 静默截取整个桌面，在每块显示器上用 ScreenPin 自己的选区窗口拖选，松开即确认，拖动时按住空格可移动选区，`Enter` 整屏，`Esc` 取消；首次截图时桌面可能询问是否允许，也可以在设置面板里点「授权」。原生 Wayland 窗口后端或静默截图被拒绝时，回退到门户的交互式选区
   - macOS：调用 `screencapture -i` 选择区域
   - Windows：打开系统 `ms-screenclip:` 选择区域；取消或超时不会退回整屏截图
   
@@ -19,6 +19,8 @@ ScreenPin 是一个面向桌面的非破坏性截图编辑器，目标平台为 
   - 文字对象双击直接编辑，新建文字自动进入编辑状态
   - `Ctrl/Cmd + Z`、`Ctrl/Cmd + Shift + Z` 撤销/重做
   - 按 `?` 打开快捷键面板，列出全部工具和操作按键
+  - `Esc` 逐层后退：关闭面板 → 取消选中并回到选择工具 → 收回托盘
+  - 画笔、荧光笔画完不自动选中，可以连续画；矩形、箭头等形状画完保持选中，方便马上调整
   - 无边框窗口，动态适配截图尺寸和缩放比例
   - 大图低缩放时，选框控制点保持可操作尺寸
   
@@ -45,7 +47,7 @@ npm run dev
 npm run tauri -- dev
 ```
 
-安装后可使用 `screenpin --hidden` 静默启动到系统托盘。Linux 下可运行 `screenpin --capture` 通知已启动的实例截图，适合桌面环境的全局快捷键绑定。
+安装后可使用 `screenpin --hidden` 静默启动到系统托盘。Linux 下可运行 `screenpin --capture` 通知已启动的实例截图，适合桌面环境的全局快捷键绑定；已有实例时直接运行 `screenpin` 会唤出它的窗口。
 
 构建 Tauri 支持的 Linux 安装包：
 
@@ -85,11 +87,12 @@ cargo test --manifest-path src-tauri/Cargo.toml --locked
 
 ```json
 {
-  "captureShortcut": "Super+Shift+S"
+  "captureShortcut": "Super+Shift+S",
+  "hideAfterCopy": false
 }
 ```
 
-`Super` 在界面中显示为 `Win`；`CommandOrControl` 在 Windows/Linux 上对应 Ctrl，在 macOS 上对应 Cmd。开机自启由系统注册项管理，切换后立即生效，不写入此 JSON，也无需再点击“保存”。
+`hideAfterCopy` 对应设置里的「复制后收回托盘」，窗口置顶时不生效。`Super` 在界面中显示为 `Win`；`CommandOrControl` 在 Windows/Linux 上对应 Ctrl，在 macOS 上对应 Cmd。开机自启由系统注册项管理，切换后立即生效，不写入此 JSON，也无需再点击“保存”。
 
 Wayland 下，门户授权窗口可能在保存时出现，请完成授权后等待应用返回结果。授权期间原快捷键继续工作，重复保存会被拒绝。门户拒绝授权、未返回已分配的截图快捷键或配置写入失败时，应用会显示错误并保留原绑定；不要把门户仍在等待授权理解为保存成功。最终按键分配由桌面门户决定，仍需实际按键确认。
 
@@ -145,7 +148,7 @@ windowrulev2 = noanim, class:^(ScreenPin)$
 
 ## 架构
 
-无边框窗口通过 `fit_window` command 动态调整尺寸以匹配截图缩放比例 + 工具栏高度。工具栏使用 ResizeObserver 测量自身，通过 CSS 自定义属性 `--bar-height` 传递给浮层定位。缩放计算受屏幕工作区约束，保证窗口不会超出可用空间。
+无边框窗口通过 `fit_window` command 动态调整尺寸以匹配截图缩放比例 + 工具栏高度。工具栏使用 ResizeObserver 测量自身，通过 CSS 自定义属性 `--bar-height` 传递给浮层定位。缩放计算受屏幕工作区约束，保证窗口不会超出可用空间。合成器或窗口管理器可能不按请求尺寸分配窗口，因此画布实际显示的缩放比例还会按 webview 的真实尺寸再收一次，保持宽高比，截图和工具栏都不会被裁掉。
 
 标注对象是 SVG 元素，保留原始坐标和样式参数。区域高亮通过 SVG mask 对全画布添加暗层，并挖出选区，因此导出图像中选区保持原图亮度、其他区域变暗。导出时克隆 SVG、移除选择框和编辑器元素、序列化为 Blob 后通过 Canvas 渲染，再按所选格式编码。马赛克使用低分辨率纹理并以像素化方式放大；如果纹理生成失败，应用会拒绝导出以避免泄露原图。JPEG 没有 alpha 通道，编码前先铺白底避免透明像素变黑；浏览器遇到不支持的格式会静默回退成 PNG，这种情况会直接报错而不是写出扩展名与实际内容不符的文件。
 

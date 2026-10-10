@@ -67,7 +67,7 @@ pub(crate) fn cursor_monitor(window: &WebviewWindow) -> Option<Monitor> {
 }
 
 #[cfg(target_os = "linux")]
-fn cursor_position_is_reliable() -> bool {
+pub(crate) fn cursor_position_is_reliable() -> bool {
     let gdk_backend = std::env::var("GDK_BACKEND").ok();
     let session_type = std::env::var("XDG_SESSION_TYPE").ok();
     match gdk_backend {
@@ -79,7 +79,7 @@ fn cursor_position_is_reliable() -> bool {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn cursor_position_is_reliable() -> bool {
+pub(crate) fn cursor_position_is_reliable() -> bool {
     true
 }
 

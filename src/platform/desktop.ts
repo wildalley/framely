@@ -4,6 +4,7 @@ import type { CaptureResult } from "../types";
 
 export interface AppConfig {
   captureShortcut: string;
+  hideAfterCopy: boolean;
 }
 
 export const isTauri = () => "__TAURI_INTERNALS__" in window;
@@ -43,6 +44,12 @@ export const confirmDiscardChanges = () =>
       })
     : Promise.resolve(window.confirm("当前工程有未保存的修改，继续将丢失这些修改。"));
 
-export const getAutostart = () => invoke<boolean>("get_autostart");
+export type ScreenshotAccess = "granted" | "denied" | "unknown" | "unsupported";
+
+export const getScreenshotAccess = () => invoke<ScreenshotAccess>("screenshot_access");
+
+export const requestScreenshotAccess = () => invoke<ScreenshotAccess>("request_screenshot_access");
+
+export const getAutostart =() => invoke<boolean>("get_autostart");
 
 export const setAutostart = (enabled: boolean) => invoke<void>("set_autostart", { enabled });
