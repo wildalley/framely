@@ -1,6 +1,6 @@
 [package]
 name = "screenpin"
-version = "0.1.0"
+version = "0.1.1"
 description = "A non-destructive cross-platform screenshot editor"
 authors = ["ScreenPin contributors"]
 edition = "2021"
@@ -29,3 +29,4 @@ url = "2.5.8"
 ashpd = { version = "0.13.12", features = ["global_shortcuts", "screenshot"] }
 futures-util = "0.3"
 gtk = "0.18.2"
+webkit2gtk = { version = "2.0.2", features = ["v2_40"] }

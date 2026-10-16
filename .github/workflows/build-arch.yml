@@ -35,6 +35,7 @@ jobs:
               runuser --preserve-environment -u builder -- env HOME=/home/builder npm test
               runuser --preserve-environment -u builder -- env HOME=/home/builder cargo test --manifest-path src-tauri/Cargo.toml --locked
               runuser --preserve-environment -u builder -- env HOME=/home/builder cargo check --manifest-path src-tauri/Cargo.toml --locked
+              runuser -u builder -- cargo run --release --manifest-path src-tauri/Cargo.toml --example capture_memory --locked
               runuser --preserve-environment -u builder -- env HOME=/home/builder npm run build:arch
               package="$(cd packaging/arch && runuser --preserve-environment -u builder -- env HOME=/home/builder makepkg --packagelist | head -n 1)"
               pacman --query --info --file "$package"

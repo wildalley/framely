@@ -310,7 +310,7 @@ fn finish(app: &AppHandle, result: Result<Selected, String>) {
     let Some(mut session) = session else { return };
     for screen in &session.screens {
         if let Some(window) = app.get_webview_window(&screen.label) {
-            let _ = window.destroy();
+            crate::overlay_window::destroy_overlay(window);
         }
     }
     if let Some(done) = session.done.take() {
@@ -445,14 +445,7 @@ fn region_to_crop(region: &Region, screen: Crop) -> Result<Crop, String> {
 }
 
 fn crop_png(png: &[u8], crop: Crop) -> Result<Vec<u8>, String> {
-    let image = image::load_from_memory_with_format(png, ImageFormat::Png)
-        .map_err(|error| format!("无法读取截图: {error}"))?;
-    let mut encoded = Cursor::new(Vec::new());
-    image
-        .crop_imm(crop.x, crop.y, crop.width, crop.height)
-        .write_to(&mut encoded, ImageFormat::Png)
-        .map_err(|error| format!("无法编码选区: {error}"))?;
-    Ok(encoded.into_inner())
+    crate::capture_image::crop_png(png, crop.x, crop.y, crop.width, crop.height)
 }
 
 #[cfg(test)]

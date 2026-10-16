@@ -5,11 +5,16 @@ use tauri_plugin_global_shortcut::ShortcutState;
 
 mod autostart;
 mod capture;
+#[cfg(target_os = "linux")]
+mod capture_image;
 mod config;
 #[cfg(target_os = "linux")]
 mod ipc;
 mod lifecycle;
 mod media;
+mod memory;
+#[cfg(target_os = "linux")]
+mod overlay_window;
 #[cfg(target_os = "linux")]
 mod selection;
 mod shortcuts;
@@ -73,6 +78,7 @@ pub use ipc::{instance_running, request_running_capture, request_running_show};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    memory::configure_image_allocator();
     #[cfg(target_os = "linux")]
     shortcuts::configure_linux_webview_backend();
 

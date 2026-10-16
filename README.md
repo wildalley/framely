@@ -4,6 +4,19 @@ ScreenPin 是一个面向桌面的非破坏性截图编辑器，目标平台为 
 
 版本变更见 [更新日志](CHANGELOG.md)，当前进度和后续计划见 [改进记录与计划](IMPROVEMENTS.md)。
 
+## 下载与安装
+
+当前稳定版为 [v0.1.1](https://github.com/wildalley/screenpin/releases/tag/v0.1.1)，重点修复 Linux 连续截图时的主进程内存增长和选区子进程残留。本次发布提供 Arch Linux x86_64 安装包及 `SHA256SUMS` 校验文件。
+
+从 [Releases](https://github.com/wildalley/screenpin/releases/latest) 下载两个附件，在下载目录中校验并安装：
+
+```bash
+sha256sum -c SHA256SUMS
+sudo pacman -U ./screenpin-0.1.1-1-x86_64.pkg.tar.zst
+```
+
+升级后请从托盘菜单退出旧实例，再启动 ScreenPin。首次截图会加载图像和渲染资源；内存回归关注预热后的持续增长，而不是要求截图过程中的内存峰值保持不变。复现命令及实测范围见下方回归检查和 [验证记录](IMPROVEMENTS.md#验证记录)。
+
 ## 特性
 
 - **跨平台截图采集**
@@ -80,6 +93,22 @@ npm test
 cargo check --manifest-path src-tauri/Cargo.toml --locked
 cargo test --manifest-path src-tauri/Cargo.toml --locked
 ```
+
+Linux 图形会话下可单独验证选区窗口的进程释放：
+
+```bash
+GDK_BACKEND=x11 WEBKIT_DISABLE_DMABUF_RENDERER=1 cargo run --manifest-path src-tauri/Cargo.toml --example selection_lifecycle --locked
+```
+
+测试用屏幕外的合成页面模拟 12 轮双屏选区，不请求真实截图，也不修改正在运行的 ScreenPin。每轮结束后检查页面进程回到基线、选区窗口注销和编辑器状态保留，并输出测试进程组的 PSS。追加 `-- --without-cleanup` 可复现旧清理逻辑，预期以失败状态退出。该检查需要可用的 X11/XWayland 图形会话。
+
+Linux/glibc 还可在无图形会话下验证大图处理后的主进程内存回收：
+
+```bash
+cargo run --release --manifest-path src-tauri/Cargo.toml --example capture_memory --locked
+```
+
+此检查使用真实裁剪函数，在 20 个常驻工作线程上执行 40 轮 5120×1440 合成 PNG 的解码、裁剪、编码和 data URL/JSON 往返；检查结果像素及每轮处理后仍驻留的内存。追加 `-- --without-policy` 可验证旧分配策略会使检查失败。它与选区进程生命周期检查分别覆盖主进程图像缓冲和 WebKit 子进程。
 
 ### 快捷键与自启设置
 
