@@ -1,10 +1,10 @@
 # ScreenPin
 
-ScreenPin 是一个面向桌面的非破坏性截图编辑器，目标平台为 Linux、Windows 和 macOS。它借鉴 PixPin 的”截图后继续工作”思路，但把标注保留为可编辑对象：工程文件保存原图、对象坐标、样式和图层顺序，PNG 只是导出格式。
+ScreenPin 是一个面向 Linux、Windows 和 macOS 的截图与贴图工具。MyGo 原生重制版采用托盘工作流：每次截图、粘贴或打开图片都会创建独立窗口，支持标注、置顶、复制和保存图片；关闭后立即销毁该图片及其编辑记录。
 
 版本变更见 [更新日志](CHANGELOG.md)，当前进度和后续计划见 [改进记录与计划](IMPROVEMENTS.md)。
 
-MyGo 重制版正在 `refactor/mygo-native` 分支推进，已接通原生编辑器、桌面入口、快捷键和工程工作流。原生版使用 Go + MyGo，Linux 窗口不依赖 WebKitGTK；构建、预览包和当前迁移范围见 [原生开发说明](docs/NATIVE.md)。下方下载与功能说明对应 Tauri 稳定版。
+MyGo 重制版正在 `refactor/mygo-native` 分支推进，已接通托盘、独立图片窗口、快捷键设置和按键说明。原生版使用 Go + MyGo，Linux 窗口不依赖 WebKitGTK；构建、预览包和当前迁移范围见 [原生开发说明](docs/NATIVE.md)。下方下载与功能说明对应 Tauri 稳定版。
 
 ## 下载与安装
 

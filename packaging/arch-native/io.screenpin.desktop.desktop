@@ -1,10 +1,9 @@
 [Desktop Entry]
 Type=Application
 Name=ScreenPin
-Comment=Non-destructive native screenshot editor
-Exec=screenpin %f
+Comment=Tray screenshot utility with temporary pinned images
+Exec=screenpin
 Icon=screenpin
 Terminal=false
 Categories=Graphics;Utility;
-MimeType=application/x-screenpin-project;
 StartupWMClass=screenpin

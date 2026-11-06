@@ -110,7 +110,7 @@ func (a *App) canvasInput(ev ui.InputEvent, zoom float64) bool {
 	switch ev.Kind {
 	case ui.InputPointerDown:
 		if ev.Button != 0 {
-			return ev.Button == 1 // keep the context menu away
+			return false // MyGo opens the native context menu.
 		}
 		a.finishEditing()
 		return a.pointerDown(ev, zoom)
@@ -311,7 +311,7 @@ func (a *App) canvas(c *ui.Context, zoom float64) ui.Element {
 		Annotations: a.history.Present(),
 		Hidden:      a.editingID,
 	}
-	box := ui.Box(c.Key("canvas")).Size(w, h).Cursor(a.hoverCursor)
+	box := ui.Box(c.Key("canvas")).Size(w, h).Cursor(a.hoverCursor).ContextMenu(a.contextMenu)
 	if a.drag != nil {
 		if a.drag.kind == dragResize {
 			box.Cursor(handleCursor(a.drag.handle))
@@ -330,7 +330,7 @@ func (a *App) canvas(c *ui.Context, zoom float64) ui.Element {
 				render.Draw(p, scene)
 			})
 			if sel := a.selectedAnnotation(); sel != nil && a.editingID == "" {
-				drawSelection(p, r, sel, zoom)
+				drawSelection(p, r, sel, zoom, p.Theme().Accent)
 			}
 		})
 	})
@@ -342,9 +342,7 @@ func (a *App) canvas(c *ui.Context, zoom float64) ui.Element {
 	return box
 }
 
-var selectionBlue = ui.RGBA(0x23, 0x83, 0xe2, 1)
-
-func drawSelection(p *ui.Painter, r ui.Rect, an *doc.Annotation, zoom float64) {
+func drawSelection(p *ui.Painter, r ui.Rect, an *doc.Annotation, zoom float64, accent ui.Color) {
 	if an.Type != doc.ToolArrow {
 		b := an.Bounds()
 		outline := (&ui.Path{}).
@@ -353,13 +351,13 @@ func drawSelection(p *ui.Painter, r ui.Rect, an *doc.Annotation, zoom float64) {
 			LineTo(r.X+float32((b.X+b.W)*zoom), r.Y+float32((b.Y+b.H)*zoom)).
 			LineTo(r.X+float32(b.X*zoom), r.Y+float32((b.Y+b.H)*zoom)).
 			Close().Cap(ui.ButtCap).Dash(0, 6, 4)
-		p.StrokePath(outline, 2, selectionBlue)
+		p.StrokePath(outline, 2, accent)
 	}
 	for _, h := range handles(an, zoom) {
 		cx, cy := r.X+float32(h.X), r.Y+float32(h.Y)
 		circle := (&ui.Path{}).Circle(cx, cy, handleRadius)
 		p.FillPath(circle, ui.RGBA(255, 255, 255, 1))
-		p.StrokePath(circle, 3, selectionBlue)
+		p.StrokePath(circle, 3, accent)
 	}
 }
 
@@ -382,7 +380,7 @@ func (a *App) textEditor(c *ui.Context, zoom float64) {
 		FontSize(size).FontWeight(600).LineHeight(doc.LineHeight).
 		TextColor(render.Color(an.Color, an.Opacity)).
 		Background(ui.RGBA(255, 255, 255, 0.12)).
-		Border(1, selectionBlue).
+		Border(1, c.Theme().Accent).
 		AutoFocus()
 	if render.TextFont != "" {
 		area.Font(render.TextFont)

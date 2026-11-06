@@ -26,7 +26,7 @@ func ParseArgs(args []string) (Launch, error) {
 		return launch, err
 	}
 	if flags.NArg() > 1 {
-		return launch, errors.New("一次只能打开一个图片或工程文件")
+		return launch, errors.New("一次只能打开一张图片")
 	}
 	if flags.NArg() == 1 {
 		launch.File = flags.Arg(0)

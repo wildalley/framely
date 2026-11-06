@@ -35,11 +35,18 @@ func screenshotPortal() (*portal.Client, error) {
 
 // Screenshot waits off the UI thread for the user or desktop to respond.
 func Screenshot(interactive bool) ([]byte, error) {
+	return ScreenshotContext(context.Background(), interactive)
+}
+
+func ScreenshotContext(parent context.Context, interactive bool) ([]byte, error) {
+	if err := parent.Err(); err != nil {
+		return nil, err
+	}
 	client, err := screenshotPortal()
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(parent, 5*time.Minute)
 	defer cancel()
 	result, err := client.Request(ctx, "org.freedesktop.portal.Screenshot", "Screenshot", []any{""}, map[string]dbus.Variant{
 		"interactive": dbus.MakeVariant(interactive),
@@ -69,11 +76,18 @@ func Screenshot(interactive bool) ([]byte, error) {
 }
 
 func ScreenshotAccess() Access {
+	return ScreenshotAccessContext(context.Background())
+}
+
+func ScreenshotAccessContext(parent context.Context) Access {
+	if parent.Err() != nil {
+		return AccessUnsupported
+	}
 	client, err := screenshotPortal()
 	if err != nil {
 		return AccessUnsupported
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
 	defer cancel()
 	var permissions map[string][]string
 	var data dbus.Variant

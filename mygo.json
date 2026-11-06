@@ -9,17 +9,10 @@
   "linux": {
     "webview": false,
     "command": "screenpin",
-    "comment": "Non-destructive native screenshot editor",
+    "comment": "Tray screenshot utility with temporary pinned images",
     "categories": ["Graphics", "Utility"],
     "depends": ["libayatana-appindicator3-1", "xdg-desktop-portal"]
   },
-  "fileAssociations": [
-    {
-      "ext": ["screenpin"],
-      "name": "ScreenPin 工程",
-      "mimeType": "application/x-screenpin-project"
-    }
-  ],
   "macos": {
     "infoPlist": { "LSUIElement": true }
   }

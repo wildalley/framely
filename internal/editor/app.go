@@ -1,126 +1,91 @@
-// Package editor is ScreenPin's window: the pinned screenshot, its toolbar
-// and panels, and the region picker of a capture.
+// Package editor owns temporary image windows and the screenshot region picker.
 package editor
 
 import (
-	"errors"
+	"context"
 	"image"
 	"math"
-	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
-	"github.com/wildalley/screenpin/internal/capture"
 	"github.com/wildalley/screenpin/internal/config"
 	"github.com/wildalley/screenpin/internal/doc"
 	"github.com/wildalley/screenpin/internal/render"
 )
 
-// Panel is the popover open over the editor.
 type Panel int
 
 const (
 	PanelNone Panel = iota
 	PanelStyle
-	PanelMenu
-	PanelShortcuts
-	PanelSettings
 )
 
-// Zoom limits, and the window's smallest size.
 const (
 	minZoom     = 0.1
 	maxZoom     = 3
 	minWidth    = 320
-	emptyWidth  = 460
-	emptyHeight = 300
+	barHeight   = 44
+	styleWidth  = 280
+	styleHeight = 330
 )
 
-// App is the editor's state. Its fields belong to the main thread, where
-// the view builds from them; goroutines change them through Window.Update.
+// App belongs to one image. Closing it cancels its work and drops the image,
+// annotations and undo history; only the desktop coordinator stays in the tray.
+// Mutable fields are accessed on the UI thread. ctx and win do not change once
+// Open returns, so workers may safely use them to dispatch guarded results.
 type App struct {
-	win *mygo.Window
+	win    *mygo.Window
+	ctx    context.Context
+	cancel context.CancelFunc
+	closed bool
+	cfg    config.Config
 
-	cfg config.Config
+	image    *doc.Image
+	pixels   *image.RGBA
+	mosaicPx *image.RGBA
+	bitmap   *ui.Bitmap
+	mosaic   *ui.Bitmap
+	title    string
+	history  doc.History
 
-	// The document.
-	image     *doc.Image
-	pixels    *image.RGBA // decoded image, kept for export and the mosaic
-	mosaicPx  *image.RGBA
-	bitmap    *ui.Bitmap
-	mosaic    *ui.Bitmap
-	title     string
-	createdAt string
-	history   doc.History
-	saved     string // fingerprint of what was last saved or loaded
-
-	tool     doc.Tool
-	selected string
-	styles   map[doc.Tool]doc.Style
-	zoom     float64
-	pinned   bool
-	busy     bool
-	panel    Panel
-	toasts   []string
+	tool      doc.Tool
+	selected  string
+	styles    map[doc.Tool]doc.Style
+	zoom      float64
+	pinned    bool
+	busy      bool
+	panel     Panel
+	lastPanel Panel
+	toasts    []string
 
 	exportFormat  render.Format
 	exportQuality float64
 
-	// The canvas's drag, and the text being edited in place.
-	drag        *drag
-	hoverCursor ui.Cursor
-	editingID   string
-	editingText string
-	editFresh   bool
-	// Handles read the committed focus before the view builds its fields.
+	drag           *drag
+	hoverCursor    ui.Cursor
+	editingID      string
+	editingText    string
+	editFresh      bool
 	annotationText ui.Handle
 	styleText      ui.Handle
-	projectTitle   ui.Handle
+	slidingKey     string
+	textEdit       bool
+	displayZoom    float64
 
-	// slidingKey is the style slider holding a history transaction.
-	slidingKey string
-	textEdit   bool // the style panel's text field holds one
-
-	// displayZoom is the zoom the canvas shows at, which the window's
-	// actual size may hold below zoom.
-	displayZoom float64
-	panelHeight float32
-	lastPanel   Panel
-
-	// Settings panel.
-	settings settingsState
-
-	// Where the last capture was picked, to open the editor on that display.
 	target *mygo.Rectangle
-
-	capturing           bool
-	quitting            bool
-	quitPending         bool
-	trayAvailable       bool
-	shortcutDescription string
-	activationToken     string
-	// layout is what the window was last sized for.
 	layout layoutKey
 
-	// Hooks into the app around the editor.
-	OnSaveSettings     func(config.Config) error
-	OnSettingsChanged  func(config.Config)
-	OnAutostartChanged func(bool)
+	OnClosed func()
+	OnPaste  func()
 }
 
-// New returns the editor's state, with cfg the loaded configuration.
 func New(cfg config.Config) *App {
+	ctx, cancel := context.WithCancel(context.Background())
 	a := &App{
-		cfg:           cfg,
-		trayAvailable: true,
-		tool:          doc.ToolSelect,
-		styles:        map[doc.Tool]doc.Style{},
-		zoom:          1,
-		title:         "未命名截图",
-		exportFormat:  render.PNG,
-		exportQuality: 0.92,
+		ctx: ctx, cancel: cancel, cfg: cfg, tool: doc.ToolSelect,
+		styles: map[doc.Tool]doc.Style{}, zoom: 1, title: "截图",
+		exportFormat: render.PNG, exportQuality: 0.92,
 	}
 	for _, t := range doc.DrawTools {
 		a.styles[t] = doc.DefaultStyle(t)
@@ -128,215 +93,106 @@ func New(cfg config.Config) *App {
 	return a
 }
 
-// Config returns the current configuration.
-func (a *App) Config() config.Config { return a.cfg }
-
-// Open creates the editor's window, hidden when hidden is true.
-func (a *App) Open(hidden bool) *mygo.Window {
+// Open creates a window only after a complete image has been decoded. It is
+// sized before being shown, so neither startup nor failed opens create a home.
+func (a *App) Open(parent context.Context, picture Picture, target *mygo.Rectangle, token string) *mygo.Window {
+	if a.closed || a.win != nil || picture.pixels == nil {
+		return nil
+	}
+	a.cancel()
+	a.ctx, a.cancel = context.WithCancel(parent)
+	im := picture.image
+	a.image, a.pixels, a.mosaicPx = &im, picture.pixels, picture.mosaic
+	a.title, a.target = picture.title, target
+	a.bitmap = ui.NewBitmap(a.pixels)
+	if a.mosaicPx != nil {
+		a.mosaic = ui.NewBitmap(a.mosaicPx).Pixelated()
+	}
 	a.win = mygo.NewWindow(mygo.WindowOptions{
-		Title:             "ScreenPin",
-		Width:             emptyWidth,
-		Height:            emptyHeight,
-		UseContentSize:    true,
-		Frameless:         true,
-		DisableMaximize:   true,
-		DisableFullScreen: true,
-		Hidden:            hidden,
-		BackgroundColor:   "#fafaf8",
-		Content:           ui.View(a.view),
+		Title: a.title + " — ScreenPin", Width: minWidth, Height: barHeight + 80,
+		MinWidth: minWidth, MinHeight: barHeight + 40, UseContentSize: true,
+		Frameless: true, DisableMaximize: true, DisableFullScreen: true,
+		Hidden: true, Content: ui.View(a.view),
 	})
-	// Closing the window keeps the app in the tray, as the X button does.
-	a.win.OnClose(func(e *mygo.CloseEvent) {
-		if a.quitting {
-			return
-		}
-		e.PreventDefault()
-		a.Close()
-	})
+	a.win.OnClosed(a.release)
+	a.zoom = a.fitZoom()
+	a.fitWindow(true)
+	withActivationToken(token, a.Show)
 	return a.win
 }
 
-// Window returns the editor's window.
-func (a *App) Window() *mygo.Window { return a.win }
+func (a *App) Window() *mygo.Window        { return a.win }
+func (a *App) SetConfig(cfg config.Config) { a.cfg = cfg }
 
-func (a *App) SetTrayAvailable(available bool)           { a.trayAvailable = available }
-func (a *App) IsQuitting() bool                          { return a.quitting }
-func (a *App) Notify(message string)                     { a.toast(message) }
-func (a *App) SetShortcutDescription(description string) { a.shortcutDescription = description }
-func (a *App) ShortcutDescription() string {
-	if a.shortcutDescription != "" {
-		return a.shortcutDescription
+// release is also run for a window-manager close and application quit.
+func (a *App) release() {
+	if a.closed {
+		return
 	}
-	return config.DisplayShortcut(a.cfg.CaptureShortcut)
-}
-
-func (a *App) closeLabel() string {
-	if a.trayAvailable {
-		return "关闭到托盘"
+	a.closed = true
+	a.cancel()
+	a.image, a.pixels, a.mosaicPx = nil, nil, nil
+	a.bitmap, a.mosaic = nil, nil
+	a.history = doc.History{}
+	a.drag, a.styles, a.toasts = nil, nil, nil
+	a.selected, a.editingID, a.editingText, a.slidingKey, a.title = "", "", "", "", ""
+	a.annotationText, a.styleText = ui.Handle{}, ui.Handle{}
+	a.target, a.panel, a.lastPanel = nil, PanelNone, PanelNone
+	a.busy, a.pinned, a.textEdit, a.editFresh = false, false, false, false
+	done := a.OnClosed
+	a.OnClosed, a.OnPaste = nil, nil
+	if done != nil {
+		done()
 	}
-	return "退出 ScreenPin"
 }
 
-func (a *App) activate(fn func()) {
-	token := a.activationToken
-	a.activationToken = ""
-	withActivationToken(token, fn)
+func (a *App) accept(fn func()) {
+	if a.closed || a.ctx.Err() != nil {
+		return
+	}
+	fn()
+	if !a.closed && a.win != nil {
+		a.win.Invalidate()
+	}
 }
 
-// toast shows a message at the next frame.
-func (a *App) toast(msg string) {
-	a.toasts = append(a.toasts, msg)
-	a.win.Invalidate()
+func (a *App) later(fn func()) { mygo.RunOnMain(func() { a.accept(fn) }) }
+
+func (a *App) toast(message string) {
+	if a.closed {
+		return
+	}
+	a.toasts = append(a.toasts, message)
+	if a.win != nil {
+		a.win.Invalidate()
+	}
 }
 
-// later runs fn on the main thread and redraws.
-func (a *App) later(fn func()) { a.win.Update(fn) }
-
-// Show brings the editor forward.
 func (a *App) Show() {
-	a.activate(func() {
-		a.win.Show()
-		a.win.Focus()
-	})
-}
-
-func (a *App) hide() {
-	a.finishEditing()
-	a.panel = PanelNone
-	a.win.Hide()
-}
-
-// dirty reports whether the document has changes no save holds.
-func (a *App) dirty() bool {
-	return a.image != nil && doc.Fingerprint(a.title, a.createdAt, a.image, a.history.Present()) != a.saved
-}
-
-func (a *App) markSaved() {
-	a.saved = doc.Fingerprint(a.title, a.createdAt, a.image, a.history.Present())
-}
-
-// confirmDiscard asks, off the main thread, whether changes may be lost.
-// dirty is read on the main thread before.
-func (a *App) confirmDiscard(dirty bool) bool {
-	if !dirty {
-		return true
-	}
-	res, err := mygo.Dialog.Message(mygo.MessageOptions{
-		Parent:             a.win,
-		Type:               mygo.MessageWarning,
-		Title:              "放弃未保存的修改？",
-		Message:            "放弃未保存的修改？",
-		Detail:             "当前工程有未保存的修改，继续将丢失这些修改。",
-		Buttons:            []string{"取消", "继续"},
-		DefaultButton:      0,
-		CancelButton:       0,
-		DestructiveButtons: []int{1},
-	})
-	return err == nil && res.Button == 1
-}
-
-// RequestQuit quits once unsaved changes are confirmed away.
-func (a *App) RequestQuit() {
-	if a.quitting || a.quitPending {
+	if a.closed || a.win == nil {
 		return
 	}
-	a.finishEditing()
-	dirty := a.dirty()
-	if !dirty {
-		a.quitting = true
-		mygo.App.Quit()
-		return
-	}
-	a.quitPending = true
-	a.Show()
-	go func() {
-		accepted := a.confirmDiscard(dirty)
-		a.later(func() {
-			a.quitPending = false
-			if !accepted {
-				return
-			}
-			a.quitting = true
-			mygo.App.Quit()
-		})
-	}()
+	a.win.Show()
+	a.win.Focus()
 }
 
-// AllowQuit lets the window close for a quit that did not come from
-// RequestQuit, as the system's logout.
-func (a *App) AllowQuit() { a.quitting = true }
-
-// loaded is a decoded document ready to show.
-type loaded struct {
-	image     doc.Image
-	pixels    *image.RGBA
-	mosaic    *image.RGBA
-	title     string
-	createdAt string
-	list      []doc.Annotation
+// Close discards this image immediately. There is no project or hidden image
+// window to restore, and a close never asks about unsaved annotations.
+func (a *App) Close() {
+	if a.win != nil {
+		a.win.Close()
+	} else {
+		a.release()
+	}
 }
 
-// decode decodes an image and pixelates it, off the main thread.
-func decode(im doc.Image) (loaded, error) {
-	px, err := capture.Decode(im.Data)
-	if err != nil {
-		return loaded{}, err
-	}
-	if px.Bounds().Dx() != im.Width || px.Bounds().Dy() != im.Height {
-		return loaded{}, errors.New("图片尺寸与工程数据不一致")
-	}
-	return loaded{image: im, pixels: px, mosaic: render.Pixelate(px)}, nil
-}
-
-// show replaces the document with l, on the main thread.
-func (a *App) show(l loaded) {
-	im := l.image
-	a.image = &im
-	a.pixels, a.mosaicPx = l.pixels, l.mosaic
-	a.bitmap = ui.NewBitmap(l.pixels)
-	a.mosaic = nil
-	if l.mosaic != nil {
-		a.mosaic = ui.NewBitmap(l.mosaic).Pixelated()
-	}
-	a.title, a.createdAt = l.title, l.createdAt
-	a.history.Reset(l.list)
-	a.selected, a.tool, a.panel = "", doc.ToolSelect, PanelNone
-	a.drag, a.editingID = nil, ""
-	a.textEdit, a.slidingKey = false, ""
-	a.markSaved()
-	a.zoom = a.fitZoom()
-	a.fitWindow(true)
-}
-
-// loadImage shows encoded image data as a fresh, unsaved capture.
-func (a *App) loadImage(data []byte, name string) error {
-	im, err := doc.DecodeImage(data, name)
-	if err != nil {
-		return err
-	}
-	l, err := decode(im)
-	if err != nil {
-		return err
-	}
-	l.title = strings.TrimSuffix(name, filepath.Ext(name))
-	l.createdAt = doc.Timestamp(time.Now())
-	done := make(chan struct{})
-	a.later(func() { a.show(l); close(done) })
-	<-done
-	return nil
-}
-
-func captureName() string { return "截图 " + time.Now().Format("15:04") }
-
-// fitZoom is the largest zoom up to 100% that keeps the image and the bar
-// inside the work area of the display the editor opens on.
 func (a *App) fitZoom() float64 {
 	if a.image == nil {
 		return 1
 	}
 	area := a.workArea()
 	w := math.Max(120, float64(area.Width)-24)
-	h := math.Max(120, float64(area.Height)-float64(barHeightFor(stageWidth(a.image.Width, 1)))-24)
+	h := math.Max(120, float64(area.Height)-barHeight-24)
 	z := math.Min(1, math.Min(w/float64(a.image.Width), h/float64(a.image.Height)))
 	return roundZoom(clamp(z, minZoom, 1))
 }
@@ -348,13 +204,14 @@ func (a *App) workArea() mygo.Rectangle {
 	return mygo.Screen.DisplayMatching(a.win.Bounds()).WorkArea
 }
 
-func roundZoom(z float64) float64 { return math.Round(z*100) / 100 }
-
+func roundZoom(z float64) float64     { return math.Round(z*100) / 100 }
 func clamp(v, lo, hi float64) float64 { return math.Max(lo, math.Min(hi, v)) }
 
 func (a *App) setZoom(z float64) {
 	a.zoom = roundZoom(clamp(z, minZoom, maxZoom))
-	a.fitWindow(false)
+	if a.win != nil {
+		a.fitWindow(false)
+	}
 }
 
 func (a *App) zoomToScreen() {
@@ -362,12 +219,12 @@ func (a *App) zoomToScreen() {
 	a.setZoom(a.fitZoom())
 }
 
-// layoutKey is what decides the window's size.
 type layoutKey struct{ w, h int }
 
-// fitWindow sizes the window to the image at the zoom, the bar and the open
-// panel, and centers it on its display when center is true.
 func (a *App) fitWindow(center bool) {
+	if a.closed || a.win == nil {
+		return
+	}
 	w, h := a.wantedSize()
 	key := layoutKey{w, h}
 	if key == a.layout && !center {
@@ -382,24 +239,14 @@ func (a *App) fitWindow(center bool) {
 }
 
 func (a *App) wantedSize() (int, int) {
-	if a.image == nil {
-		return emptyWidth, emptyHeight
+	w := max(minWidth, int(math.Round(float64(a.image.Width)*a.zoom)))
+	h := max(40, int(math.Round(float64(a.image.Height)*a.zoom)))
+	if a.panel == PanelStyle {
+		w, h = max(w, styleWidth+16), max(h, styleHeight)
 	}
-	sw := stageWidth(a.image.Width, a.zoom)
-	sh := int(math.Round(float64(a.image.Height) * a.zoom))
-	w := max(minWidth, sw)
-	if a.panel != PanelNone {
-		w = max(w, panelWidth(a.panel)+panelMargin)
-	}
-	bar := barHeightFor(w)
-	h := sh
-	if a.panel != PanelNone && a.panelHeight > 0 {
-		h = max(h, int(a.panelHeight)+panelMargin)
-	}
-	return w, h + bar
+	area := a.workArea()
+	return min(w, max(minWidth, area.Width-24)), min(h+barHeight, max(barHeight+40, area.Height-24))
 }
-
-func stageWidth(width int, zoom float64) int { return int(math.Round(float64(width) * zoom)) }
 
 func safeFileName(s string) string {
 	s = strings.TrimSpace(strings.Map(func(r rune) rune {

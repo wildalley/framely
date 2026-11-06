@@ -14,7 +14,7 @@ import (
 	"github.com/wildalley/screenpin/internal/doc"
 )
 
-func TestFileLaunchLoadsImagesAndExistingProjects(t *testing.T) {
+func TestFileLaunchLoadsOnlyImages(t *testing.T) {
 	var source bytes.Buffer
 	if err := png.Encode(&source, image.NewRGBA(image.Rect(0, 0, 16, 8))); err != nil {
 		t.Fatal(err)
@@ -24,31 +24,39 @@ func TestFileLaunchLoadsImagesAndExistingProjects(t *testing.T) {
 	if err := os.WriteFile(path, source.Bytes(), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	l, err := readDocument(path)
-	if err != nil || l.title != "图片" || l.image.Width != 16 || l.pixels == nil || l.mosaic == nil {
+	l, err := ReadPicture(path)
+	if err != nil || l.title != "图片" || l.image.Width != 16 || l.pixels == nil || l.mosaic == nil || l.image.Data != nil {
 		t.Fatalf("loaded=%+v, err=%v", l, err)
 	}
 	an := doc.New(doc.ToolText, doc.Point{}, doc.DefaultStyle(doc.ToolText))
 	an.SetText("工程文字")
 	created := doc.Timestamp(time.Unix(0, 0))
-	project, err := doc.EncodeProject("已有工程", created, l.image, []doc.Annotation{an}, time.Now())
+	im, err := doc.DecodeImage(source.Bytes(), "图片.png")
 	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := doc.EncodeProject("已有工程", created, im, []doc.Annotation{an}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := doc.DecodeProject(project); err != nil {
 		t.Fatal(err)
 	}
 	path = filepath.Join(dir, "已有工程.screenpin")
 	if err := os.WriteFile(path, project, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	l, err = readDocument(path)
-	if err != nil || l.title != "已有工程" || l.createdAt != created || len(l.list) != 1 || l.list[0].TextValue() != "工程文字" {
-		t.Fatalf("loaded=%+v, err=%v", l, err)
+	if _, err = ReadPicture(path); err == nil {
+		t.Fatal("a project was opened as an image")
 	}
-	if err := os.WriteFile(path, []byte(`{"format":"screenpin-project"}`), 0o600); err != nil {
+	path = filepath.Join(dir, "corrupt.png")
+	if err := os.WriteFile(path, source.Bytes()[:len(source.Bytes())/2], 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := readDocument(path); err == nil {
-		t.Fatal("file launch accepted a corrupt project")
+	if _, err := ReadPicture(path); err == nil {
+		t.Fatal("a corrupt image reached the window")
 	}
+
 }
 
 func TestExportSnapshotKeepsTheCapturedPenGeometry(t *testing.T) {

@@ -3,6 +3,7 @@
 package capture
 
 import (
+	"context"
 	"errors"
 	"os/exec"
 	"syscall"
@@ -21,12 +22,25 @@ func clipboardSequence() uintptr {
 // the clipboard's image (PNG, or nil). Cancelling or waiting 30 seconds
 // gives up; it never falls back to the whole screen.
 func System(readImage func() []byte) ([]byte, error) {
+	return SystemContext(context.Background(), readImage)
+}
+
+func SystemContext(ctx context.Context, readImage func() []byte) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	before := clipboardSequence()
 	if err := exec.Command("explorer.exe", "ms-screenclip:").Start(); err != nil {
 		return nil, errors.New("无法启动系统截图: " + err.Error())
 	}
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
 	for range 300 {
-		time.Sleep(100 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+		}
 		// The sequence number changes even when the new pixels equal the
 		// previous screenshot's, which comparing the images would miss.
 		if clipboardSequence() == before {
@@ -36,5 +50,5 @@ func System(readImage func() []byte) ([]byte, error) {
 			return png, nil
 		}
 	}
-	return nil, errors.New("截图已取消或等待超时")
+	return nil, ErrCancelled
 }

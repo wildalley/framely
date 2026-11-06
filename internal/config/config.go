@@ -20,7 +20,8 @@ const DefaultShortcut = "Super+Shift+S"
 // Config is the user's settings.
 type Config struct {
 	CaptureShortcut string `json:"captureShortcut"`
-	// HideAfterCopy hides the editor to the tray once the image is copied.
+	// HideAfterCopy closes an unpinned image after copying. The JSON key stays
+	// compatible with existing installations; closed images are not retained.
 	HideAfterCopy bool `json:"hideAfterCopy"`
 }
 

@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"testing"
@@ -12,11 +13,11 @@ func TestLaunchArguments(t *testing.T) {
 		args []string
 		want Launch
 	}{
-		{"show", nil, Launch{}},
+		{"tray", nil, Launch{}},
 		{"hidden", []string{"--hidden"}, Launch{Hidden: true}},
 		{"capture", []string{"--capture"}, Launch{Capture: true}},
 		{"capture-from-hidden", []string{"--hidden", "--capture"}, Launch{Hidden: true, Capture: true}},
-		{"file", []string{"--hidden", "my project.screenpin"}, Launch{Hidden: true, File: "my project.screenpin"}},
+		{"file", []string{"--hidden", "my image.png"}, Launch{Hidden: true, File: "my image.png"}},
 		{"version", []string{"--version"}, Launch{Version: true}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -33,5 +34,13 @@ func TestLaunchArguments(t *testing.T) {
 	}
 	if _, err := ParseArgs([]string{"--help"}); !errors.Is(err, flag.ErrHelp) {
 		t.Fatalf("help: %v", err)
+	}
+}
+
+func TestRecordingDoesNotTriggerACapture(t *testing.T) {
+	s := &application{ctx: context.Background(), settings: &settingsWindow{recording: true}}
+	s.CaptureWithActivation("recorded-key")
+	if s.captureBusy || s.operations != 0 {
+		t.Fatal("recording the current shortcut started a screenshot")
 	}
 }

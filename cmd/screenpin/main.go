@@ -9,9 +9,10 @@ import (
 	"github.com/wildalley/screenpin/internal/desktop"
 )
 
-const usage = `ScreenPin 原生截图编辑器
+const usage = `ScreenPin 托盘截图工具
 
-用法: screenpin [--hidden | --capture] [图片或 .screenpin 工程]
+用法: screenpin [--hidden | --capture] [图片]
+  默认启动到托盘；每张图片独立开窗，关闭即销毁
   --hidden   在后台启动；已有实例时不打扰当前窗口
   --capture  截图；已有实例时交给该实例
   --version  显示版本

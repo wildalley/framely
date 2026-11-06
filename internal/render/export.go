@@ -2,6 +2,7 @@ package render
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"image"
 	"image/color"
@@ -75,7 +76,16 @@ func Flatten(src, mosaic *image.RGBA, list []doc.Annotation) (*image.RGBA, error
 
 // Encode encodes img in format; quality, from 0 to 1, applies to lossy ones.
 func Encode(img *image.RGBA, format Format, quality float64) ([]byte, error) {
+	return EncodeContext(context.Background(), img, format, quality)
+}
+
+// EncodeContext stops producing output when its image window is closed.
+func EncodeContext(ctx context.Context, img *image.RGBA, format Format, quality float64) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	var buf bytes.Buffer
+	out := contextWriter{ctx, &buf}
 	switch format {
 	case JPEG:
 		// JPEG has no alpha channel: put the image on white, as the web
@@ -84,14 +94,26 @@ func Encode(img *image.RGBA, format Format, quality float64) ([]byte, error) {
 		draw.Draw(flat, flat.Bounds(), image.NewUniform(color.White), image.Point{}, draw.Src)
 		draw.Draw(flat, flat.Bounds(), img, img.Bounds().Min, draw.Over)
 		q := int(quality*100 + 0.5)
-		if err := jpeg.Encode(&buf, flat, &jpeg.Options{Quality: max(1, min(100, q))}); err != nil {
+		if err := jpeg.Encode(out, flat, &jpeg.Options{Quality: max(1, min(100, q))}); err != nil {
 			return nil, err
 		}
 	default:
 		enc := png.Encoder{CompressionLevel: png.DefaultCompression}
-		if err := enc.Encode(&buf, img); err != nil {
+		if err := enc.Encode(out, img); err != nil {
 			return nil, err
 		}
 	}
 	return buf.Bytes(), nil
+}
+
+type contextWriter struct {
+	ctx context.Context
+	buf *bytes.Buffer
+}
+
+func (w contextWriter) Write(p []byte) (int, error) {
+	if err := w.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return w.buf.Write(p)
 }

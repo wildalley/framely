@@ -1,6 +1,7 @@
 package editor
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"image"
@@ -48,19 +49,39 @@ type pickResult struct {
 
 // pickRegion shows the overlays for the PNG of the whole desktop and waits
 // for the region. Call it off the main thread.
-func (a *App) pickRegion(png []byte) ([]byte, *mygo.Rectangle, error) {
+func PickRegion(ctx context.Context, png []byte, token string) ([]byte, *mygo.Rectangle, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
 	full, err := capture.Decode(png)
 	if err != nil {
 		return nil, nil, err
 	}
 	s := &pick{full: full, result: make(chan pickResult, 1)}
-	opened := make(chan error, 1)
-	a.later(func() { a.activate(func() { opened <- s.open() }) })
-	if err := <-opened; err != nil {
-		return nil, nil, err
+	opened := false
+	mygo.RunOnMain(func() {
+		if ctx.Err() != nil {
+			return
+		}
+		opened = true
+		withActivationToken(token, func() { err = s.open() })
+	})
+	if !opened || err != nil {
+		if ctx.Err() != nil {
+			return nil, nil, ctx.Err()
+		}
+		if err != nil {
+			return nil, nil, err
+		}
+		return nil, nil, capture.ErrCancelled
 	}
-	r := <-s.result
-	return r.png, r.target, r.err
+	select {
+	case r := <-s.result:
+		return r.png, r.target, r.err
+	case <-ctx.Done():
+		mygo.RunOnMain(func() { s.finish(nil, nil) })
+		return nil, nil, ctx.Err()
+	}
 }
 
 func (s *pick) open() error {
@@ -100,6 +121,7 @@ func (s *pick) open() error {
 			v.win.SetFullScreen(true)
 		}
 		v.win.OnClose(func(*mygo.CloseEvent) { s.finish(nil, nil) })
+		v.win.OnClosed(func() { s.finish(nil, nil) })
 	}
 	return nil
 }
@@ -148,25 +170,27 @@ func (s *pick) finish(v *pickView, region *doc.Rect) {
 		return
 	}
 	s.done = true
+	full := s.full
 	for _, o := range s.views {
-		o.win.Close()
+		o.win.Destroy()
 	}
+	s.full, s.bitmap, s.views, s.active = nil, nil, nil, nil
+	s.dragging, s.shift = false, false
 	if region == nil {
 		s.result <- pickResult{err: capture.ErrCancelled}
 		return
 	}
-	full := s.full
 	w, h := float64(v.display.Bounds.Width), float64(v.display.Bounds.Height)
 	target := v.display.Bounds
+	crop, selection, result := v.crop, *region, s.result
 	go func() {
-		r, err := regionToCrop(*region, w, h, v.crop)
+		r, err := regionToCrop(selection, w, h, crop)
 		var png []byte
 		if err == nil {
 			png, err = capture.Crop(full, r)
 		}
-		s.result <- pickResult{png: png, target: &target, err: err}
+		result <- pickResult{png: png, target: &target, err: err}
 	}()
-	s.full, s.bitmap = nil, nil
 }
 
 func (s *pick) rect() doc.Rect {
@@ -276,7 +300,7 @@ func (s *pick) view(c *ui.Context, v *pickView) {
 		p.Fill(ui.Rect{X: r.X, Y: y + sh, W: r.W, H: r.Y + r.H - y - sh}, pickDim, 0)
 		p.Fill(ui.Rect{X: r.X, Y: y, W: x - r.X, H: sh}, pickDim, 0)
 		p.Fill(ui.Rect{X: x + sw, Y: y, W: r.X + r.W - x - sw, H: sh}, pickDim, 0)
-		p.Stroke(ui.Rect{X: x, Y: y, W: sw, H: sh}, colAccent, 0, 1)
+		p.Stroke(ui.Rect{X: x, Y: y, W: sw, H: sh}, p.Theme().Accent, 0, 1)
 		px, err := regionToCrop(*sel, float64(r.W), float64(r.H), crop)
 		if err != nil {
 			return
@@ -287,7 +311,7 @@ func (s *pick) view(c *ui.Context, v *pickView) {
 		if y-r.Y < 28 {
 			at.X, at.Y = x+6, y+6
 		}
-		p.Fill(at, colAccentD, 4)
+		p.Fill(at, p.Theme().AccentPressed, 4)
 		p.RichText(at.X+6, at.Y+2, 0, label)
 	})
 	_ = h

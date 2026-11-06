@@ -94,21 +94,6 @@ func TestAnnotationTextFinishesWithKeyboard(t *testing.T) {
 	}
 }
 
-func TestProjectTitleKeepsToolShortcutsInTheField(t *testing.T) {
-	a, _ := textApp()
-	tt := ui.NewTester(func(c *ui.Context) {
-		a.shortcuts(c)
-		ui.Column(c).Fill().Children(func() { a.menuPanel(c) })
-	}, 500, 500)
-	if err := tt.Click("工程名称"); err != nil {
-		t.Fatal(err)
-	}
-	tt.TypeKey(0, ui.KeyT, "t")
-	if a.tool != doc.ToolSelect || a.title != "未命名截图t" {
-		t.Fatalf("typing in the project title selected the text tool: tool=%s, title=%q", a.tool, a.title)
-	}
-}
-
 func TestClosingStylePanelCommitsTextAsOneStep(t *testing.T) {
 	a, original := textApp()
 	a.panel = PanelStyle

@@ -1,7 +1,7 @@
 pkgname=screenpin-native
 pkgver=0.1.1
-pkgrel=1
-pkgdesc="Non-destructive native screenshot editor (MyGo preview)"
+pkgrel=2
+pkgdesc="Tray screenshot utility with temporary pinned images (MyGo preview)"
 arch=('x86_64' 'aarch64')
 url="https://github.com/wildalley/screenpin"
 license=('MIT')
@@ -57,7 +57,6 @@ package() {
   install -Dm755 "$_build_root/build/native/linux-$_go_arch/screenpin" "$pkgdir/usr/bin/screenpin"
   # Match the registered portal ID and preserve permissions from the Tauri app.
   install -Dm644 "$startdir/io.screenpin.desktop.desktop" "$pkgdir/usr/share/applications/io.screenpin.desktop.desktop"
-  install -Dm644 "$startdir/screenpin.xml" "$pkgdir/usr/share/mime/packages/screenpin.xml"
   local _size _icon
   for _size in 32 64 128 256 512; do
     case "$_size" in

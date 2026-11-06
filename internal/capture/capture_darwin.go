@@ -3,6 +3,7 @@
 package capture
 
 import (
+	"context"
 	"errors"
 	"os"
 	"os/exec"
@@ -13,9 +14,19 @@ import (
 
 // System runs macOS's own region selector and returns its PNG.
 func System(func() []byte) ([]byte, error) {
+	return SystemContext(context.Background(), nil)
+}
+
+func SystemContext(ctx context.Context, _ func() []byte) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	path := filepath.Join(os.TempDir(), "screenpin-"+strconv.FormatInt(time.Now().UnixNano(), 10)+".png")
 	defer os.Remove(path)
-	err := exec.Command("screencapture", "-i", "-x", path).Run()
+	err := exec.CommandContext(ctx, "screencapture", "-i", "-x", path).Run()
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 	data, readErr := os.ReadFile(path)
 	if err != nil || readErr != nil || len(data) == 0 {
 		var exit *exec.ExitError
