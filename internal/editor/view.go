@@ -4,7 +4,6 @@ import (
 	"math"
 
 	"github.com/egoist/mygo/ui"
-	"github.com/wildalley/screenpin/internal/config"
 	"github.com/wildalley/screenpin/internal/doc"
 )
 
@@ -145,7 +144,10 @@ func (a *App) view(c *ui.Context) {
 
 // shortcuts are the editor's keys, which a focused text field leaves alone.
 func (a *App) shortcuts(c *ui.Context) {
-	typing := c.FocusTakesText()
+	if a.settings.recording || a.busy || a.quitPending || a.quitting {
+		return
+	}
+	typing := a.annotationText.FocusWithin(c) || a.styleText.FocusWithin(c) || a.projectTitle.FocusWithin(c)
 	if !typing {
 		if c.Shortcut(ui.Cmd, ui.KeyZ) {
 			a.undo()
@@ -155,6 +157,9 @@ func (a *App) shortcuts(c *ui.Context) {
 		}
 		if a.image != nil && c.Shortcut(ui.Cmd, ui.KeyC) {
 			a.Copy()
+		}
+		if c.Shortcut(ui.Cmd, ui.KeyV) {
+			a.Paste()
 		}
 	}
 	if a.image != nil {
@@ -185,6 +190,7 @@ func (a *App) shortcuts(c *ui.Context) {
 		// the tool, then the window itself.
 		switch {
 		case a.panel != PanelNone:
+			a.finishEditing()
 			a.panel = PanelNone
 		case a.selected != "" || a.tool != doc.ToolSelect:
 			a.selected = ""
@@ -241,6 +247,7 @@ func (a *App) setTool(t doc.Tool) {
 }
 
 func (a *App) togglePanel(p Panel) {
+	a.finishEditing()
 	if a.panel == p {
 		a.panel = PanelNone
 	} else {
@@ -295,7 +302,7 @@ func (a *App) bar(c *ui.Context) {
 	rows := barRows(int(ww))
 	style := a.activeStyle()
 	items := a.barItems(c, style)
-	bar := ui.Column(c.Key("bar")).FillWidth().Padding(barPadY, barPadX).Background(colSurface).
+	bar := ui.Column(c.Key("bar")).FillWidth().Padding(barPadY, barPadX).Background(colSurface).Disabled(a.busy).
 		BorderWidth(1, 0, 0, 0).BorderColor(colLine).DragWindow().Cursor(ui.CursorGrab)
 	bar.Children(func() {
 		for _, r := range rows {
@@ -397,7 +404,7 @@ func (a *App) barItems(c *ui.Context, style *doc.Style) []func() {
 			}
 		},
 		func() {
-			if iconButton(c, "close", iconClose, "关闭到托盘", false, false).Clicked() {
+			if iconButton(c, "close", iconClose, a.closeLabel(), false, false).Clicked() {
 				a.Close()
 			}
 		},
@@ -430,7 +437,7 @@ func (a *App) emptyState(c *ui.Context) {
 	ui.Column(c.Key("empty")).Fill().Center().Gap(16).Padding(22).Background(colSurface).
 		DragWindow().Cursor(ui.CursorGrab).Children(func() {
 		ui.Box(c).Absolute().Top(8).Right(8).Children(func() {
-			if iconButton(c, "empty-close", iconClose, "关闭到托盘", false, false).Clicked() {
+			if iconButton(c, "empty-close", iconClose, a.closeLabel(), false, false).Clicked() {
 				a.Close()
 			}
 		})
@@ -447,14 +454,14 @@ func (a *App) emptyState(c *ui.Context) {
 			if b.Clicked() {
 				a.Capture()
 			}
-			if secondaryAction(c, "empty-open", iconImage, "打开图片").Clicked() {
+			if secondaryAction(c, "empty-open", iconImage, "打开图片").Disabled(a.busy).Clicked() {
 				a.OpenImage()
 			}
-			if secondaryAction(c, "empty-project", iconFolder, "打开工程").Clicked() {
+			if secondaryAction(c, "empty-project", iconFolder, "打开工程").Disabled(a.busy).Clicked() {
 				a.OpenProject()
 			}
 		})
-		ui.Text(c, "全局快捷键 "+config.DisplayShortcut(a.cfg.CaptureShortcut)).FontSize(12).TextColor(colMuted)
+		ui.Text(c, "全局快捷键 "+a.ShortcutDescription()).FontSize(12).TextColor(colMuted)
 	})
 }
 

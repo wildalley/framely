@@ -26,6 +26,9 @@ type settingsState struct {
 }
 
 func (a *App) openSettings() {
+	if a.settings.saving {
+		return
+	}
 	a.settings = settingsState{
 		shortcut:      a.cfg.CaptureShortcut,
 		hideAfterCopy: a.cfg.HideAfterCopy,
@@ -190,7 +193,7 @@ func (a *App) stylePanel(c *ui.Context, style doc.Style) {
 	if sel != nil && sel.Type == doc.ToolText && a.editingID == "" {
 		ui.Text(c, "文字").FontSize(12).TextColor(colMuted)
 		text := sel.TextValue()
-		field := ui.TextArea(c.Key("style-text"), &text).Lines(2, 6).FillWidth()
+		field := ui.TextArea(c.Key("style-text"), &text).Bind(&a.styleText).Label("标注文字").Lines(2, 6).FillWidth()
 		if field.Changed() {
 			if !a.textEdit {
 				a.textEdit = true
@@ -203,7 +206,7 @@ func (a *App) stylePanel(c *ui.Context, style doc.Style) {
 				a.history.SetTransient(doc.Replace(list, i, an))
 			}
 		}
-		if a.textEdit && field.FocusLeft() {
+		if a.textEdit && !field.Focused() {
 			a.textEdit = false
 			a.history.End()
 		}
@@ -251,7 +254,7 @@ func menuItem(c *ui.Context, key string, svg *ui.SVG, label string, disabled boo
 
 func (a *App) menuPanel(c *ui.Context) {
 	ui.Text(c, "名称").FontSize(12).TextColor(colMuted)
-	ui.TextInput(c.Key("title"), &a.title).Label("工程名称").FillWidth()
+	ui.TextInput(c.Key("title"), &a.title).Bind(&a.projectTitle).Label("工程名称").FillWidth()
 	ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 		if smallButton(c, "zoom-out", iconZoomOut, "缩小 (Ctrl+-)", false).Clicked() {
 			a.setZoom(a.displayZoom - 0.1)
@@ -322,7 +325,7 @@ func (a *App) shortcutsPanel(c *ui.Context) {
 		mod = "Cmd"
 	}
 	rows := [][2]string{
-		{config.DisplayShortcut(a.cfg.CaptureShortcut), "截取屏幕（全局）"},
+		{a.ShortcutDescription(), "截取屏幕（全局）"},
 	}
 	for _, it := range toolItems {
 		rows = append(rows, [2]string{it.char, toolName(it.tool)})
@@ -332,6 +335,7 @@ func (a *App) shortcutsPanel(c *ui.Context) {
 		[2]string{mod + "+Shift+Z", "重做"},
 		[2]string{mod + "+Y", "重做"},
 		[2]string{mod + "+C", "复制到剪贴板"},
+		[2]string{mod + "+V", "粘贴图片"},
 		[2]string{mod + "+S", "导出 " + a.exportFormat.Label()},
 		[2]string{mod + "+Shift+S", "保存工程"},
 		[2]string{mod + "++", "放大"},
@@ -340,7 +344,7 @@ func (a *App) shortcutsPanel(c *ui.Context) {
 		[2]string{mod + "+滚轮", "缩放"},
 		[2]string{"Delete", "删除所选"},
 		[2]string{"Backspace", "删除所选"},
-		[2]string{"Esc", "关闭面板 → 取消选择 → 收回托盘"},
+		[2]string{"Esc", "关闭面板 → 取消选择 → " + a.closeLabel()},
 		[2]string{"?", "显示/隐藏快捷键"},
 	)
 	panelTitle(c, "键盘快捷键", "")
@@ -391,12 +395,16 @@ func (a *App) settingsPanel(c *ui.Context) {
 			label = "按下快捷键..."
 		}
 		rec := ui.ButtonBase(c.Key("record")).Height(30).Padding(0, 10).Radius(5).Center().
-			Border(1, colLine).Background(ui.RGBA(255, 255, 255, 1))
+			Border(1, colLine).Background(ui.RGBA(255, 255, 255, 1)).Disabled(s.saving)
 		if s.recording {
 			rec.Background(colSoft).Border(1, colAccent).Focus()
 			rec.HandleInput(func(ev ui.InputEvent) bool {
 				if ev.Kind != ui.InputKeyDown {
 					return false
+				}
+				if ev.Key == ui.KeyEscape {
+					s.recording = false
+					return true
 				}
 				if acc, ok := accelerator(ev.Mods, ev.Key); ok {
 					s.shortcut = acc
@@ -424,7 +432,7 @@ func (a *App) settingsPanel(c *ui.Context) {
 		return changed
 	}
 	// Autostart is the system's, not config.json's: it changes at once.
-	if toggle("autostart", &s.autostart, "开机自启", "登录后自动在后台启动，随时用快捷键截图（改动立即生效）", false) {
+	if toggle("autostart", &s.autostart, "开机自启", "登录后自动在后台启动，随时用快捷键截图（改动立即生效）", s.saving) {
 		want := s.autostart
 		if err := mygo.App.SetOpenAtLogin(want); err != nil {
 			c.Toast(err.Error())
@@ -460,12 +468,19 @@ func (a *App) settingsPanel(c *ui.Context) {
 			}
 		})
 	}
-	toggle("hide-after-copy", &s.hideAfterCopy, "复制后收回托盘", "适合截完就贴；窗口置顶时不收回", false)
+	toggle("hide-after-copy", &s.hideAfterCopy, "复制后收回托盘", "适合截完就贴；窗口置顶时不收回", s.saving)
+	if s.saving {
+		ui.Text(c, "正在保存设置；若桌面弹出快捷键授权窗口，请确认或取消。").FontSize(12).TextColor(colMuted)
+	}
 	ui.Row(c).Gap(8).Justify(ui.End).Children(func() {
-		if ui.Button(c.Key("cancel"), "取消").Clicked() {
+		if ui.Button(c.Key("cancel"), "取消").Disabled(s.saving).Clicked() {
 			a.panel = PanelNone
 		}
-		if ui.PrimaryButton(c.Key("save"), "保存").Disabled(s.saving).Clicked() {
+		label := "保存"
+		if s.saving {
+			label = "保存中…"
+		}
+		if ui.PrimaryButton(c.Key("save"), label).Disabled(s.saving).Clicked() {
 			a.saveSettings()
 		}
 	})
@@ -486,10 +501,13 @@ func (a *App) askScreenshotAccess() {
 	}()
 }
 
-// saveSettings binds the new shortcut, then writes the configuration; the
-// old binding goes only once both worked, and stays if either failed.
+// saveSettings waits for the desktop coordinator to bind and persist the
+// candidate. The coordinator leaves the previous binding alive on failure.
 func (a *App) saveSettings() {
 	s := &a.settings
+	if s.saving {
+		return
+	}
 	next := a.cfg
 	next.CaptureShortcut = s.shortcut
 	next.HideAfterCopy = s.hideAfterCopy
@@ -497,17 +515,14 @@ func (a *App) saveSettings() {
 		a.toast(err.Error())
 		return
 	}
-	old := a.cfg.CaptureShortcut
+	s.recording = false
 	s.saving = true
 	go func() {
 		var err error
-		if next.CaptureShortcut != old && a.OnShortcutChanged != nil {
-			err = a.OnShortcutChanged(old, next.CaptureShortcut)
-		}
-		if err == nil {
-			if err = next.Save(); err != nil && next.CaptureShortcut != old && a.OnShortcutChanged != nil {
-				_ = a.OnShortcutChanged(next.CaptureShortcut, old)
-			}
+		if a.OnSaveSettings != nil {
+			err = a.OnSaveSettings(next)
+		} else {
+			err = next.Save()
 		}
 		a.later(func() {
 			s.saving = false
@@ -516,7 +531,12 @@ func (a *App) saveSettings() {
 				return
 			}
 			a.cfg = next
-			a.panel = PanelNone
+			if a.OnSettingsChanged != nil {
+				a.OnSettingsChanged(next)
+			}
+			if a.panel == PanelSettings {
+				a.panel = PanelNone
+			}
 			a.toast("设置已保存")
 		})
 	}()

@@ -1,0 +1,26 @@
+{
+  "name": "ScreenPin",
+  "slug": "screenpin",
+  "identifier": "io.screenpin.desktop",
+  "version": "0.1.1",
+  "main": "./cmd/screenpin",
+  "out": "build/native",
+  "icon": "assets/app-icon.png",
+  "linux": {
+    "webview": false,
+    "command": "screenpin",
+    "comment": "Non-destructive native screenshot editor",
+    "categories": ["Graphics", "Utility"],
+    "depends": ["libayatana-appindicator3-1", "xdg-desktop-portal"]
+  },
+  "fileAssociations": [
+    {
+      "ext": ["screenpin"],
+      "name": "ScreenPin 工程",
+      "mimeType": "application/x-screenpin-project"
+    }
+  ],
+  "macos": {
+    "infoPlist": { "LSUIElement": true }
+  }
+}

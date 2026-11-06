@@ -74,6 +74,10 @@ type App struct {
 	editingID   string
 	editingText string
 	editFresh   bool
+	// Handles read the committed focus before the view builds its fields.
+	annotationText ui.Handle
+	styleText      ui.Handle
+	projectTitle   ui.Handle
 
 	// slidingKey is the style slider holding a history transaction.
 	slidingKey string
@@ -91,13 +95,18 @@ type App struct {
 	// Where the last capture was picked, to open the editor on that display.
 	target *mygo.Rectangle
 
-	capturing bool
-	quitting  bool
+	capturing           bool
+	quitting            bool
+	quitPending         bool
+	trayAvailable       bool
+	shortcutDescription string
+	activationToken     string
 	// layout is what the window was last sized for.
 	layout layoutKey
 
 	// Hooks into the app around the editor.
-	OnShortcutChanged func(old, new string) error
+	OnSaveSettings     func(config.Config) error
+	OnSettingsChanged  func(config.Config)
 	OnAutostartChanged func(bool)
 }
 
@@ -105,6 +114,7 @@ type App struct {
 func New(cfg config.Config) *App {
 	a := &App{
 		cfg:           cfg,
+		trayAvailable: true,
 		tool:          doc.ToolSelect,
 		styles:        map[doc.Tool]doc.Style{},
 		zoom:          1,
@@ -124,16 +134,16 @@ func (a *App) Config() config.Config { return a.cfg }
 // Open creates the editor's window, hidden when hidden is true.
 func (a *App) Open(hidden bool) *mygo.Window {
 	a.win = mygo.NewWindow(mygo.WindowOptions{
-		Title:           "ScreenPin",
-		Width:           emptyWidth,
-		Height:          emptyHeight,
-		UseContentSize:  true,
-		Frameless:       true,
-		DisableMaximize: true,
+		Title:             "ScreenPin",
+		Width:             emptyWidth,
+		Height:            emptyHeight,
+		UseContentSize:    true,
+		Frameless:         true,
+		DisableMaximize:   true,
 		DisableFullScreen: true,
-		Hidden:          hidden,
-		BackgroundColor: "#fafaf8",
-		Content:         ui.View(a.view),
+		Hidden:            hidden,
+		BackgroundColor:   "#fafaf8",
+		Content:           ui.View(a.view),
 	})
 	// Closing the window keeps the app in the tray, as the X button does.
 	a.win.OnClose(func(e *mygo.CloseEvent) {
@@ -141,13 +151,37 @@ func (a *App) Open(hidden bool) *mygo.Window {
 			return
 		}
 		e.PreventDefault()
-		a.hide()
+		a.Close()
 	})
 	return a.win
 }
 
 // Window returns the editor's window.
 func (a *App) Window() *mygo.Window { return a.win }
+
+func (a *App) SetTrayAvailable(available bool)           { a.trayAvailable = available }
+func (a *App) IsQuitting() bool                          { return a.quitting }
+func (a *App) Notify(message string)                     { a.toast(message) }
+func (a *App) SetShortcutDescription(description string) { a.shortcutDescription = description }
+func (a *App) ShortcutDescription() string {
+	if a.shortcutDescription != "" {
+		return a.shortcutDescription
+	}
+	return config.DisplayShortcut(a.cfg.CaptureShortcut)
+}
+
+func (a *App) closeLabel() string {
+	if a.trayAvailable {
+		return "关闭到托盘"
+	}
+	return "退出 ScreenPin"
+}
+
+func (a *App) activate(fn func()) {
+	token := a.activationToken
+	a.activationToken = ""
+	withActivationToken(token, fn)
+}
 
 // toast shows a message at the next frame.
 func (a *App) toast(msg string) {
@@ -160,11 +194,14 @@ func (a *App) later(fn func()) { a.win.Update(fn) }
 
 // Show brings the editor forward.
 func (a *App) Show() {
-	a.win.Show()
-	a.win.Focus()
+	a.activate(func() {
+		a.win.Show()
+		a.win.Focus()
+	})
 }
 
 func (a *App) hide() {
+	a.finishEditing()
 	a.panel = PanelNone
 	a.win.Hide()
 }
@@ -200,15 +237,25 @@ func (a *App) confirmDiscard(dirty bool) bool {
 
 // RequestQuit quits once unsaved changes are confirmed away.
 func (a *App) RequestQuit() {
-	dirty := a.dirty()
-	if dirty {
-		a.Show()
+	if a.quitting || a.quitPending {
+		return
 	}
+	a.finishEditing()
+	dirty := a.dirty()
+	if !dirty {
+		a.quitting = true
+		mygo.App.Quit()
+		return
+	}
+	a.quitPending = true
+	a.Show()
 	go func() {
-		if !a.confirmDiscard(dirty) {
-			return
-		}
+		accepted := a.confirmDiscard(dirty)
 		a.later(func() {
+			a.quitPending = false
+			if !accepted {
+				return
+			}
 			a.quitting = true
 			mygo.App.Quit()
 		})
@@ -255,6 +302,7 @@ func (a *App) show(l loaded) {
 	a.history.Reset(l.list)
 	a.selected, a.tool, a.panel = "", doc.ToolSelect, PanelNone
 	a.drag, a.editingID = nil, ""
+	a.textEdit, a.slidingKey = false, ""
 	a.markSaved()
 	a.zoom = a.fitZoom()
 	a.fitWindow(true)

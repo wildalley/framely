@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/wildalley/screenpin/internal/shortcutkey"
 )
 
 // DefaultShortcut is the global capture shortcut until the user records
@@ -64,6 +66,9 @@ func Load() (c Config, repaired bool) {
 // Save writes the configuration, replacing the file in one step so a crash
 // cannot leave half of it.
 func (c Config) Save() error {
+	if err := ValidateShortcut(c.CaptureShortcut); err != nil {
+		return err
+	}
 	path, err := Path()
 	if err != nil {
 		return errors.New("无法确定配置文件路径")
@@ -75,48 +80,30 @@ func (c Config) Save() error {
 	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	f, err := os.CreateTemp(filepath.Dir(path), ".config-*.tmp")
+	if err != nil {
 		return errors.New("保存临时配置失败: " + err.Error())
 	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
+	defer os.Remove(f.Name())
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return errors.New("保存临时配置失败: " + err.Error())
+	}
+	if err := f.Close(); err != nil {
+		return errors.New("保存临时配置失败: " + err.Error())
+	}
+	if err := os.Rename(f.Name(), path); err != nil {
 		return errors.New("替换配置文件失败: " + err.Error())
 	}
 	return nil
-}
-
-var modifiers = map[string]bool{
-	"super": true, "win": true, "meta": true, "cmd": true, "command": true,
-	"ctrl": true, "control": true, "commandorcontrol": true, "cmdorctrl": true,
-	"alt": true, "option": true, "shift": true,
 }
 
 // ValidateShortcut checks that s is modifiers and one key, in accelerator
 // syntax ("Super+Shift+S"). Whether the system lets the app have the keys
 // is for the registration to tell.
 func ValidateShortcut(s string) error {
-	invalid := errors.New("快捷键格式无效或包含不受支持的按键")
-	if len(s) == 0 || len(s) > 100 {
-		return invalid
-	}
-	parts := strings.Split(s, "+")
-	if strings.HasSuffix(s, "++") {
-		parts = append(parts[:len(parts)-2], "+")
-	}
-	if len(parts) < 2 {
-		return errors.New("快捷键必须包含修饰键和普通按键")
-	}
-	for _, p := range parts[:len(parts)-1] {
-		if !modifiers[strings.ToLower(strings.TrimSpace(p))] {
-			return invalid
-		}
-	}
-	key := strings.TrimSpace(parts[len(parts)-1])
-	if key == "" || modifiers[strings.ToLower(key)] {
-		return errors.New("快捷键必须包含修饰键和普通按键")
-	}
-	return nil
+	_, err := shortcutkey.Parse(s, runtime.GOOS)
+	return err
 }
 
 // DisplayShortcut is the shortcut as the user reads it: Win and Ctrl, or the

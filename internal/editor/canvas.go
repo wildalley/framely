@@ -104,6 +104,9 @@ func handleCursor(h doc.Handle) ui.Cursor {
 // canvasInput handles the pointer on the canvas. A press it leaves, on the
 // empty image with the select tool, drags the window, as a pinned note does.
 func (a *App) canvasInput(ev ui.InputEvent, zoom float64) bool {
+	if a.busy {
+		return true
+	}
 	switch ev.Kind {
 	case ui.InputPointerDown:
 		if ev.Button != 0 {
@@ -255,6 +258,7 @@ func (a *App) cursorAt(x, y float32, zoom float64) ui.Cursor {
 
 // startEditing edits the text annotation id in place.
 func (a *App) startEditing(id string) {
+	a.finishEditing()
 	list := a.history.Present()
 	i := doc.IndexOf(list, id)
 	if i < 0 || list[i].Type != doc.ToolText {
@@ -269,6 +273,13 @@ func (a *App) startEditing(id string) {
 
 // finishEditing ends the text edit, as one step of the history.
 func (a *App) finishEditing() {
+	if a.drag != nil {
+		a.finishDrag()
+	}
+	if a.textEdit || a.slidingKey != "" {
+		a.textEdit, a.slidingKey = false, ""
+		a.history.End()
+	}
 	if a.editingID == "" {
 		return
 	}
@@ -364,7 +375,7 @@ func (a *App) textEditor(c *ui.Context, zoom float64) {
 	b := an.Bounds()
 	z := float32(zoom)
 	size := float32(an.FontSize) * z
-	area := ui.TextAreaBase(c.Key("text-edit"), &a.editingText).
+	area := ui.TextAreaBase(c.Key("text-edit"), &a.editingText).Bind(&a.annotationText).Label("编辑标注文字").
 		Absolute().Left(float32(an.X)*z).Top(float32(an.Y)*z).
 		Width(max(180*z, float32(b.W)*z+size*2)).
 		MinHeight(max(48*z, float32(b.H)*z)).
@@ -383,7 +394,7 @@ func (a *App) textEditor(c *ui.Context, zoom float64) {
 	if area.Changed() {
 		a.setEditingText(a.editingText)
 	}
-	if area.Shortcut(0, ui.KeyEscape) || area.Shortcut(ui.Cmd, ui.KeyEnter) || area.FocusLeft() {
+	if area.Shortcut(0, ui.KeyEscape) || area.Shortcut(ui.Cmd, ui.KeyEnter) || !area.Focused() {
 		a.finishEditing()
 	}
 }

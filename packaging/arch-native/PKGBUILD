@@ -1,0 +1,73 @@
+pkgname=screenpin-native
+pkgver=0.1.1
+pkgrel=1
+pkgdesc="Non-destructive native screenshot editor (MyGo preview)"
+arch=('x86_64' 'aarch64')
+url="https://github.com/wildalley/screenpin"
+license=('MIT')
+depends=('gtk3' 'libayatana-appindicator' 'xdg-desktop-portal')
+makedepends=('go>=1.27.3')
+provides=("screenpin=$pkgver")
+conflicts=('screenpin')
+options=('!debug' '!lto')
+source=()
+sha256sums=()
+
+_repo_root="$(realpath "$startdir/../..")"
+
+build() {
+  local _build_root="$srcdir/repo"
+  local _go_arch
+  case "$CARCH" in
+    x86_64) _go_arch=amd64 ;;
+    aarch64) _go_arch=arm64 ;;
+    *) return 1 ;;
+  esac
+
+  mkdir -p "$_build_root"
+  # Copy the workspace without local credentials, agent state or build outputs.
+  tar \
+    --exclude=.git \
+    --exclude=.aws \
+    --exclude=.agents \
+    --exclude=.codex \
+    --exclude=.claude \
+    --exclude=.scratch \
+    --exclude=node_modules \
+    --exclude=dist \
+    --exclude=target \
+    --exclude=build \
+    --exclude='packaging/*/src' \
+    --exclude='packaging/*/pkg' \
+    --exclude='packaging/*/*.pkg.tar.*' \
+    -cf - -C "$_repo_root" . | tar -xf - -C "$_build_root"
+  cd "$_build_root"
+  go tool mygo build -platform "linux/$_go_arch"
+}
+
+package() {
+  local _build_root="$srcdir/repo"
+  local _go_arch
+  case "$CARCH" in
+    x86_64) _go_arch=amd64 ;;
+    aarch64) _go_arch=arm64 ;;
+    *) return 1 ;;
+  esac
+
+  install -Dm755 "$_build_root/build/native/linux-$_go_arch/screenpin" "$pkgdir/usr/bin/screenpin"
+  # Match the registered portal ID and preserve permissions from the Tauri app.
+  install -Dm644 "$startdir/io.screenpin.desktop.desktop" "$pkgdir/usr/share/applications/io.screenpin.desktop.desktop"
+  install -Dm644 "$startdir/screenpin.xml" "$pkgdir/usr/share/mime/packages/screenpin.xml"
+  local _size _icon
+  for _size in 32 64 128 256 512; do
+    case "$_size" in
+      256) _icon=128x128@2x.png ;;
+      512) _icon=icon.png ;;
+      *) _icon="${_size}x${_size}.png" ;;
+    esac
+    install -Dm644 "$_build_root/src-tauri/icons/$_icon" "$pkgdir/usr/share/icons/hicolor/${_size}x${_size}/apps/screenpin.png"
+  done
+  install -Dm644 "$_build_root/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 "$_build_root/README.md" "$pkgdir/usr/share/doc/$pkgname/README.md"
+  install -Dm644 "$_build_root/docs/NATIVE.md" "$pkgdir/usr/share/doc/$pkgname/NATIVE.md"
+}

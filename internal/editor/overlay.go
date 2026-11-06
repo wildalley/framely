@@ -55,7 +55,7 @@ func (a *App) pickRegion(png []byte) ([]byte, *mygo.Rectangle, error) {
 	}
 	s := &pick{full: full, result: make(chan pickResult, 1)}
 	opened := make(chan error, 1)
-	a.later(func() { opened <- s.open() })
+	a.later(func() { a.activate(func() { opened <- s.open() }) })
 	if err := <-opened; err != nil {
 		return nil, nil, err
 	}
@@ -75,21 +75,21 @@ func (s *pick) open() error {
 		v := &pickView{display: d, crop: crops[i]}
 		s.views = append(s.views, v)
 		v.win = mygo.NewWindow(mygo.WindowOptions{
-			Title:             "ScreenPin 选区",
-			X:                 d.Bounds.X,
-			Y:                 d.Bounds.Y,
-			Width:             d.Bounds.Width,
-			Height:            d.Bounds.Height,
-			UseContentSize:    true,
-			Frameless:         true,
-			AlwaysOnTop:       true,
-			SkipTaskbar:       true,
-			DisableResize:     true,
-			DisableShadow:     true,
-			DisableMinimize:   true,
-			DisableMaximize:   true,
-			BackgroundColor:   "#000000",
-			Content:           ui.View(func(c *ui.Context) { s.view(c, v) }),
+			Title:           "ScreenPin 选区",
+			X:               d.Bounds.X,
+			Y:               d.Bounds.Y,
+			Width:           d.Bounds.Width,
+			Height:          d.Bounds.Height,
+			UseContentSize:  true,
+			Frameless:       true,
+			AlwaysOnTop:     true,
+			SkipTaskbar:     true,
+			DisableResize:   true,
+			DisableShadow:   true,
+			DisableMinimize: true,
+			DisableMaximize: true,
+			BackgroundColor: "#000000",
+			Content:         ui.View(func(c *ui.Context) { s.view(c, v) }),
 		})
 		// Window managers place a new window on the display with the
 		// pointer, whatever position it asks for, and Wayland gives apps

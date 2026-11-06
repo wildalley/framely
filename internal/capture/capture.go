@@ -9,6 +9,7 @@ import (
 	"image"
 	"image/png"
 
+	"github.com/wildalley/screenpin/internal/portal"
 	"github.com/wildalley/screenpin/internal/render"
 )
 
@@ -19,7 +20,7 @@ var ErrCancelled = errors.New("截图已取消")
 // AppID is the desktop entry the Linux portals know ScreenPin by. It must
 // match the installed io.screenpin.desktop.desktop, as it did before, so the
 // permissions already granted carry over.
-const AppID = "io.screenpin.desktop"
+const AppID = portal.AppID
 
 // Crop cuts r out of img and encodes it as PNG.
 func Crop(img *image.RGBA, r image.Rectangle) ([]byte, error) {

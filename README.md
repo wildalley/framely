@@ -4,6 +4,8 @@ ScreenPin 是一个面向桌面的非破坏性截图编辑器，目标平台为 
 
 版本变更见 [更新日志](CHANGELOG.md)，当前进度和后续计划见 [改进记录与计划](IMPROVEMENTS.md)。
 
+MyGo 重制版正在 `refactor/mygo-native` 分支推进，已接通原生编辑器、桌面入口、快捷键和工程工作流。原生版使用 Go + MyGo，Linux 窗口不依赖 WebKitGTK；构建、预览包和当前迁移范围见 [原生开发说明](docs/NATIVE.md)。下方下载与功能说明对应 Tauri 稳定版。
+
 ## 下载与安装
 
 当前稳定版为 [v0.1.1](https://github.com/wildalley/screenpin/releases/tag/v0.1.1)，重点修复 Linux 连续截图时的主进程内存增长和选区子进程残留。本次发布提供 Arch Linux x86_64 安装包及 `SHA256SUMS` 校验文件。
@@ -47,7 +49,7 @@ sudo pacman -U ./screenpin-0.1.1-1-x86_64.pkg.tar.zst
   - 开机自启可在设置面板或托盘菜单开关，登录后静默启动到托盘；状态以操作系统的注册项为准，两处显示同步
   - 系统托盘菜单：截图、显示主窗口、开机自启、退出；关闭主窗口隐藏到托盘
 
-## 开发
+## 稳定版开发（Tauri）
 
 ```bash
 npm install
@@ -166,6 +168,8 @@ windowrulev2 = noanim, class:^(ScreenPin)$
 后续版本可以在保持原图和对象坐标兼容的前提下增加 OCR、滚动截图、窗口录制、云同步和多图画布。
 
 ## 技术栈
+
+原生预览版使用 Go + MyGo；模块分工见 [原生开发说明](docs/NATIVE.md#原生模块)。稳定版使用：
 
 - **前端**：React 19 + TypeScript + Vite
 - **桌面**：Tauri 2 (Rust)

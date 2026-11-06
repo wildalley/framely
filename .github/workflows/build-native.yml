@@ -1,0 +1,86 @@
+name: Build MyGo native preview
+
+on:
+  push:
+    branches: [main, "refactor/mygo-*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install isolated D-Bus test service
+        run: sudo apt-get update && sudo apt-get install --yes dbus
+
+      - name: Check formatting, tests and static analysis
+        run: |
+          test -z "$(gofmt -l assets cmd internal)"
+          go test -race ./...
+          go vet ./...
+
+      - name: Build native applications
+        run: go tool mygo build -platform linux/amd64,windows/amd64,darwin/arm64 -skip-installer -skip-dmg -skip-notarize
+
+      - name: Package preview binaries
+        run: |
+          mkdir -p build/artifacts
+          tar -czf build/artifacts/screenpin-native-linux-amd64.tar.gz -C build/native/linux-amd64 screenpin
+          tar -czf build/artifacts/screenpin-native-windows-amd64.tar.gz -C build/native/windows-amd64 ScreenPin.exe
+          tar -czf build/artifacts/screenpin-native-darwin-arm64.tar.gz -C build/native/darwin-arm64 ScreenPin.app
+
+      - name: Upload native preview binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenpin-native-${{ github.sha }}
+          path: build/artifacts/*.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  arch-native:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Build and inspect native pacman package
+        run: |
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/workspace" \
+            --workdir /workspace \
+            archlinux:latest \
+            bash -euc '
+              pacman -Syu --noconfirm --needed \
+                base-devel go gtk3 libayatana-appindicator xdg-desktop-portal
+              useradd --create-home --shell /bin/bash builder
+              chown -R builder:builder /workspace
+              cd packaging/arch-native
+              runuser -u builder -- makepkg --cleanbuild --noconfirm
+              package="$(runuser -u builder -- makepkg --packagelist)"
+              pacman --query --info --file "$package"
+              pacman --query --list --file "$package"
+            '
+
+      - name: Upload native Arch preview package
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenpin-native-arch-${{ github.sha }}
+          path: packaging/arch-native/*.pkg.tar.zst
+          if-no-files-found: error
+          retention-days: 14

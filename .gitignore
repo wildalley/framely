@@ -1,10 +1,15 @@
 node_modules
 dist
+build
+cmd/screenpin/mygo_windows_*.syso
 src-tauri/target
 src-tauri/gen/schemas
 packaging/arch/pkg
 packaging/arch/src
 packaging/arch/*.pkg.tar.*
+packaging/arch-native/pkg
+packaging/arch-native/src
+packaging/arch-native/*.pkg.tar.*
 *.log
 .DS_Store
 .claude/settings.local.json
