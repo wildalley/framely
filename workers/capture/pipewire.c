@@ -2,7 +2,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include <pipewire/pipewire.h>
 #include <spa/param/video/format-utils.h>
-#include <spa/param/buffers.h>
+#include <spa/param/param.h>
 #include <spa/pod/builder.h>
 #include <errno.h>
 #include <signal.h>

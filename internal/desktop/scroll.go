@@ -50,6 +50,10 @@ type scrollWindow struct {
 }
 
 func (s *application) showScroll() {
+	if !capture.ScrollingSupported() {
+		s.notify("当前系统暂不支持长截图，截图、标注和离线 OCR 可正常使用。")
+		return
+	}
 	if s.scroll != nil {
 		s.scroll.show()
 		return

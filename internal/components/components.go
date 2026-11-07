@@ -31,7 +31,8 @@ func Find(name string) (string, error) {
 	if cwd, err := os.Getwd(); err == nil {
 		for dir := cwd; ; dir = filepath.Dir(dir) {
 			if data, err := os.ReadFile(filepath.Join(dir, "go.mod")); err == nil {
-				if strings.HasPrefix(string(data), "module github.com/wildalley/screenpin\n") {
+				fields := strings.Fields(string(data))
+				if len(fields) >= 2 && fields[0] == "module" && fields[1] == "github.com/wildalley/screenpin" {
 					roots = append(roots, filepath.Join(dir, "resources", runtime.GOOS+"-"+runtime.GOARCH, "workers"))
 				}
 				break

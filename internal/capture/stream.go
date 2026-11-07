@@ -9,11 +9,14 @@ import (
 	"image"
 	"io"
 	"os/exec"
+	"runtime"
 	"sync"
 	"sync/atomic"
 )
 
 var ErrAutomaticUnavailable = errors.New("当前桌面未提供指针控制接口，请使用手动滚动模式")
+
+func ScrollingSupported() bool { return runtime.GOOS == "linux" || runtime.GOOS == "windows" }
 
 type StreamOptions struct {
 	Automatic bool

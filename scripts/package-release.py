@@ -38,7 +38,15 @@ def main():
         if goos == "windows":
             json.loads(subprocess.check_output([str(capture), "--list"], text=True))
     else:
-        subprocess.run(["codesign", "--verify", "--deep", "--strict", str(app)], check=True)
+        try:
+            subprocess.run(["codesign", "--verify", "--deep", "--strict", "--verbose=4", str(app)], check=True)
+        except subprocess.CalledProcessError:
+            # codesign's generic ENOENT can also refer to a nested resource.
+            for item in app.rglob("*"):
+                if item.is_symlink() and not item.exists():
+                    print(f"Broken bundle link: {item.relative_to(app)} -> {item.readlink()}", flush=True)
+            subprocess.run(["codesign", "--display", "--verbose=4", str(app)])
+            raise
     # Test the installed resource copy, including code-signing changes on Mac.
     env = dict(os.environ, SCREENPIN_COMPONENTS_DIR=str(resources), SCREENPIN_OCR_INTEGRATION="1")
     subprocess.run(["go", "test", "-count=1", "-run", "TestPackagedOfflineWorker", "-v", "./internal/ocr"], env=env, check=True)

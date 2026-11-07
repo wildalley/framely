@@ -183,7 +183,10 @@ func (v *settingsWindow) view(c *ui.Context) {
 				} else {
 					ui.Text(c, "开始长截图时选择共享来源；选好后框选滚动内容。自动滚动不可用时，可缓慢手动滚动。").FontSize(12).TextColor(c.Theme().TextMuted)
 				}
-				if ui.Button(c, "打开长截图").Disabled(s.captureBusy).Clicked() {
+				if !capture.ScrollingSupported() {
+					ui.Text(c, "当前系统暂不支持长截图。").FontSize(12).TextColor(c.Theme().TextMuted)
+				}
+				if ui.Button(c, "打开长截图").Disabled(s.captureBusy || !capture.ScrollingSupported()).Clicked() {
 					s.showScroll()
 				}
 

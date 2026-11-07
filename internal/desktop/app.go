@@ -207,7 +207,9 @@ func (s *application) showPicture(picture editor.Picture, target *mygo.Rectangle
 	image := editor.New(s.cfg)
 	image.OnPaste = s.Paste
 	image.OnCapture = s.Capture
-	image.OnScroll = s.showScroll
+	if capture.ScrollingSupported() {
+		image.OnScroll = s.showScroll
+	}
 	image.OnSettings = func() { s.showSettings("") }
 	image.OnOCRResult = s.showOCR
 	image.OnClosed = func() {
@@ -405,7 +407,7 @@ func (s *application) trayItems() []*mygo.MenuItem {
 	s.captureItem = &mygo.MenuItem{ID: "capture", Label: "截图", Click: func(*mygo.MenuItem, *mygo.Window) { s.Capture() }}
 	return []*mygo.MenuItem{
 		s.captureItem,
-		{ID: "scroll-capture", Label: "长截图…", Click: func(*mygo.MenuItem, *mygo.Window) { s.showScroll() }},
+		{ID: "scroll-capture", Label: "长截图…", Disabled: !capture.ScrollingSupported(), Click: func(*mygo.MenuItem, *mygo.Window) { s.showScroll() }},
 		mygo.Separator(),
 		{ID: "paste", Label: "粘贴图片", Click: func(*mygo.MenuItem, *mygo.Window) { s.Paste() }},
 		{ID: "open-image", Label: "打开图片…", Click: func(*mygo.MenuItem, *mygo.Window) { s.OpenImage() }},
@@ -447,7 +449,7 @@ func (s *application) refreshTray() {
 		s.menu.ItemByID(id).SetEnabled(!longActive)
 	}
 	scroll := s.menu.ItemByID("scroll-capture")
-	scroll.SetEnabled(!s.captureBusy || s.scroll != nil)
+	scroll.SetEnabled(capture.ScrollingSupported() && (!s.captureBusy || s.scroll != nil))
 	scroll.SetLabel("长截图…")
 	if longActive {
 		scroll.SetLabel("查看长截图…")

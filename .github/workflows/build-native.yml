@@ -96,6 +96,7 @@ jobs:
           path: build/release/*
           if-no-files-found: error
           retention-days: 14
+          compression-level: 0
 
   arch-native:
     runs-on: ubuntu-latest
@@ -130,3 +131,4 @@ jobs:
           path: packaging/arch-native/*.pkg.tar.zst
           if-no-files-found: error
           retention-days: 14
+          compression-level: 0

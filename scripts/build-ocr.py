@@ -20,7 +20,8 @@ subprocess.run([
     "--specpath", str(root / "build"), str(root / "workers" / "ocr" / "worker.py"),
 ], check=True)
 (destination / "screenpin-ocr" / "manifest.json").write_text(json.dumps({
-    "protocol": 1, "rapidocr": "3.9.2", "onnxruntime": "1.24.4", "models": "PP-OCRv6-small",
+    "protocol": 1, "rapidocr": importlib.metadata.version("rapidocr"),
+    "onnxruntime": importlib.metadata.version("onnxruntime"), "models": "PP-OCRv6-small",
     "offline": True,
     "worker_sha256": hashlib.sha256((root / "workers/ocr/worker.py").read_bytes()).hexdigest(),
 }, indent=2), encoding="utf-8")
