@@ -50,6 +50,10 @@ func TestInstallValidatesStagesAndRollsBackFailedPersistence(t *testing.T) {
 	for _, fail := range []bool{false, true} {
 		t.Run(map[bool]string{false: "success", true: "save failure"}[fail], func(t *testing.T) {
 			path, before := fixture(t)
+			originalInfo, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
 			checked := false
 			p, err := prepare(path, "/opt/screenpin", "Super+Shift+S", func(ctx context.Context, staged string) error {
 				checked = true
@@ -95,7 +99,7 @@ func TestInstallValidatesStagesAndRollsBackFailedPersistence(t *testing.T) {
 					t.Fatal("installation rewrote unrelated config")
 				}
 				info, _ := os.Stat(path)
-				if info.Mode().Perm() != 0o640 {
+				if info.Mode().Perm() != originalInfo.Mode().Perm() {
 					t.Fatal("config permissions changed")
 				}
 				backups, _ := filepath.Glob(filepath.Join(filepath.Dir(path), "screenpin-backup-*", "config.kdl"))

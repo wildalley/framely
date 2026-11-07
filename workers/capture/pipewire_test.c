@@ -28,7 +28,7 @@ int main(void) {
     struct spa_data data={.type=SPA_DATA_DmaBuf,.fd=fileno(backing),.maxsize=1,.chunk=&chunk};
     struct spa_buffer buffer={.n_datas=1,.datas=&data};
     struct pw_buffer pw={.buffer=&buffer};
-    struct capture capture={.format={.format=SPA_VIDEO_FORMAT_BGRx,.flags=SPA_VIDEO_FLAG_MODIFIER,.modifier=0,.size={4,2}}};
+    struct capture capture={.format={.format=SPA_VIDEO_FORMAT_BGRx,.modifier=0,.size={4,2}},.has_modifier=true};
     emit_buffer(&capture,&pw);
     assert(sync_calls==2&&queued==1&&quit_calls==0&&!capture.failed);
     rewind(output);uint32_t header[4];uint8_t pixels[32];

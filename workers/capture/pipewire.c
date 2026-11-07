@@ -21,6 +21,7 @@ struct capture {
     struct pw_main_loop *loop;
     struct pw_stream *stream;
     struct spa_video_info_raw format;
+    bool has_modifier;
     struct spa_source *timer;
     struct pw_buffer *pending;
     uint64_t sent;
@@ -44,18 +45,20 @@ static void param_changed(void *userdata,uint32_t id,const struct spa_pod *param
     struct capture *c=userdata;
     if(id!=SPA_PARAM_Format||param==NULL)return;
     if(spa_format_video_raw_parse(param,&c->format)<0)return;
-    fprintf(stderr,"PipeWire format: %ux%u format=%u flags=%u modifier=%llu\n",c->format.size.width,c->format.size.height,c->format.format,c->format.flags,(unsigned long long)c->format.modifier);
+    // Older SPA headers expose modifier presence through the format pod only.
+    c->has_modifier=spa_pod_find_prop(param,NULL,SPA_FORMAT_VIDEO_modifier)!=NULL;
+    fprintf(stderr,"PipeWire format: %ux%u format=%u modifier_present=%d modifier=%llu\n",c->format.size.width,c->format.size.height,c->format.format,c->has_modifier,(unsigned long long)c->format.modifier);
     if(c->format.size.width==0||c->format.size.height==0||(uint64_t)c->format.size.width*c->format.size.height>32000000) {
         fprintf(stderr,"PipeWire image exceeds capture limits\n");c->failed=1;pw_main_loop_quit(c->loop);return;
     }
-    if((c->format.flags&SPA_VIDEO_FLAG_MODIFIER)&&c->format.modifier!=0) {
+    if(c->has_modifier&&c->format.modifier!=0) {
         fprintf(stderr,"Only linear DMA-BUF pixels can be read by this capture component\n");c->failed=1;pw_main_loop_quit(c->loop);return;
     }
     uint8_t storage[1024];struct spa_pod_builder builder=SPA_POD_BUILDER_INIT(storage,sizeof(storage));
     const struct spa_pod *params[1];
     params[0]=spa_pod_builder_add_object(&builder,SPA_TYPE_OBJECT_ParamBuffers,SPA_PARAM_Buffers,
         SPA_PARAM_BUFFERS_buffers,SPA_POD_CHOICE_RANGE_Int(3,2,8),
-        SPA_PARAM_BUFFERS_dataType,SPA_POD_CHOICE_FLAGS_Int((1<<SPA_DATA_MemFd)|(1<<SPA_DATA_MemPtr)|((c->format.flags&SPA_VIDEO_FLAG_MODIFIER)?(1<<SPA_DATA_DmaBuf):0)));
+        SPA_PARAM_BUFFERS_dataType,SPA_POD_CHOICE_FLAGS_Int((1<<SPA_DATA_MemFd)|(1<<SPA_DATA_MemPtr)|(c->has_modifier?(1<<SPA_DATA_DmaBuf):0)));
     pw_stream_update_params(c->stream,params,1);
 }
 
@@ -74,7 +77,7 @@ static void emit_buffer(struct capture *c,struct pw_buffer *pw) {
     if(stride<width*4)goto done;
     const uint8_t *pixels=data->data;
     if(data->type==SPA_DATA_DmaBuf) {
-        if(!(c->format.flags&SPA_VIDEO_FLAG_MODIFIER)||c->format.modifier!=0||data->fd<0)goto done;
+        if(!c->has_modifier||c->format.modifier!=0||data->fd<0)goto done;
         dma_fd=(int)data->fd;
         struct dma_buf_sync sync={.flags=DMA_BUF_SYNC_START|DMA_BUF_SYNC_READ};
         if(ioctl(dma_fd,DMA_BUF_IOCTL_SYNC,&sync)<0){fprintf(stderr,"Cannot synchronize linear DMA-BUF: %s\n",strerror(errno));c->failed=1;pw_main_loop_quit(c->loop);goto done;}

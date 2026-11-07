@@ -57,7 +57,7 @@ Linux 组件支持普通 CPU 缓冲区和线性 DMA-BUF；DMA-BUF 按实际步�
 
 图片窗口工具栏「识别文字」菜单可识别整图或框选，右键菜单也提供入口；`Ctrl/Cmd+Shift+O` 识别整图。结果窗口支持编辑全文、复制全文及逐行复制。识别处理当前标注后的画面，马赛克不读取底下原图。关闭图片或点击取消会终止 OCR；识别超时为 3 分钟，输入最多 3200 万像素。
 
-完整 Windows/Linux 包附带 RapidOCR 3.9.2、PP-OCRv6-small ONNX CPU 模型和独立运行时，不需要安装 Python，不上传截图、不在运行时下载模型。长图分块识别并合并重叠文字；复杂多栏排版和表格暂不重建文档结构。
+完整 Windows/Linux/macOS 包附带 RapidOCR 3.9.2、PP-OCRv6-small ONNX CPU 模型和独立运行时，不需要安装 Python，不上传截图、不在运行时下载模型。长图分块识别并合并重叠文字；复杂多栏排版和表格暂不重建文档结构。
 
 ## 开发与检查
 
@@ -134,3 +134,5 @@ sudo pacman -U ./screenpin-native-0.2.0-1-x86_64.pkg.tar.zst
 推送 `v*` 标签运行 `.github/workflows/release-native.yml`，先完成同一提交的全部测试和 Windows、Linux、macOS 两种架构的本机构建，以及 Arch 包构建。所有包内的 OCR 都会在打包后验证。七个附件齐全、版本一致且校验成功后才创建公开 Release；任一构建失败不会发布不完整的版本。
 
 Mac 发行构建使用 macOS 15 运行器，分别生成 arm64/amd64 DMG，执行 ad-hoc 签名并检查签名；未配置开发者证书与公证。Windows 生成 NSIS 安装程序和完整便携包。Linux 安装包保留历史桌面入口 `io.screenpin.desktop.desktop`，便携安装也使用同一门户标识。
+
+目标系统的发行构建先执行 `go tool mygo build -platform <goos>/<goarch> -skip-dmg -skip-notarize`，再执行 `python scripts/package-release.py`。后者会验证版本、组件与真实 OCR，并收集安装包。macOS 还会补齐 MyGo 0.7.4 忽略的 `.dylibs` 目录，重新封装签名，再创建并校验 DMG。Intel macOS 使用仍提供 x86_64 预编译包的 ONNX Runtime 1.23.2，其他平台使用 1.24.4。

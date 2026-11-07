@@ -87,7 +87,7 @@ jobs:
         if: runner.os != 'Linux'
         run: go test ./...
       - name: Bundle application and workers
-        run: go tool mygo build -platform ${{ matrix.platform }} -skip-notarize
+        run: go tool mygo build -platform ${{ matrix.platform }} -skip-notarize -skip-dmg
       - name: Verify bundled runtimes and collect installers
         run: python scripts/package-release.py
       - uses: actions/upload-artifact@v4

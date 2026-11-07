@@ -15,6 +15,24 @@ ROOT = Path(__file__).resolve().parents[1]
 DESKTOP_ID = "io.screenpin.desktop.desktop"
 
 
+def restore_hidden_resources(source, destination):
+    # MyGo 0.7.4 skips dot directories, including PyInstaller's .dylibs.
+    # Restore them before sealing the bundle and creating the release image.
+    for item in source.rglob("*"):
+        if not item.name.startswith("."):
+            continue
+        target = destination / item.relative_to(source)
+        if os.path.lexists(target):
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if item.is_symlink():
+            target.symlink_to(item.readlink())
+        elif item.is_dir():
+            shutil.copytree(item, target, symlinks=True)
+        else:
+            shutil.copy2(item, target)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--verify-only", action="store_true")
@@ -38,6 +56,8 @@ def main():
         if goos == "windows":
             json.loads(subprocess.check_output([str(capture), "--list"], text=True))
     else:
+        restore_hidden_resources(ROOT / f"resources/darwin-{arch}/workers", resources)
+        subprocess.run(["codesign", "--force", "--sign", "-", str(app)], check=True)
         try:
             subprocess.run(["codesign", "--verify", "--deep", "--strict", "--verbose=4", str(app)], check=True)
         except subprocess.CalledProcessError:
@@ -56,7 +76,15 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     prefix = f"screenpin-{version}-{goos}-{arch}"
     if goos == "darwin":
-        shutil.copy2(bundle / f"screenpin-{version}-{arch}.dmg", out / f"{prefix}.dmg")
+        # Build from the repaired and verified bundle, never the SDK's earlier copy.
+        with tempfile.TemporaryDirectory(prefix="dmg-", dir=ROOT / "build") as tmp:
+            image_root = Path(tmp) / "image"
+            image_root.mkdir()
+            subprocess.run(["ditto", "--noclone", str(app), str(image_root / app.name)], check=True)
+            (image_root / "Applications").symlink_to("/Applications")
+            dmg = out / f"{prefix}.dmg"
+            subprocess.run(["hdiutil", "create", "-ov", "-volname", "ScreenPin", "-srcfolder", str(image_root), "-format", "UDZO", str(dmg)], check=True)
+            subprocess.run(["hdiutil", "verify", str(dmg)], check=True)
     elif goos == "windows":
         shutil.copy2(bundle / f"screenpin-setup-{version}-{arch}.exe", out / f"{prefix}-setup.exe")
         with zipfile.ZipFile(out / f"{prefix}-portable.zip", "w", zipfile.ZIP_DEFLATED) as archive:
