@@ -1,12 +1,12 @@
 pkgname=screenpin-native
-pkgver=0.1.1
-pkgrel=2
-pkgdesc="Tray screenshot utility with temporary pinned images (MyGo preview)"
+pkgver=0.2.0
+pkgrel=1
+pkgdesc="Native screenshot utility with offline OCR and scrolling capture"
 arch=('x86_64' 'aarch64')
 url="https://github.com/wildalley/screenpin"
 license=('MIT')
-depends=('gtk3' 'libayatana-appindicator' 'xdg-desktop-portal')
-makedepends=('go>=1.27.3')
+depends=('gtk3' 'libayatana-appindicator' 'xdg-desktop-portal' 'libpipewire')
+makedepends=('go>=1.27.3' 'uv' 'python' 'pkgconf')
 provides=("screenpin=$pkgver")
 conflicts=('screenpin')
 options=('!debug' '!lto')
@@ -37,11 +37,13 @@ build() {
     --exclude=dist \
     --exclude=target \
     --exclude=build \
+    --exclude='resources/*/workers' \
     --exclude='packaging/*/src' \
     --exclude='packaging/*/pkg' \
     --exclude='packaging/*/*.pkg.tar.*' \
     -cf - -C "$_repo_root" . | tar -xf - -C "$_build_root"
   cd "$_build_root"
+  python scripts/build-components.py
   go tool mygo build -platform "linux/$_go_arch"
 }
 
@@ -54,7 +56,10 @@ package() {
     *) return 1 ;;
   esac
 
-  install -Dm755 "$_build_root/build/native/linux-$_go_arch/screenpin" "$pkgdir/usr/bin/screenpin"
+  install -Dm755 "$_build_root/build/native/linux-$_go_arch/screenpin" "$pkgdir/usr/lib/screenpin/screenpin"
+  cp -a "$_build_root/build/native/linux-$_go_arch/workers" "$pkgdir/usr/lib/screenpin/workers"
+  install -dm755 "$pkgdir/usr/bin"
+  ln -s ../lib/screenpin/screenpin "$pkgdir/usr/bin/screenpin"
   # Match the registered portal ID and preserve permissions from the Tauri app.
   install -Dm644 "$startdir/io.screenpin.desktop.desktop" "$pkgdir/usr/share/applications/io.screenpin.desktop.desktop"
   local _size _icon

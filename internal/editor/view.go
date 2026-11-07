@@ -49,16 +49,17 @@ func commandKey() string {
 // ShortcutRows is the image window's key reference, displayed from the tray.
 func ShortcutRows() [][2]string {
 	var rows [][2]string
-	for _, it := range toolItems {
-		rows = append(rows, [2]string{it.char, it.label})
-	}
 	mod := commandKey()
-	return append(rows,
+	rows = append(rows,
 		[2]string{mod + "+Z", "撤销"},
 		[2]string{mod + "+Shift+Z / " + mod + "+Y", "重做"},
 		[2]string{mod + "+C", "复制图片"},
 		[2]string{mod + "+V", "粘贴为新图片窗口"},
 		[2]string{mod + "+S", "保存图片"},
+		[2]string{mod + "+Shift+S", "新截图"},
+		[2]string{mod + "+Shift+L", "长截图"},
+		[2]string{mod + "+Shift+O", "识别图片文字"},
+		[2]string{mod + "+,", "设置与快捷键"},
 		[2]string{mod + "++ / " + mod + "+-", "放大 / 缩小"},
 		[2]string{mod + "+0", "100%"},
 		[2]string{mod + "+滚轮 / 触控板捏合", "缩放"},
@@ -68,6 +69,10 @@ func ShortcutRows() [][2]string {
 		[2]string{"Tab / 方向键", "进入工具栏 / 切换控件"},
 		[2]string{"双击文字 / " + mod + "+Enter", "编辑文字 / 完成编辑"},
 	)
+	for _, it := range toolItems {
+		rows = append(rows, [2]string{it.char, it.label})
+	}
+	return rows
 }
 
 func (a *App) view(c *ui.Context) {
@@ -90,7 +95,7 @@ func (a *App) view(c *ui.Context) {
 	}
 	ww, wh := c.Size()
 	z := math.Min(a.zoom, math.Min(float64(max(1, ww))/float64(a.image.Width),
-		float64(max(1, wh-barHeight))/float64(a.image.Height)))
+		float64(max(1, wh-float32(toolbarHeight(ww))))/float64(a.image.Height)))
 	a.displayZoom = z
 	ui.Column(c).Fill().Background(c.Theme().Surface).Children(func() {
 		ui.Column(c).Grow(1).AlignItems(ui.Center).Justify(ui.Center).Clip().Children(func() {
@@ -113,7 +118,19 @@ func (a *App) shortcuts(c *ui.Context) {
 		return
 	}
 	typing := a.annotationText.FocusWithin(c) || a.styleText.FocusWithin(c)
+	for _, handle := range a.propertyInputs {
+		typing = typing || handle.FocusWithin(c)
+	}
 	if !typing {
+		if c.Shortcut(ui.Cmd|ui.Shift, ui.KeyS) && a.OnCapture != nil {
+			a.OnCapture()
+		}
+		if c.Shortcut(ui.Cmd|ui.Shift, ui.KeyL) && a.OnScroll != nil {
+			a.OnScroll()
+		}
+		if c.Shortcut(ui.Cmd, ui.KeyComma) && a.OnSettings != nil {
+			a.OnSettings()
+		}
 		if c.Shortcut(ui.Cmd, ui.KeyZ) {
 			a.undo()
 		}
@@ -128,6 +145,9 @@ func (a *App) shortcuts(c *ui.Context) {
 		}
 	}
 	if a.image != nil {
+		if !typing && c.Shortcut(ui.Cmd|ui.Shift, ui.KeyO) {
+			a.recognize(false)
+		}
 		if c.Shortcut(ui.Cmd, ui.KeyS) {
 			a.Export()
 		}
@@ -193,6 +213,7 @@ func (a *App) redo() {
 func (a *App) setTool(t doc.Tool) {
 	a.finishEditing()
 	a.tool = t
+	a.propertyImage = false
 	if t != doc.ToolSelect {
 		a.selected = ""
 	}
@@ -236,23 +257,30 @@ func (a *App) moveLayer(dir int) {
 }
 
 func iconButton(c *ui.Context, key string, svg *ui.SVG, label string, disabled bool) ui.Element {
-	return ui.Button(c.Key(key), "").Size(32, 32).Label(label).Tooltip(label).Disabled(disabled).
-		Children(func() { ui.Icon(c, svg).Size(18, 18) })
+	return ui.Button(c.Key(key), "").Size(32, 32).Padding(0).Center().Shrink(0).
+		Label(label).Tooltip(label).Disabled(disabled).
+		Children(func() { ui.Icon(c, svg).Size(18, 18).Shrink(0) })
 }
 
 func iconToggle(c *ui.Context, key string, svg *ui.SVG, label string, on *bool, disabled bool) ui.Element {
-	return ui.Toggle(c.Key(key), on, "").Size(32, 32).Label(label).Tooltip(label).Disabled(disabled).
-		Children(func() { ui.Icon(c, svg).Size(18, 18) })
+	return ui.Toggle(c.Key(key), on, "").Size(32, 32).Padding(0).Center().Shrink(0).
+		Label(label).Tooltip(label).Disabled(disabled).
+		Children(func() { ui.Icon(c, svg).Size(18, 18).Shrink(0) })
 }
 
-// A single native tool row replaces the web editor's wrapped button grid.
-// MyGo supplies focus navigation, selected states and an overflow menu. Image
-// actions remain outside overflow, even on a narrow pinned image.
+// Keep capture, OCR and image actions visible. Compact windows use two rows;
+// annotation tools alone may overflow, with native arrow-key navigation.
+func toolbarHeight(width float32) int {
+	if width < 760 {
+		return 2*barHeight + propertyHeight
+	}
+	return barHeight + propertyHeight
+}
+
 func (a *App) bar(c *ui.Context) {
 	var styleAnchor ui.Element
-	ui.Row(c.Key("bar")).FillWidth().Height(barHeight).Gap(4).Padding(4, 6).
-		AlignItems(ui.Center).Background(c.Theme().Background).
-		BorderWidth(1, 0, 0, 0).BorderColor(c.Theme().Border).DragWindow().Children(func() {
+	width, _ := c.Size()
+	tools := func() {
 		ui.Toolbar(c.Key("tools"), func() {
 			for _, it := range toolItems {
 				on := a.tool == it.tool
@@ -269,41 +297,77 @@ func (a *App) bar(c *ui.Context) {
 			}
 		}).Label("标注工具").Grow(1).MinWidth(0).Padding(0).Disabled(a.busy)
 		styleOpen := a.panel == PanelStyle
-		styleAnchor = iconToggle(c, "style", iconPalette, "样式", &styleOpen, a.activeStyle() == nil || a.busy)
+		styleAnchor = iconToggle(c, "style", iconPalette, "样式", &styleOpen, a.busy)
 		if styleAnchor.Changed() {
+			if styleOpen {
+				if a.activeStyle() == nil {
+					a.appearanceTab = 1
+				} else {
+					a.appearanceTab = 0
+				}
+			}
 			a.togglePanel(PanelStyle)
+		}
+	}
+	actions := func() {
+		if iconButton(c, "capture", iconCapture, "新截图", a.busy || a.OnCapture == nil).Clicked() {
+			a.OnCapture()
+		}
+		if iconButton(c, "scroll", iconScroll, "长截图", a.busy || a.OnScroll == nil).Clicked() {
+			a.OnScroll()
+		}
+		ocrLabel := "识别文字"
+		if a.ocrRunning {
+			ocrLabel = "文字识别中…"
+		}
+		iconButton(c, "ocr", iconOCR, ocrLabel, a.OnOCRResult == nil || a.busy).Menu(a.ocrMenu)
+		if width < 760 {
+			ui.Spacer(c).Grow(1).MinWidth(0)
 		}
 		pinned := a.pinned
 		if iconToggle(c, "pin", iconPin, "置顶", &pinned, false).Changed() {
 			a.TogglePin()
 		}
 		iconButton(c, "save", iconDownload, "保存图片 ("+commandKey()+"+S)", a.busy).Menu(a.imageMenu)
-		copy := ui.PrimaryButton(c.Key("copy"), "复制").Height(32).Padding(0, 10).Disabled(a.busy).
+		copy := ui.PrimaryButton(c.Key("copy"), "复制").Height(32).Padding(0, 10).Shrink(0).Disabled(a.busy).
 			Tooltip("复制图片 (" + commandKey() + "+C)")
 		if copy.Clicked() {
 			a.Copy()
 		}
+		if iconButton(c, "settings", iconSettings, "设置与快捷键", a.OnSettings == nil).Clicked() {
+			a.OnSettings()
+		}
 		if iconButton(c, "close", iconClose, "关闭图片", false).Clicked() {
 			a.Close()
+		}
+	}
+	row := func(key string, content func()) {
+		ui.Row(c.Key(key)).FillWidth().Height(barHeight).Gap(4).Padding(4, 6).AlignItems(ui.Center).DragWindow().Children(content)
+	}
+	ui.Column(c.Key("bar")).FillWidth().Height(float32(toolbarHeight(width))).Background(c.Theme().Background).
+		BorderWidth(1, 0, 0, 0).BorderColor(c.Theme().Border).Children(func() {
+		if width < 760 {
+			row("annotation-row", tools)
+			a.propertyRow(c, width)
+			row("actions-row", actions)
+		} else {
+			row("combined-row", func() { tools(); actions() })
+			a.propertyRow(c, width)
 		}
 	})
 	if a.closed {
 		return
 	}
 	style := a.activeStyle()
-	if a.panel == PanelStyle && style != nil {
+	if a.panel == PanelStyle {
 		open := true
 		panel := ui.Popover(c.Key("style-popover"), styleAnchor, &open, func() {
-			ui.Scroll(c).Width(styleWidth).MaxHeight(styleHeight - 20).Padding(8).Gap(12).
-				Children(func() { a.stylePanel(c, *style) })
+			a.appearancePanel(c, style)
 		})
 		if panel.Dismissed() || !open {
 			a.finishEditing()
 			a.panel = PanelNone
 		}
-	} else if a.panel == PanelStyle {
-		a.finishEditing()
-		a.panel = PanelNone
 	}
 }
 
@@ -311,14 +375,14 @@ func (a *App) imageMenu(m *ui.Menu) {
 	for _, format := range render.Formats {
 		label := "保存 " + format.Label()
 		if format.Lossy() {
-			label = fmt.Sprintf("保存 JPEG（%d%%）", int(math.Round(a.exportQuality*100)))
+			label = fmt.Sprintf("保存 %s（%d%%）", format.Label(), int(math.Round(a.exportQuality*100)))
 		}
 		if m.Item(label).Disabled(a.busy).Chosen() {
 			a.exportFormat = format
 			a.Export()
 		}
 	}
-	m.Submenu("JPEG 质量", func(m *ui.Menu) {
+	m.Submenu("JPEG / WebP 质量", func(m *ui.Menu) {
 		for _, quality := range []int{60, 80, 92, 100} {
 			if m.Item(fmt.Sprintf("%d%%", quality)).Radio(int(math.Round(a.exportQuality*100)) == quality).Chosen() {
 				a.exportQuality = float64(quality) / 100
@@ -344,6 +408,16 @@ func (a *App) imageMenu(m *ui.Menu) {
 }
 
 func (a *App) contextMenu(m *ui.Menu) {
+	if m.Item("长截图…").Disabled(a.busy || a.OnScroll == nil).Chosen() {
+		a.OnScroll()
+	}
+	m.Separator()
+	if m.Item("识别图片文字").Disabled(a.ocrRunning || a.OnOCRResult == nil).Chosen() {
+		a.recognize(false)
+	}
+	if m.Item("框选识别文字").Disabled(a.ocrRunning || a.OnOCRResult == nil).Chosen() {
+		a.recognize(true)
+	}
 	if m.Item("复制图片").Disabled(a.busy).Chosen() {
 		a.Copy()
 	}

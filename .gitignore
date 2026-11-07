@@ -1,6 +1,10 @@
 node_modules
 dist
 build
+__pycache__/
+resources/linux-*/workers/
+resources/windows-*/workers/
+resources/darwin-*/workers/
 cmd/screenpin/mygo_windows_*.syso
 src-tauri/target
 src-tauri/gen/schemas

@@ -4,20 +4,21 @@ ScreenPin 是一个面向 Linux、Windows 和 macOS 的截图与贴图工具。M
 
 版本变更见 [更新日志](CHANGELOG.md)，当前进度和后续计划见 [改进记录与计划](IMPROVEMENTS.md)。
 
-MyGo 重制版正在 `refactor/mygo-native` 分支推进，已接通托盘、独立图片窗口、快捷键设置和按键说明。原生版使用 Go + MyGo，Linux 窗口不依赖 WebKitGTK；构建、预览包和当前迁移范围见 [原生开发说明](docs/NATIVE.md)。下方下载与功能说明对应 Tauri 稳定版。
+MyGo 重制版正在 `refactor/mygo-native` 分支推进，已接通托盘、独立图片窗口、快捷键设置、PNG / JPEG / WebP 保存，以及 Windows/Linux 长截图和离线中英文 OCR。长截图支持自动或手动滚动；Wayland 自动滚动取决于桌面是否提供鼠标控制授权。原生版使用 Go + MyGo，Linux 窗口不依赖 WebKitGTK；组件构建、使用方式和当前迁移范围见 [原生开发说明](docs/NATIVE.md)。下方功能说明对应 Tauri 旧版；原生版下载与平台说明见下载部分。
 
 ## 下载与安装
 
-当前稳定版为 [v0.1.1](https://github.com/wildalley/screenpin/releases/tag/v0.1.1)，重点修复 Linux 连续截图时的主进程内存增长和选区子进程残留。本次发布提供 Arch Linux x86_64 安装包及 `SHA256SUMS` 校验文件。
+最新版为 [v0.2.0 MyGo 原生版](https://github.com/wildalley/screenpin/releases/tag/v0.2.0)。提供 Windows x64 安装程序、macOS Apple Silicon / Intel DMG、Linux DEB、Arch 包及便携包，完整包附带离线中英文 OCR。各附件校验值见 Release 的 `SHA256SUMS`。
 
-从 [Releases](https://github.com/wildalley/screenpin/releases/latest) 下载两个附件，在下载目录中校验并安装：
+- Windows：运行 `screenpin-0.2.0-windows-amd64-setup.exe`。
+- macOS 15+：按芯片选择 DMG，将 ScreenPin 拖入 Applications。本版尚未公证；长截图暂支持 Windows/Linux。
+- Ubuntu/Debian x64：`sudo apt install ./screenpin-0.2.0-linux-amd64.deb`。
+- Arch x64：`sudo pacman -U ./screenpin-native-0.2.0-1-x86_64.pkg.tar.zst`。
+- Linux 便携包：解压后运行 `./install.sh`，或保留 `workers` 目录直接运行 `./screenpin`。
 
-```bash
-sha256sum -c SHA256SUMS
-sudo pacman -U ./screenpin-0.1.1-1-x86_64.pkg.tar.zst
-```
+安装前请退出旧版。配置沿用旧版；原生版使用独立图片窗口，不再保存工程。完整功能和平台限制见 [v0.2.0 发布说明](docs/releases/v0.2.0.md) 与 [原生开发说明](docs/NATIVE.md)。
 
-升级后请从托盘菜单退出旧实例，再启动 ScreenPin。首次截图会加载图像和渲染资源；内存回归关注预热后的持续增长，而不是要求截图过程中的内存峰值保持不变。复现命令及实测范围见下方回归检查和 [验证记录](IMPROVEMENTS.md#验证记录)。
+以下特性与 Tauri 开发记录保留供旧版参考；旧版最后发行版本为 [v0.1.1](https://github.com/wildalley/screenpin/releases/tag/v0.1.1)。
 
 ## 特性
 

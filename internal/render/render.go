@@ -25,7 +25,8 @@ type Scene struct {
 	Height      int
 	Annotations []doc.Annotation
 	// Hidden is the ID of an annotation not to draw, the text being edited.
-	Hidden string
+	Hidden      string
+	CornerRatio float64
 }
 
 // TextFont is the family of text annotations; "" is the system's.
@@ -34,6 +35,14 @@ const TextFont = ""
 // Draw paints s with its top-left corner at the origin of p, one unit per
 // image pixel. Transform p to place and zoom it.
 func Draw(p *ui.Painter, s *Scene) {
+	if radius := doc.RelativeCornerRadius(float64(s.Width), float64(s.Height), s.CornerRatio); radius > 0 {
+		p.Clip(ui.Rect{W: float32(s.Width), H: float32(s.Height)}, float32(radius), func() { drawScene(p, s) })
+		return
+	}
+	drawScene(p, s)
+}
+
+func drawScene(p *ui.Painter, s *Scene) {
 	full := ui.Rect{W: float32(s.Width), H: float32(s.Height)}
 	if s.Image != nil {
 		p.Image(s.Image, full, ui.FillBox)
@@ -77,7 +86,7 @@ func drawAnnotation(p *ui.Painter, s *Scene, a *doc.Annotation) {
 	switch a.Type {
 	case doc.ToolRectangle:
 		n := a.Normalized()
-		path := RoundedRect(n.X, n.Y, n.Width, n.Height, 4)
+		path := RoundedRect(n.X, n.Y, n.Width, n.Height, a.CornerRadius())
 		if a.Fill != "transparent" {
 			p.FillPath(path, Color(a.Fill, a.Opacity))
 		}

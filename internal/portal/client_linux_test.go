@@ -125,11 +125,11 @@ func TestPortalRejectionIsNotReportedAsSuccess(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 			defer cancel()
 			_, err := client.Request(ctx, "org.freedesktop.portal.Screenshot", "Screenshot", []any{""}, nil)
-			want := ErrDenied
+			want := ErrFailed
 			if code == 1 {
 				want = ErrCancelled
 			}
-			if !errors.Is(err, want) {
+			if !errors.Is(err, want) || !strings.Contains(err.Error(), "Screenshot") {
 				t.Fatalf("err=%v", err)
 			}
 		})

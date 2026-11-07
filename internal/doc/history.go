@@ -5,7 +5,7 @@ import "slices"
 // historyLimit is how many steps undo goes back.
 const historyLimit = 80
 
-// History is the undo stack of a document's annotations.
+// History is the undo stack of annotations and image corner appearance.
 //
 // The lists it holds are values: nothing changes an annotation that is in
 // one of them, it puts a changed copy in a new list instead (Moved, Resized
@@ -13,10 +13,32 @@ const historyLimit = 80
 // which only the list of the open transaction holds, so that a long pen
 // stroke can grow in place.
 type History struct {
-	past, future [][]Annotation
-	present      []Annotation
-	checkpoint   []Annotation
-	open         bool
+	past, future     []historyState
+	present          []Annotation
+	checkpoint       historyState
+	imageCornerRatio float64
+	open             bool
+}
+
+type historyState struct {
+	annotations []Annotation
+	cornerRatio float64
+}
+
+func (h *History) state() historyState { return historyState{h.present, h.imageCornerRatio} }
+func (h *History) restore(s historyState) {
+	h.present, h.imageCornerRatio = s.annotations, s.cornerRatio
+}
+func (h *History) ImageCornerRatio() float64 { return h.imageCornerRatio }
+func (h *History) SetImageCornerRatio(v float64) {
+	v = ClampCornerRatio(v)
+	if v == h.imageCornerRatio {
+		return
+	}
+	if !h.open {
+		h.push(h.state())
+	}
+	h.imageCornerRatio = v
 }
 
 // Present returns the current annotations. Do not change them in place.
@@ -28,7 +50,7 @@ func (h *History) CanUndo() bool { return len(h.past) > 0 }
 // CanRedo reports whether there is a step to redo.
 func (h *History) CanRedo() bool { return len(h.future) > 0 }
 
-func (h *History) push(list []Annotation) {
+func (h *History) push(list historyState) {
 	h.past = append(h.past, list)
 	if len(h.past) > historyLimit {
 		h.past = slices.Delete(h.past, 0, len(h.past)-historyLimit)
@@ -45,7 +67,7 @@ func (h *History) Commit(next []Annotation) {
 	if Equal(h.present, next) {
 		return
 	}
-	h.push(h.present)
+	h.push(h.state())
 	h.present = next
 }
 
@@ -53,7 +75,7 @@ func (h *History) Commit(next []Annotation) {
 func (h *History) Begin() {
 	if !h.open {
 		h.open = true
-		h.checkpoint = h.present
+		h.checkpoint = h.state()
 	}
 }
 
@@ -70,8 +92,8 @@ func (h *History) End() {
 	}
 	h.open = false
 	start := h.checkpoint
-	h.checkpoint = nil
-	if !Equal(start, h.present) {
+	h.checkpoint = historyState{}
+	if !Equal(start.annotations, h.present) || start.cornerRatio != h.imageCornerRatio {
 		h.push(start)
 	}
 }
@@ -82,11 +104,11 @@ func (h *History) Undo() {
 	if len(h.past) == 0 {
 		return
 	}
-	h.future = append([][]Annotation{h.present}, h.future...)
+	h.future = append([]historyState{h.state()}, h.future...)
 	if len(h.future) > historyLimit {
 		h.future = h.future[:historyLimit]
 	}
-	h.present = h.past[len(h.past)-1]
+	h.restore(h.past[len(h.past)-1])
 	h.past = h.past[:len(h.past)-1]
 }
 
@@ -96,8 +118,8 @@ func (h *History) Redo() {
 	if len(h.future) == 0 {
 		return
 	}
-	h.past = append(h.past, h.present)
-	h.present = h.future[0]
+	h.past = append(h.past, h.state())
+	h.restore(h.future[0])
 	h.future = h.future[1:]
 }
 

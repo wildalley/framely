@@ -1,6 +1,7 @@
 package editor
 
 import (
+	"fmt"
 	"math"
 	"strings"
 
@@ -53,7 +54,13 @@ func (a *App) slider(c *ui.Context, key, label string, value, lo, hi float64, su
 			ui.Textf(c, "%d%s", int(math.Round(value)), suffix).Font("monospace").FontSize(12)
 		})
 		v := value
-		s := ui.StepSlider(c.Key(key), &v, lo, hi, 1).Label(label).FillWidth()
+		s := ui.SliderBase(c.Key(key), &v, lo, hi).Step(1).Label(label).FillWidth().Height(20).Padding(0, 5)
+		s.Draw(func(p *ui.Painter, r ui.Rect) {
+			x := r.X + 5 + (r.W-10)*float32(clamp((v-lo)/(hi-lo), 0, 1))
+			p.Fill(ui.Rect{X: r.X + 5, Y: r.Y + r.H/2 - 1.5, W: r.W - 10, H: 3}, p.Theme().Border, 1.5)
+			p.Fill(ui.Rect{X: r.X + 5, Y: r.Y + r.H/2 - 1.5, W: x - r.X - 5, H: 3}, p.Theme().Accent, 1.5)
+			p.Fill(ui.Rect{X: x - 4, Y: r.Y + r.H/2 - 4, W: 8, H: 8}, p.Theme().Accent, 4)
+		})
 		held := s.Pressed() || s.Dragging()
 		if s.Changed() {
 			if held {
@@ -81,8 +88,11 @@ func (a *App) stylePanel(c *ui.Context, style doc.Style) {
 		hint = "编辑所选"
 	}
 	panelTitle(c, toolName(target), hint)
+	if target == doc.ToolRectangle {
+		a.cornerControl(c, "annotation-corners", "矩形圆角", style.CornerRatio, func(v float64, live bool) { a.changeStyle(func(s *doc.Style) { s.CornerRatio = v }, live) })
+	}
 	if target != doc.ToolMosaic {
-		ui.Row(c).Gap(6).Wrap().Children(func() {
+		ui.Row(c).Gap(5).Wrap().Children(func() {
 			for _, col := range doc.Colors {
 				b := ui.Button(c.Key("color-"+col), "").Size(28, 28).Radius(6).
 					Background(ui.Hex(col)).Border(1, ui.RGBA(0, 0, 0, 0.18)).Label("颜色 " + col).Tooltip(col)
@@ -148,4 +158,43 @@ func (a *App) stylePanel(c *ui.Context, style doc.Style) {
 			}
 		})
 	}
+}
+
+func (a *App) cornerControl(c *ui.Context, key, label string, ratio float64, set func(float64, bool)) {
+	a.slider(c, key, label, ratio*100, 0, 100, "%", func(v float64, live bool) { set(v/100, live) })
+	ui.Row(c.Key(key + "-presets")).Gap(4).Wrap().Children(func() {
+		for _, percent := range []int{0, 10, 25, 50, 75, 100} {
+			on := math.Abs(ratio*100-float64(percent)) < 0.5
+			if ui.Toggle(c.Key(fmt.Sprintf("%s-%d", key, percent)), &on, fmt.Sprintf("%d%%", percent)).Label(fmt.Sprintf("%s %d%%", label, percent)).Height(28).Padding(0, 4).Changed() {
+				a.finishEditing()
+				set(float64(percent)/100, false)
+			}
+		}
+	})
+}
+
+func (a *App) appearancePanel(c *ui.Context, style *doc.Style) {
+	theme := *c.Theme()
+	theme.ScrollbarWidth = 3
+	theme.Scrollbar = theme.Text.Alpha(.5)
+	ui.Themed(c, &theme).Width(styleWidth).Height(styleHeight - 20).Padding(8).Gap(12).Children(func() {
+		before := a.appearanceTab
+		ui.Tabs(c, &a.appearanceTab, "标注", "截图")
+		if before != a.appearanceTab {
+			a.finishEditing()
+		}
+		ui.Scroll(c.Key("appearance-content")).Grow(1).MinHeight(0).Gap(12).Children(func() {
+			if a.appearanceTab == 0 {
+				if style != nil {
+					a.stylePanel(c, *style)
+				} else {
+					ui.Text(c, "选中标注或选择绘图工具后，可在此调整样式。").TextColor(c.Theme().TextMuted)
+				}
+			} else {
+				panelTitle(c, "整张截图", "")
+				a.cornerControl(c, "image-corners", "截图圆角", a.history.ImageCornerRatio(), func(v float64, _ bool) { a.history.SetImageCornerRatio(v) })
+				ui.Text(c, "0% 为直角，100% 为最大圆角。PNG/WebP 保留透明四角，JPEG 使用白底。").FontSize(12).TextColor(c.Theme().TextMuted)
+			}
+		})
+	})
 }

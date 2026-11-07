@@ -2,7 +2,7 @@
   "name": "ScreenPin",
   "slug": "screenpin",
   "identifier": "io.screenpin.desktop",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "main": "./cmd/screenpin",
   "out": "build/native",
   "icon": "assets/app-icon.png",
@@ -11,9 +11,10 @@
     "command": "screenpin",
     "comment": "Tray screenshot utility with temporary pinned images",
     "categories": ["Graphics", "Utility"],
-    "depends": ["libayatana-appindicator3-1", "xdg-desktop-portal"]
+    "depends": ["libayatana-appindicator3-1", "xdg-desktop-portal", "libpipewire-0.3-0"]
   },
   "macos": {
+    "minimumSystemVersion": "15.0",
     "infoPlist": { "LSUIElement": true }
   }
 }

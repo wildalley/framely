@@ -14,6 +14,8 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/godbus/dbus/v5"
+	"github.com/wildalley/screenpin/internal/config"
+	"github.com/wildalley/screenpin/internal/niribind"
 	"github.com/wildalley/screenpin/internal/portal"
 	"github.com/wildalley/screenpin/internal/shortcutkey"
 )
@@ -23,10 +25,32 @@ const captureID = "capture"
 
 func newPlatformProvider() Provider {
 	if os.Getenv("XDG_SESSION_TYPE") == "wayland" || os.Getenv("WAYLAND_DISPLAY") != "" {
-		return &portalProvider{}
+		return &waylandProvider{}
 	}
 	return nativeProvider{}
 }
+
+type waylandProvider struct{ portalProvider }
+type niriBinding struct{ key string }
+
+func (p *waylandProvider) Prepare(ctx context.Context, key string, capture func(string)) (Binding, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if niribind.Matches(key) {
+		if err := niribind.Verify(ctx); err != nil {
+			return nil, err
+		}
+		return &niriBinding{key: key}, nil
+	}
+	return p.portalProvider.Prepare(ctx, key, capture)
+}
+
+// niri owns this persistent desktop binding; exiting ScreenPin leaves it able
+// to launch the app again. No application listener is registered twice.
+func (b *niriBinding) Activate()           {}
+func (b *niriBinding) Close()              {}
+func (b *niriBinding) Description() string { return config.DisplayShortcut(b.key) + "（niri）" }
 
 type portalProvider struct {
 	client   *portal.Client
@@ -64,6 +88,9 @@ func (p *portalProvider) Prepare(ctx context.Context, key string, capture func(s
 		"session_handle_token": dbus.MakeVariant(fmt.Sprintf("screenpin_%d_%d", os.Getpid(), p.tokens.Add(1))),
 	})
 	if err != nil {
+		if errors.Is(err, portal.ErrFailed) {
+			return nil, fmt.Errorf("桌面无法创建全局快捷键会话，请检查当前桌面的门户支持；可在桌面设置中绑定 screenpin --capture: %w", err)
+		}
 		return nil, err
 	}
 	var session dbus.ObjectPath

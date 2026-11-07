@@ -61,6 +61,7 @@ type Annotation struct {
 	StrokeWidth float64  `json:"strokeWidth"`
 	Opacity     float64  `json:"opacity"`
 	FontSize    float64  `json:"fontSize"`
+	CornerRatio *float64 `json:"cornerRatio,omitempty"`
 }
 
 // Style is the editable look of an annotation, kept per tool so each tool
@@ -70,6 +71,7 @@ type Style struct {
 	StrokeWidth float64
 	Opacity     float64
 	FontSize    float64
+	CornerRatio float64
 }
 
 // Colors are the swatches of the style panel.
@@ -78,6 +80,9 @@ var Colors = []string{"#e5484d", "#ff8a3d", "#f2c94c", "#1f9d73", "#2383e2", "#7
 // DefaultStyle is the look a tool starts with.
 func DefaultStyle(t Tool) Style {
 	s := Style{Color: "#e5484d", StrokeWidth: 4, Opacity: 1, FontSize: 28}
+	if t == ToolRectangle {
+		s.CornerRatio = 0.1
+	}
 	switch t {
 	case ToolHighlighter:
 		s.Color, s.StrokeWidth, s.Opacity = "#f2c94c", 18, 0.45
@@ -89,7 +94,11 @@ func DefaultStyle(t Tool) Style {
 
 // Style returns the annotation's look.
 func (a *Annotation) Style() Style {
-	return Style{Color: a.Color, StrokeWidth: a.StrokeWidth, Opacity: a.Opacity, FontSize: a.FontSize}
+	ratio := 0.0
+	if half := math.Min(math.Abs(a.Width), math.Abs(a.Height)) / 2; a.Type == ToolRectangle && half > 0 {
+		ratio = a.CornerRadius() / half
+	}
+	return Style{Color: a.Color, StrokeWidth: a.StrokeWidth, Opacity: a.Opacity, FontSize: a.FontSize, CornerRatio: ratio}
 }
 
 // SetStyle replaces the annotation's look. Mosaics stay opaque: their
@@ -97,9 +106,30 @@ func (a *Annotation) Style() Style {
 // mosaic is rejected on load.
 func (a *Annotation) SetStyle(s Style) {
 	a.Color, a.StrokeWidth, a.Opacity, a.FontSize = s.Color, s.StrokeWidth, s.Opacity, s.FontSize
+	if a.Type == ToolRectangle {
+		a.CornerRatio = ptr(ClampCornerRatio(s.CornerRatio))
+	}
 	if a.Type == ToolMosaic {
 		a.Opacity = 1
 	}
+}
+
+// ClampCornerRatio keeps the proportion finite: 0 is square, 1 is a pill.
+func ClampCornerRatio(v float64) float64 {
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0
+	}
+	return math.Max(0, math.Min(1, v))
+}
+func RelativeCornerRadius(w, h, ratio float64) float64 {
+	return math.Min(math.Abs(w), math.Abs(h)) / 2 * ClampCornerRatio(ratio)
+}
+
+func (a Annotation) CornerRadius() float64 {
+	if a.CornerRatio == nil {
+		return math.Min(4, math.Min(math.Abs(a.Width), math.Abs(a.Height))/2)
+	}
+	return RelativeCornerRadius(a.Width, a.Height, *a.CornerRatio)
 }
 
 // DefaultText is what a new text annotation says until it is edited.
@@ -144,6 +174,9 @@ func (a Annotation) Clone() Annotation {
 	}
 	if a.Text != nil {
 		a.Text = ptr(*a.Text)
+	}
+	if a.CornerRatio != nil {
+		a.CornerRatio = ptr(*a.CornerRatio)
 	}
 	a.Points = slices.Clone(a.Points)
 	return a
@@ -275,6 +308,10 @@ const (
 	HandleNE    Handle = "ne"
 	HandleSW    Handle = "sw"
 	HandleSE    Handle = "se"
+	HandleN     Handle = "n"
+	HandleS     Handle = "s"
+	HandleW     Handle = "w"
+	HandleE     Handle = "e"
 	HandleStart Handle = "start"
 	HandleEnd   Handle = "end"
 )
@@ -295,16 +332,16 @@ func (a Annotation) Resized(h Handle, dx, dy float64) Annotation {
 	}
 	orig := a.Bounds()
 	b := orig
-	if h == HandleNW || h == HandleNE {
+	if h == HandleNW || h == HandleNE || h == HandleN {
 		b.Y, b.H = orig.Y+dy, orig.H-dy
 	}
-	if h == HandleSW || h == HandleSE {
+	if h == HandleSW || h == HandleSE || h == HandleS {
 		b.H = orig.H + dy
 	}
-	if h == HandleNW || h == HandleSW {
+	if h == HandleNW || h == HandleSW || h == HandleW {
 		b.X, b.W = orig.X+dx, orig.W-dx
 	}
-	if h == HandleNE || h == HandleSE {
+	if h == HandleNE || h == HandleSE || h == HandleE {
 		b.W = orig.W + dx
 	}
 	n := a
@@ -392,6 +429,7 @@ func Equal(a, b []Annotation) bool {
 		return x.ID == y.ID && x.Type == y.Type && x.X == y.X && x.Y == y.Y &&
 			x.Width == y.Width && x.Height == y.Height &&
 			eqPtr(x.EndX, y.EndX) && eqPtr(x.EndY, y.EndY) && eqPtr(x.Text, y.Text) &&
+			eqPtr(x.CornerRatio, y.CornerRatio) &&
 			x.Color == y.Color && x.Fill == y.Fill && x.StrokeWidth == y.StrokeWidth &&
 			x.Opacity == y.Opacity && x.FontSize == y.FontSize && slices.Equal(x.Points, y.Points)
 	})

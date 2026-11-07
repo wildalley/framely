@@ -22,12 +22,13 @@ func withExtension(path, ext string) string {
 // pixels are immutable for the whole lifetime of this particular image.
 func (a *App) snapshot() func() ([]byte, error) {
 	px, mosaic, list := a.pixels, a.mosaicPx, annotationSnapshot(a.history.Present())
+	ratio := a.history.ImageCornerRatio()
 	ctx := a.ctx
 	return func() ([]byte, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		img, err := render.Flatten(px, mosaic, list)
+		img, err := render.FlattenWithCorners(px, mosaic, list, ratio)
 		if err != nil {
 			return nil, err
 		}
@@ -59,8 +60,9 @@ func (a *App) Export() {
 				return
 			}
 			px, mosaic, list := a.pixels, a.mosaicPx, annotationSnapshot(a.history.Present())
+			ratio := a.history.ImageCornerRatio()
 			go func() {
-				img, err := render.Flatten(px, mosaic, list)
+				img, err := render.FlattenWithCorners(px, mosaic, list, ratio)
 				var data []byte
 				if err == nil {
 					data, err = render.EncodeContext(ctx, img, format, quality)

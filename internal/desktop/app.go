@@ -18,6 +18,8 @@ import (
 	"github.com/wildalley/screenpin/internal/capture"
 	"github.com/wildalley/screenpin/internal/config"
 	"github.com/wildalley/screenpin/internal/editor"
+	"github.com/wildalley/screenpin/internal/niribind"
+	"github.com/wildalley/screenpin/internal/portal"
 	"github.com/wildalley/screenpin/internal/shortcuts"
 )
 
@@ -30,17 +32,17 @@ type application struct {
 	pendingFiles        []string
 	images              []*editor.App
 	settings            *settingsWindow
-	keys                *mygo.Window
 	shortcuts           *shortcuts.Manager
 	shortcutDescription string
 	shortcutError       string
+	shortcutPending     bool
 	shortcutGeneration  int
 	tray                *mygo.Tray
 	menu                *mygo.Menu
 	captureItem         *mygo.MenuItem
-	autostart           *mygo.MenuItem
 	captureBusy         bool
 	openingDialog       bool
+	scroll              *scrollWindow
 	operations          int
 }
 
@@ -121,9 +123,6 @@ func (s *application) dispatch(fn func()) {
 		if s.settings != nil {
 			s.settings.win.Invalidate()
 		}
-		if s.keys != nil {
-			s.keys.Invalidate()
-		}
 	})
 }
 
@@ -131,6 +130,7 @@ func (s *application) ready(launch Launch) {
 	cfg, repaired := config.Load()
 	s.cfg, s.readyDone = cfg, true
 	s.shortcutDescription = "注册中…"
+	s.shortcutPending = true
 	s.shortcuts = shortcuts.New(s.CaptureWithActivation)
 	s.createTray()
 	mygo.App.OnDidBecomeActive(func() {
@@ -138,9 +138,6 @@ func (s *application) ready(launch Launch) {
 			return
 		}
 		on := mygo.App.OpenAtLogin()
-		if s.autostart != nil {
-			s.autostart.SetChecked(on)
-		}
 		if s.settings != nil {
 			s.settings.autostart = on
 			s.settings.win.Invalidate()
@@ -161,6 +158,12 @@ func (s *application) ready(launch Launch) {
 				return
 			}
 			s.bindingResult(description, err)
+			if err != nil && description == "" && !cancelled(err) && !launch.Hidden {
+				s.showSettings("快捷键注册未完成，请在设置中重试。")
+				if niribind.Current() {
+					s.settings.setupNiri()
+				}
+			}
 		})
 	})
 	s.launch(launch)
@@ -178,6 +181,8 @@ func (s *application) launch(launch Launch) {
 		return
 	}
 	switch {
+	case launch.Scroll:
+		s.showScroll()
 	case launch.Capture:
 		s.Capture()
 	case launch.File != "":
@@ -190,14 +195,21 @@ func (s *application) maybeQuit() {
 	if s.ctx.Err() != nil {
 		return
 	}
-	if s.tray == nil && s.operations == 0 && len(s.images) == 0 && s.settings == nil && s.keys == nil {
+	if s.tray == nil && s.operations == 0 && len(s.images) == 0 && s.settings == nil {
 		mygo.App.Quit()
 	}
 }
 
 func (s *application) showPicture(picture editor.Picture, target *mygo.Rectangle, token string) {
+	if s.scroll != nil && s.scroll.running {
+		s.scroll.show()
+	}
 	image := editor.New(s.cfg)
 	image.OnPaste = s.Paste
+	image.OnCapture = s.Capture
+	image.OnScroll = s.showScroll
+	image.OnSettings = func() { s.showSettings("") }
+	image.OnOCRResult = s.showOCR
 	image.OnClosed = func() {
 		if i := slices.Index(s.images, image); i >= 0 {
 			s.images = slices.Delete(s.images, i, i+1)
@@ -234,10 +246,13 @@ func (s *application) beginImage(load func(context.Context) (editor.Picture, *my
 }
 
 func cancelled(err error) bool {
-	return errors.Is(err, capture.ErrCancelled) || errors.Is(err, context.Canceled)
+	return errors.Is(err, capture.ErrCancelled) || errors.Is(err, portal.ErrCancelled) || errors.Is(err, context.Canceled)
 }
 
 func (s *application) OpenPath(path string) {
+	if s.blockPictureDuringScroll() {
+		return
+	}
 	s.beginImage(func(ctx context.Context) (editor.Picture, *mygo.Rectangle, string, error) {
 		if err := ctx.Err(); err != nil {
 			return editor.Picture{}, nil, "", err
@@ -254,6 +269,9 @@ func (s *application) OpenPath(path string) {
 }
 
 func (s *application) OpenImage() {
+	if s.blockPictureDuringScroll() {
+		return
+	}
 	if s.ctx.Err() != nil || s.openingDialog {
 		return
 	}
@@ -278,6 +296,9 @@ func (s *application) OpenImage() {
 }
 
 func (s *application) Paste() {
+	if s.blockPictureDuringScroll() {
+		return
+	}
 	s.beginImage(func(ctx context.Context) (editor.Picture, *mygo.Rectangle, string, error) {
 		if err := ctx.Err(); err != nil {
 			return editor.Picture{}, nil, "", err
@@ -294,10 +315,17 @@ func (s *application) Paste() {
 func (s *application) Capture() { s.CaptureWithActivation("") }
 
 func (s *application) CaptureWithActivation(token string) {
-	if s.ctx.Err() != nil || s.captureBusy {
+	if s.ctx.Err() != nil {
 		return
 	}
 	if s.settings != nil && s.settings.recording {
+		return
+	}
+	if s.scroll != nil && s.scroll.running {
+		s.scroll.finish()
+		return
+	}
+	if s.captureBusy {
 		return
 	}
 	if s.settings != nil && s.settings.asking {
@@ -372,21 +400,23 @@ func grab(ctx context.Context, token string) ([]byte, *mygo.Rectangle, string, e
 	return data, nil, token, err
 }
 
-func (s *application) createTray() {
+// trayItems is shared by the native tray and its interaction regression tests.
+func (s *application) trayItems() []*mygo.MenuItem {
 	s.captureItem = &mygo.MenuItem{ID: "capture", Label: "截图", Click: func(*mygo.MenuItem, *mygo.Window) { s.Capture() }}
-	s.autostart = &mygo.MenuItem{ID: "autostart", Label: "开机自启", Type: mygo.MenuItemCheckbox, Checked: mygo.App.OpenAtLogin(),
-		Click: func(item *mygo.MenuItem, _ *mygo.Window) { s.setAutostart(item.IsChecked()) }}
-	s.menu = mygo.NewMenu([]*mygo.MenuItem{
+	return []*mygo.MenuItem{
 		s.captureItem,
+		{ID: "scroll-capture", Label: "长截图…", Click: func(*mygo.MenuItem, *mygo.Window) { s.showScroll() }},
+		mygo.Separator(),
 		{ID: "paste", Label: "粘贴图片", Click: func(*mygo.MenuItem, *mygo.Window) { s.Paste() }},
 		{ID: "open-image", Label: "打开图片…", Click: func(*mygo.MenuItem, *mygo.Window) { s.OpenImage() }},
 		mygo.Separator(),
-		{ID: "settings", Label: "快捷键与设置…", Click: func(*mygo.MenuItem, *mygo.Window) { s.showSettings("") }},
-		{ID: "keys", Label: "查看按键…", Click: func(*mygo.MenuItem, *mygo.Window) { s.showKeys() }},
-		s.autostart,
+		{ID: "settings", Label: "设置与快捷键…", Click: func(*mygo.MenuItem, *mygo.Window) { s.showSettings("") }},
 		mygo.Separator(),
 		{ID: "quit", Label: "退出 ScreenPin", Click: func(*mygo.MenuItem, *mygo.Window) { mygo.App.Quit() }},
-	})
+	}
+}
+func (s *application) createTray() {
+	s.menu = mygo.NewMenu(s.trayItems())
 	tray, err := mygo.NewTray(mygo.TrayOptions{ID: capture.AppID, Icon: assets.TrayIcon, ToolTip: "ScreenPin", Menu: s.menu})
 	if err != nil {
 		log.Printf("ScreenPin: tray unavailable: %v", err)
@@ -400,12 +430,28 @@ func (s *application) refreshTray() {
 	if s.tray == nil {
 		return
 	}
-	label := "截图（" + s.shortcutDescription + "）"
+	label := "截图"
+	if !s.shortcutPending && s.shortcutError == "" {
+		label += "（" + config.DisplayShortcut(s.cfg.CaptureShortcut) + "）"
+	}
 	if s.captureBusy {
 		label = "正在截图…"
 	}
+	if s.scroll != nil && s.scroll.running {
+		label = "完成长截图"
+	}
 	s.captureItem.SetLabel(label)
-	s.captureItem.SetEnabled(!s.captureBusy)
+	s.captureItem.SetEnabled(!s.captureBusy || s.scroll != nil && s.scroll.running)
+	longActive := s.scroll != nil && (s.scroll.busy || s.scroll.running)
+	for _, id := range []string{"paste", "open-image"} {
+		s.menu.ItemByID(id).SetEnabled(!longActive)
+	}
+	scroll := s.menu.ItemByID("scroll-capture")
+	scroll.SetEnabled(!s.captureBusy || s.scroll != nil)
+	scroll.SetLabel("长截图…")
+	if longActive {
+		scroll.SetLabel("查看长截图…")
+	}
 	s.tray.SetMenu(s.menu)
 }
 
@@ -414,9 +460,6 @@ func (s *application) setAutostart(want bool) {
 		s.notify("设置开机自启失败: " + err.Error())
 	}
 	on := mygo.App.OpenAtLogin()
-	if s.autostart != nil {
-		s.autostart.SetChecked(on)
-	}
 	if s.settings != nil {
 		s.settings.autostart = on
 		s.settings.win.Invalidate()
@@ -424,6 +467,7 @@ func (s *application) setAutostart(want bool) {
 }
 
 func (s *application) bindingResult(description string, err error) {
+	s.shortcutPending = false
 	s.shortcutDescription = description
 	if description == "" {
 		s.shortcutDescription = "未绑定"
@@ -439,11 +483,20 @@ func (s *application) bindingResult(description string, err error) {
 }
 
 func (s *application) saveSettings(ctx context.Context, next config.Config, done func(error)) {
+	s.applySettings(ctx, next, s.shortcuts.Apply, done)
+}
+
+func (s *application) applySettings(ctx context.Context, next config.Config, apply func(context.Context, config.Config) error, done func(error)) {
+	if s.shortcutPending {
+		done(errors.New("系统正在处理快捷键授权，请等待当前请求完成"))
+		return
+	}
+	s.shortcutPending = true
 	s.shortcutGeneration++
 	s.worker(func() {
 		ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 		defer cancel()
-		err := s.shortcuts.Apply(ctx, next)
+		err := apply(ctx, next)
 		description := s.shortcuts.Description()
 		s.dispatch(func() {
 			if err == nil {

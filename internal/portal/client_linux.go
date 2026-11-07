@@ -140,9 +140,9 @@ func (c *Client) Request(ctx context.Context, iface, method string, args []any, 
 			case 0:
 				return result, nil
 			case 1:
-				return nil, ErrCancelled
+				return nil, fmt.Errorf("门户 %s: %w", method, ErrCancelled)
 			default:
-				return nil, ErrDenied
+				return nil, fmt.Errorf("门户 %s（响应 %d）: %w", method, code, ErrFailed)
 			}
 		case <-ctx.Done():
 			c.closeRequest(handle)

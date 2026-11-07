@@ -129,6 +129,25 @@ func TestEquivalentShortcutDoesNotReregister(t *testing.T) {
 	}
 }
 
+func TestStartupFailureCanRetryAuthorizationForTheSameShortcut(t *testing.T) {
+	p := &testProvider{err: portal.ErrFailed}
+	saves, captures := 0, 0
+	m := &Manager{provider: p, capture: func(string) { captures++ }, save: func(config.Config) error { saves++; return nil }}
+	defer m.Close()
+	cfg := config.Default()
+	if err := m.Start(context.Background(), cfg); !errors.Is(err, portal.ErrFailed) || m.Description() != "" || saves != 0 {
+		t.Fatalf("failed startup was reported as bound: err=%v description=%q saves=%d", err, m.Description(), saves)
+	}
+	p.err = nil
+	if err := m.Apply(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	p.bindings[0].fire()
+	if len(p.bindings) != 1 || saves != 1 || captures != 1 || m.Description() == "" {
+		t.Fatal("retrying the unchanged shortcut did not register and activate it")
+	}
+}
+
 func TestCancelledSaveDoesNotPersistAndClosedManagerRejectsChanges(t *testing.T) {
 	m, p, _ := newTestManager(t)
 	saved := false

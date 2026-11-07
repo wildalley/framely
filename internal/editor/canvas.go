@@ -69,11 +69,19 @@ func handles(an *doc.Annotation, zoom float64) map[doc.Handle]doc.Point {
 		}
 	}
 	b := an.Bounds()
+	return rectHandles(b, zoom)
+}
+
+func rectHandles(b doc.Rect, zoom float64) map[doc.Handle]doc.Point {
 	return map[doc.Handle]doc.Point{
 		doc.HandleNW: {X: b.X * zoom, Y: b.Y * zoom},
 		doc.HandleNE: {X: (b.X + b.W) * zoom, Y: b.Y * zoom},
 		doc.HandleSW: {X: b.X * zoom, Y: (b.Y + b.H) * zoom},
 		doc.HandleSE: {X: (b.X + b.W) * zoom, Y: (b.Y + b.H) * zoom},
+		doc.HandleN:  {X: (b.X + b.W/2) * zoom, Y: b.Y * zoom},
+		doc.HandleS:  {X: (b.X + b.W/2) * zoom, Y: (b.Y + b.H) * zoom},
+		doc.HandleW:  {X: b.X * zoom, Y: (b.Y + b.H/2) * zoom},
+		doc.HandleE:  {X: (b.X + b.W) * zoom, Y: (b.Y + b.H/2) * zoom},
 	}
 }
 
@@ -83,12 +91,14 @@ func (a *App) handleAt(x, y float32, zoom float64) (doc.Handle, bool) {
 	if sel == nil {
 		return "", false
 	}
+	closest, distance := doc.Handle(""), float64(handleRadius+3)
 	for h, p := range handles(sel, zoom) {
-		if math.Hypot(float64(x)-p.X, float64(y)-p.Y) <= handleRadius+3 {
-			return h, true
+		d := math.Hypot(float64(x)-p.X, float64(y)-p.Y)
+		if d < distance || d == distance && (closest == "" || h < closest) {
+			closest, distance = h, d
 		}
 	}
-	return "", false
+	return closest, closest != ""
 }
 
 func handleCursor(h doc.Handle) ui.Cursor {
@@ -97,6 +107,10 @@ func handleCursor(h doc.Handle) ui.Cursor {
 		return ui.CursorResizeNWSE
 	case doc.HandleNE, doc.HandleSW:
 		return ui.CursorResizeNESW
+	case doc.HandleN, doc.HandleS:
+		return ui.CursorResizeNS
+	case doc.HandleW, doc.HandleE:
+		return ui.CursorResizeEW
 	}
 	return ui.CursorMove
 }
@@ -155,6 +169,9 @@ func (a *App) pointerDown(ev ui.InputEvent, zoom float64) bool {
 		}
 		if i := doc.HitTest(list, p, 4/zoom); i >= 0 {
 			an := list[i]
+			if a.selected != an.ID {
+				a.propertyImage = false
+			}
 			a.selected = an.ID
 			if ev.Clicks >= 2 && an.Type == doc.ToolText {
 				a.startEditing(an.ID)
@@ -234,6 +251,11 @@ func (a *App) finishDrag() {
 		}
 	}
 	a.history.End()
+	if created != nil && !created.Type.Freehand() {
+		a.propertyImage = false
+		a.tool = doc.ToolSelect
+		a.hoverCursor = ui.CursorDefault
+	}
 	if created != nil && created.Type == doc.ToolText {
 		a.tool = doc.ToolSelect
 		a.startEditing(created.ID)
@@ -280,6 +302,10 @@ func (a *App) finishEditing() {
 		a.textEdit, a.slidingKey = false, ""
 		a.history.End()
 	}
+	if a.propertyEditKey != "" {
+		a.propertyEditKey = ""
+		a.history.End()
+	}
 	if a.editingID == "" {
 		return
 	}
@@ -310,8 +336,9 @@ func (a *App) canvas(c *ui.Context, zoom float64) ui.Element {
 		Height:      a.image.Height,
 		Annotations: a.history.Present(),
 		Hidden:      a.editingID,
+		CornerRatio: a.history.ImageCornerRatio(),
 	}
-	box := ui.Box(c.Key("canvas")).Size(w, h).Cursor(a.hoverCursor).ContextMenu(a.contextMenu)
+	box := ui.Box(c.Key("canvas")).Label("图片画布").Size(w, h).Cursor(a.hoverCursor).ContextMenu(a.contextMenu)
 	if a.drag != nil {
 		if a.drag.kind == dragResize {
 			box.Cursor(handleCursor(a.drag.handle))

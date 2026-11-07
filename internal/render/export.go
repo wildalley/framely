@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
@@ -11,6 +12,7 @@ import (
 	"image/png"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/gen2brain/webp"
 	"github.com/wildalley/screenpin/internal/doc"
 )
 
@@ -20,29 +22,36 @@ type Format string
 const (
 	PNG  Format = "png"
 	JPEG Format = "jpeg"
+	WebP Format = "webp"
 )
 
 // Formats lists the export formats in the order the menu shows them.
-var Formats = []Format{PNG, JPEG}
+var Formats = []Format{PNG, JPEG, WebP}
 
 // Label is the format's name as the menu shows it.
 func (f Format) Label() string {
-	if f == JPEG {
+	switch f {
+	case JPEG:
 		return "JPEG"
+	case WebP:
+		return "WebP"
 	}
 	return "PNG"
 }
 
 // Extension is the file name extension of the format.
 func (f Format) Extension() string {
-	if f == JPEG {
+	switch f {
+	case JPEG:
 		return "jpg"
+	case WebP:
+		return "webp"
 	}
 	return "png"
 }
 
 // Lossy reports whether the format takes a quality.
-func (f Format) Lossy() bool { return f == JPEG }
+func (f Format) Lossy() bool { return f == JPEG || f == WebP }
 
 // ErrMosaicUnavailable stops an export that would show what a mosaic hides.
 var ErrMosaicUnavailable = errors.New("马赛克处理失败，已阻止导出以保护原图")
@@ -50,20 +59,28 @@ var ErrMosaicUnavailable = errors.New("马赛克处理失败，已阻止导出�
 // Flatten draws the annotations over src at its full size. It builds bitmaps
 // of its own, so it can run on any goroutine while the window draws.
 func Flatten(src, mosaic *image.RGBA, list []doc.Annotation) (*image.RGBA, error) {
+	return FlattenWithCorners(src, mosaic, list, 0)
+}
+
+// FlattenWithCorners clips both pixels and annotations, preserving alpha for
+// PNG/WebP. JPEG encoding composites those transparent corners on white.
+func FlattenWithCorners(src, mosaic *image.RGBA, list []doc.Annotation, ratio float64) (*image.RGBA, error) {
 	b := src.Bounds()
 	for i := range list {
 		if list[i].Type == doc.ToolMosaic && mosaic == nil {
 			return nil, ErrMosaicUnavailable
 		}
 	}
-	if len(list) == 0 {
+	ratio = doc.ClampCornerRatio(ratio)
+	if len(list) == 0 && ratio == 0 {
 		return src, nil
 	}
-	s := &Scene{Image: ui.NewBitmap(src), Width: b.Dx(), Height: b.Dy(), Annotations: list}
+	s := &Scene{Image: ui.NewBitmap(src), Width: b.Dx(), Height: b.Dy(), Annotations: list, CornerRatio: ratio}
 	if mosaic != nil {
 		s.Mosaic = ui.NewBitmap(mosaic).Pixelated()
 	}
 	out := ui.Render(func(c *ui.Context) {
+		c.Root().Background(ui.Transparent)
 		ui.Box(c).Size(float32(b.Dx()), float32(b.Dy())).Draw(func(p *ui.Painter, r ui.Rect) {
 			p.Transform(ui.Translation(r.X, r.Y), 0, 0, func() { Draw(p, s) })
 		})
@@ -84,6 +101,9 @@ func EncodeContext(ctx context.Context, img *image.RGBA, format Format, quality 
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if img == nil || img.Bounds().Empty() {
+		return nil, errors.New("无法编码空图片")
+	}
 	var buf bytes.Buffer
 	out := contextWriter{ctx, &buf}
 	switch format {
@@ -97,11 +117,30 @@ func EncodeContext(ctx context.Context, img *image.RGBA, format Format, quality 
 		if err := jpeg.Encode(out, flat, &jpeg.Options{Quality: max(1, min(100, q))}); err != nil {
 			return nil, err
 		}
-	default:
+	case WebP:
+		// libwebp expects straight alpha and the portable backend expects
+		// tightly packed rows. Normalize both, including cropped subimages.
+		straight := image.NewNRGBA(image.Rect(0, 0, img.Bounds().Dx(), img.Bounds().Dy()))
+		draw.Draw(straight, straight.Bounds(), img, img.Bounds().Min, draw.Src)
+		q := max(1, min(100, int(quality*100+0.5)))
+		err := webp.Encode(out, straight, webp.Options{Quality: q, Method: webp.DefaultMethod})
+		// The native backend may replace a writer error with ErrEncode.
+		if cancelErr := ctx.Err(); cancelErr != nil {
+			return nil, cancelErr
+		}
+		if err != nil {
+			return nil, err
+		}
+	case PNG:
 		enc := png.Encoder{CompressionLevel: png.DefaultCompression}
 		if err := enc.Encode(out, img); err != nil {
 			return nil, err
 		}
+	default:
+		return nil, fmt.Errorf("不支持的图片格式: %q", format)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	return buf.Bytes(), nil
 }

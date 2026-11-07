@@ -24,6 +24,15 @@ type Picture struct {
 	title  string
 }
 
+// PictureFromPixels takes ownership of completed native capture pixels without
+// a PNG encode/decode round trip and its duplicate long-image allocations.
+func PictureFromPixels(pixels *image.RGBA, title string) (Picture, error) {
+	if pixels == nil || pixels.Bounds().Empty() || pixels.Rect.Dx() > 32768 || pixels.Rect.Dy() > 32768 || int64(pixels.Rect.Dx())*int64(pixels.Rect.Dy()) > 32_000_000 {
+		return Picture{}, errors.New("图片尺寸超出支持范围")
+	}
+	return Picture{image: doc.Image{Width: pixels.Rect.Dx(), Height: pixels.Rect.Dy(), Mime: "image/png", Name: title + ".png"}, pixels: pixels, mosaic: render.Pixelate(pixels), title: title}, nil
+}
+
 func DecodePicture(data []byte, name string) (Picture, error) {
 	if len(data) > maxImageSize {
 		return Picture{}, errors.New("图片文件过大")

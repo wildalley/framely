@@ -21,6 +21,8 @@ func textApp() (*App, doc.Annotation) {
 func TestAnnotationTextKeepsTypingAndCommitsOnBlur(t *testing.T) {
 	a, original := textApp()
 	a.startEditing(original.ID)
+	a.OnCapture = func() { t.Fatal("text editing launched a new screenshot") }
+	a.OnScroll = func() { t.Fatal("text editing launched a long screenshot") }
 	tt := ui.NewTester(func(c *ui.Context) {
 		a.shortcuts(c)
 		ui.Box(c).Fill().Children(func() {
@@ -33,6 +35,8 @@ func TestAnnotationTextKeepsTypingAndCommitsOnBlur(t *testing.T) {
 	if active, _ := tt.TextInputActive(); !active {
 		t.Fatal("the annotation editor did not receive focus")
 	}
+	tt.Key(ui.Cmd|ui.Shift, ui.KeyL)
+	tt.Key(ui.Cmd|ui.Shift, ui.KeyS)
 	tt.TypeKey(0, ui.KeyR, "r")
 	if a.tool != doc.ToolSelect || a.editingID != original.ID || a.editingText != "r" {
 		t.Fatalf("typing activated an editor shortcut or lost the initial selection: tool=%s, text=%q", a.tool, a.editingText)

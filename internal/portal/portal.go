@@ -9,5 +9,7 @@ const AppID = "io.screenpin.desktop"
 
 var (
 	ErrCancelled = errors.New("门户请求已取消")
-	ErrDenied    = errors.New("门户拒绝了请求")
+	// Response 2 is an unspecified failure, including missing backends;
+	// the protocol does not say that the user denied permission.
+	ErrFailed = errors.New("门户请求失败（权限被拒绝或桌面后端不可用）")
 )

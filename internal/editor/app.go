@@ -11,6 +11,7 @@ import (
 	"github.com/egoist/mygo/ui"
 	"github.com/wildalley/screenpin/internal/config"
 	"github.com/wildalley/screenpin/internal/doc"
+	"github.com/wildalley/screenpin/internal/ocr"
 	"github.com/wildalley/screenpin/internal/render"
 )
 
@@ -22,12 +23,13 @@ const (
 )
 
 const (
-	minZoom     = 0.1
-	maxZoom     = 3
-	minWidth    = 320
-	barHeight   = 44
-	styleWidth  = 280
-	styleHeight = 330
+	minZoom        = 0.1
+	maxZoom        = 3
+	minWidth       = 320
+	barHeight      = 44
+	propertyHeight = 52
+	styleWidth     = 280
+	styleHeight    = 330
 )
 
 // App belongs to one image. Closing it cancels its work and drops the image,
@@ -49,15 +51,22 @@ type App struct {
 	title    string
 	history  doc.History
 
-	tool      doc.Tool
-	selected  string
-	styles    map[doc.Tool]doc.Style
-	zoom      float64
-	pinned    bool
-	busy      bool
-	panel     Panel
-	lastPanel Panel
-	toasts    []string
+	tool            doc.Tool
+	selected        string
+	styles          map[doc.Tool]doc.Style
+	zoom            float64
+	pinned          bool
+	busy            bool
+	ocrRunning      bool
+	ocrCancel       context.CancelFunc
+	panel           Panel
+	lastPanel       Panel
+	appearanceTab   int
+	propertyImage   bool
+	propertyInputs  [4]ui.Handle
+	propertyValues  [4]string
+	propertyEditKey string
+	toasts          []string
 
 	exportFormat  render.Format
 	exportQuality float64
@@ -76,8 +85,12 @@ type App struct {
 	target *mygo.Rectangle
 	layout layoutKey
 
-	OnClosed func()
-	OnPaste  func()
+	OnClosed    func()
+	OnPaste     func()
+	OnCapture   func()
+	OnScroll    func()
+	OnSettings  func()
+	OnOCRResult func(ocr.Result)
 }
 
 func New(cfg config.Config) *App {
@@ -104,13 +117,13 @@ func (a *App) Open(parent context.Context, picture Picture, target *mygo.Rectang
 	im := picture.image
 	a.image, a.pixels, a.mosaicPx = &im, picture.pixels, picture.mosaic
 	a.title, a.target = picture.title, target
-	a.bitmap = ui.NewBitmap(a.pixels)
+	a.bitmap = ui.NewBitmap(render.Preview(a.pixels, 4096))
 	if a.mosaicPx != nil {
 		a.mosaic = ui.NewBitmap(a.mosaicPx).Pixelated()
 	}
 	a.win = mygo.NewWindow(mygo.WindowOptions{
 		Title: a.title + " — ScreenPin", Width: minWidth, Height: barHeight + 80,
-		MinWidth: minWidth, MinHeight: barHeight + 40, UseContentSize: true,
+		MinWidth: minWidth, MinHeight: 2*barHeight + propertyHeight + 40, UseContentSize: true,
 		Frameless: true, DisableMaximize: true, DisableFullScreen: true,
 		Hidden: true, Content: ui.View(a.view),
 	})
@@ -131,12 +144,16 @@ func (a *App) release() {
 	}
 	a.closed = true
 	a.cancel()
+	a.ocrRunning, a.ocrCancel = false, nil
+	a.OnOCRResult = nil
+	a.OnCapture, a.OnScroll, a.OnSettings = nil, nil, nil
 	a.image, a.pixels, a.mosaicPx = nil, nil, nil
 	a.bitmap, a.mosaic = nil, nil
 	a.history = doc.History{}
 	a.drag, a.styles, a.toasts = nil, nil, nil
 	a.selected, a.editingID, a.editingText, a.slidingKey, a.title = "", "", "", "", ""
 	a.annotationText, a.styleText = ui.Handle{}, ui.Handle{}
+	a.propertyInputs, a.propertyValues, a.propertyEditKey = [4]ui.Handle{}, [4]string{}, ""
 	a.target, a.panel, a.lastPanel = nil, PanelNone, PanelNone
 	a.busy, a.pinned, a.textEdit, a.editFresh = false, false, false, false
 	done := a.OnClosed
@@ -192,7 +209,7 @@ func (a *App) fitZoom() float64 {
 	}
 	area := a.workArea()
 	w := math.Max(120, float64(area.Width)-24)
-	h := math.Max(120, float64(area.Height)-barHeight-24)
+	h := math.Max(120, float64(area.Height)-float64(toolbarHeight(float32(min(a.image.Width, area.Width-24))))-24)
 	z := math.Min(1, math.Min(w/float64(a.image.Width), h/float64(a.image.Height)))
 	return roundZoom(clamp(z, minZoom, 1))
 }
@@ -245,7 +262,9 @@ func (a *App) wantedSize() (int, int) {
 		w, h = max(w, styleWidth+16), max(h, styleHeight)
 	}
 	area := a.workArea()
-	return min(w, max(minWidth, area.Width-24)), min(h+barHeight, max(barHeight+40, area.Height-24))
+	w = min(w, max(minWidth, area.Width-24))
+	bar := toolbarHeight(float32(w))
+	return w, min(h+bar, max(bar+40, area.Height-24))
 }
 
 func safeFileName(s string) string {

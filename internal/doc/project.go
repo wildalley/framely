@@ -195,6 +195,9 @@ func validAnnotation(a *Annotation) bool {
 	if a.EndX != nil && !coordinate(*a.EndX) || a.EndY != nil && !coordinate(*a.EndY) {
 		return false
 	}
+	if a.CornerRatio != nil && (a.Type != ToolRectangle || !finite(*a.CornerRatio) || *a.CornerRatio < 0 || *a.CornerRatio > 1) {
+		return false
+	}
 	if a.Type == ToolArrow && (a.EndX == nil || a.EndY == nil) {
 		return false
 	}

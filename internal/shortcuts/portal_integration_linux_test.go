@@ -28,6 +28,7 @@ type shortcutPortal struct {
 	binds         chan pendingBind
 	sessionClosed atomic.Int32
 	requestClosed atomic.Int32
+	createCode    atomic.Uint32
 }
 
 type portalCloseCounter struct{ count *atomic.Int32 }
@@ -49,11 +50,42 @@ func (p *shortcutPortal) CreateSession(sender dbus.Sender, options map[string]db
 	owner := strings.ReplaceAll(strings.TrimPrefix(string(sender), ":"), ".", "_")
 	session := string(portal.ObjectPath) + "/session/" + owner + "/" + options["session_handle_token"].Value().(string)
 	// Return the spec's string variant, and emit before the method reply.
-	if err := p.conn.Emit(handle, "org.freedesktop.portal.Request.Response", uint32(0),
+	if err := p.conn.Emit(handle, "org.freedesktop.portal.Request.Response", p.createCode.Load(),
 		map[string]dbus.Variant{"session_handle": dbus.MakeVariant(session)}); err != nil {
 		return "", dbus.MakeFailedError(err)
 	}
 	return handle, nil
+}
+
+func TestPortalBackendFailureIsNotMisreportedAsUserDenial(t *testing.T) {
+	provider, service, _ := shortcutService(t)
+	service.createCode.Store(2) // Like a portal advertising an unusable backend.
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	b, err := provider.Prepare(ctx, "Super+Shift+S", func(string) { t.Error("failed binding activated") })
+	if b != nil || !errors.Is(err, portal.ErrFailed) || !strings.Contains(err.Error(), "CreateSession") ||
+		!strings.Contains(err.Error(), "桌面无法创建") || strings.Contains(err.Error(), "拒绝了请求") {
+		t.Fatalf("backend failure lost its diagnostic: binding=%v, err=%v", b, err)
+	}
+	if len(service.binds) != 0 {
+		t.Fatal("BindShortcuts was called without a working session")
+	}
+}
+
+func TestPortalAuthorizationFailureClosesCandidateSession(t *testing.T) {
+	provider, service, _ := shortcutService(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	bind, done := prepareBinding(t, ctx, provider, service, func(string) { t.Error("failed authorization fired") })
+	emit(t, service, bind.handle, "org.freedesktop.portal.Request.Response", uint32(2), map[string]dbus.Variant{})
+	select {
+	case result := <-done:
+		if result.binding != nil || !errors.Is(result.err, portal.ErrFailed) || service.sessionClosed.Load() != 1 {
+			t.Fatalf("failed authorization: binding=%v, err=%v, session closes=%d", result.binding, result.err, service.sessionClosed.Load())
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
 }
 
 func (p *shortcutPortal) BindShortcuts(sender dbus.Sender, session dbus.ObjectPath, shortcuts []portalShortcut, parent string, options map[string]dbus.Variant) (dbus.ObjectPath, *dbus.Error) {

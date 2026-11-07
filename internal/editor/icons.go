@@ -6,8 +6,8 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
-// Icons are Lucide's (ISC license, see icons/LICENSE), as the web editor
-// showed them.
+// Most icons are Lucide's (ISC license, see icons/LICENSE). The capture and
+// OCR extensions use the same view box and stroke conventions.
 //
 //go:embed icons/*.svg
 var iconFiles embed.FS
@@ -48,6 +48,8 @@ var (
 	iconZoomOut     = icon("zoom-out")
 	iconFit         = icon("maximize-2")
 	iconCapture     = icon("scan-line")
+	iconScroll      = icon("scroll-capture")
+	iconOCR         = icon("text-scan")
 	iconClipboard   = icon("clipboard")
 	iconImage       = icon("image-plus")
 	iconFolder      = icon("folder-open")
