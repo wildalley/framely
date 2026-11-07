@@ -121,6 +121,7 @@ def main():
         if item.is_file():
             digest = hashlib.sha256(item.read_bytes()).hexdigest()
             print(f"{digest}  {item.name}")
+            print(f"Release asset size: {item.name} {item.stat().st_size} bytes")
 
 
 if __name__ == "__main__":

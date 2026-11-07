@@ -35,6 +35,11 @@ jobs:
           go test -tags nodynamic ./internal/render
           go vet ./...
 
+      - name: Check repeated image allocation and release
+        env:
+          SCREENPIN_MEMORY_AUDIT: '1'
+        run: go test -count=1 -run TestSoftwareImageLifecycleMemoryStress -v ./internal/editor
+
       - name: Build native applications
         run: go tool mygo build -platform linux/amd64,windows/amd64,darwin/arm64 -skip-installer -skip-dmg -skip-notarize
 

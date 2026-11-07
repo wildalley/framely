@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"image/draw"
 	"log"
+	"math"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -44,6 +46,7 @@ type scrollWindow struct {
 	monitorName                              string
 	notice, setupError                       string
 	preview                                  *ui.Bitmap
+	previewSize                              image.Point
 	height                                   int
 	canUndo                                  bool
 	hidden                                   []*mygo.Window
@@ -120,6 +123,7 @@ func (v *scrollWindow) release() {
 	v.cancel()
 	v.restore()
 	v.preview = nil
+	v.previewSize = image.Point{}
 	v.monitors = nil
 	if v.app.scroll == v {
 		v.app.scroll = nil
@@ -237,7 +241,7 @@ func (v *scrollWindow) view(c *ui.Context) {
 			if v.preview != nil {
 				ui.Box(c).Height(300).FillWidth().Clip().Background(c.Theme().Surface).Draw(func(p *ui.Painter, r ui.Rect) {
 					if v.preview != nil {
-						p.Image(v.preview, r, ui.Contain)
+						v.drawPreview(p, r)
 					}
 				})
 			} else {
@@ -397,10 +401,10 @@ func (v *scrollWindow) startFailed(err error) {
 }
 
 func (v *scrollWindow) publish(c *scrollshot.Controller, show bool) {
-	preview := c.Stitch.Preview(720, 820)
+	preview := c.Stitch.Preview(previewWidth, previewHeight)
 	height, canUndo, paused, automatic, notice := c.Stitch.Height(), c.Stitch.CanUndo(), c.Paused, c.Automatic, c.Notice
 	v.later(func() {
-		v.preview = ui.NewBitmap(preview)
+		v.setPreview(preview)
 		v.height, v.canUndo, v.paused, v.automatic, v.notice = height, canUndo, paused, automatic, notice
 		if show {
 			v.win.Show()
@@ -408,6 +412,31 @@ func (v *scrollWindow) publish(c *scrollshot.Controller, show bool) {
 		}
 		v.app.refreshTray()
 	})
+}
+
+const previewWidth, previewHeight = 720, 820
+
+func (v *scrollWindow) setPreview(preview *image.RGBA) {
+	// Fixed texture dimensions let Bitmap.Update reuse the GPU allocation
+	// even when the stitched image's aspect ratio changes on every segment.
+	pixels := image.NewRGBA(image.Rect(0, 0, previewWidth, previewHeight))
+	v.previewSize = preview.Bounds().Size()
+	draw.Draw(pixels, image.Rectangle{Max: v.previewSize}, preview, preview.Rect.Min, draw.Src)
+	if v.preview == nil {
+		v.preview = ui.NewBitmap(pixels)
+	} else {
+		v.preview.Update(pixels)
+	}
+}
+
+func (v *scrollWindow) drawPreview(p *ui.Painter, r ui.Rect) {
+	w, h := float32(v.previewSize.X), float32(v.previewSize.Y)
+	if w <= 0 || h <= 0 {
+		return
+	}
+	scale := float32(math.Min(float64(r.W/w), float64(r.H/h)))
+	dst := ui.Rect{X: r.X + (r.W-w*scale)/2, Y: r.Y + (r.H-h*scale)/2, W: w * scale, H: h * scale}
+	p.ImageRegion(v.preview, ui.Rect{W: w, H: h}, dst, ui.ImageOptions{})
 }
 
 func (v *scrollWindow) run(source capture.Stream, region image.Rectangle, sourceSize image.Point, c *scrollshot.Controller) bool {

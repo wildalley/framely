@@ -39,6 +39,7 @@ type processStream struct {
 	err           error
 	cancel        context.CancelFunc
 	closeOnce     sync.Once
+	closed        atomic.Bool
 	cleanup       func()
 	scroll        func(context.Context, image.Point) error
 	control       chan controlReply
@@ -108,6 +109,9 @@ func (s *processStream) Next(ctx context.Context) (*image.RGBA, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if s.closed.Load() {
+		return nil, context.Canceled
+	}
 	select {
 	case img := <-s.frames:
 		return img, nil
@@ -133,7 +137,20 @@ func (s *processStream) Scroll(ctx context.Context, p image.Point) error {
 	}
 	return s.scroll(ctx, p)
 }
-func (s *processStream) Close() { s.closeOnce.Do(func() { s.cancel(); <-s.done; s.cleanup() }) }
+func (s *processStream) Close() {
+	s.closeOnce.Do(func() {
+		s.closed.Store(true)
+		s.cancel()
+		<-s.done
+		// The stream can remain referenced while the user reviews a finished
+		// capture. A queued desktop frame can otherwise retain up to 128 MB.
+		select {
+		case <-s.frames:
+		default:
+		}
+		s.cleanup()
+	})
+}
 
 // Native workers stream bounded, tightly packed pixel frames. The reader
 // drains continuously and only retains the latest frame, not an ever-growing

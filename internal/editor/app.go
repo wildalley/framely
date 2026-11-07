@@ -114,13 +114,7 @@ func (a *App) Open(parent context.Context, picture Picture, target *mygo.Rectang
 	}
 	a.cancel()
 	a.ctx, a.cancel = context.WithCancel(parent)
-	im := picture.image
-	a.image, a.pixels, a.mosaicPx = &im, picture.pixels, picture.mosaic
-	a.title, a.target = picture.title, target
-	a.bitmap = ui.NewBitmap(render.Preview(a.pixels, 4096))
-	if a.mosaicPx != nil {
-		a.mosaic = ui.NewBitmap(a.mosaicPx).Pixelated()
-	}
+	a.loadPicture(picture, target)
 	a.win = mygo.NewWindow(mygo.WindowOptions{
 		Title: a.title + " — ScreenPin", Width: minWidth, Height: barHeight + 80,
 		MinWidth: minWidth, MinHeight: 2*barHeight + propertyHeight + 40, UseContentSize: true,
@@ -132,6 +126,16 @@ func (a *App) Open(parent context.Context, picture Picture, target *mygo.Rectang
 	a.fitWindow(true)
 	withActivationToken(token, a.Show)
 	return a.win
+}
+
+func (a *App) loadPicture(picture Picture, target *mygo.Rectangle) {
+	im := picture.image
+	a.image, a.pixels, a.mosaicPx = &im, picture.pixels, picture.mosaic
+	a.title, a.target = picture.title, target
+	a.bitmap = ui.NewBitmap(render.Preview(a.pixels, 4096))
+	if a.mosaicPx != nil {
+		a.mosaic = ui.NewBitmap(a.mosaicPx).Pixelated()
+	}
 }
 
 func (a *App) Window() *mygo.Window        { return a.win }

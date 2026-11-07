@@ -2,9 +2,29 @@ package capture
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
+	"errors"
+	"image"
 	"testing"
 )
+
+func TestClosedStreamDropsQueuedFrame(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	s := &processStream{frames: make(chan *image.RGBA, 1), done: make(chan struct{}), cancel: cancel}
+	s.frames <- image.NewRGBA(image.Rect(0, 0, 1920, 1080))
+	cleanups := 0
+	s.cleanup = func() { cleanups++ }
+	close(s.done)
+	s.Close()
+	s.Close()
+	if ctx.Err() == nil || cleanups != 1 || len(s.frames) != 0 {
+		t.Fatal("closed capture retained a desktop frame or repeated cleanup")
+	}
+	if _, err := s.Next(context.Background()); !errors.Is(err, context.Canceled) {
+		t.Fatalf("closed stream Next() = %v", err)
+	}
+}
 
 func packet(w, h, format uint32, data []byte) []byte {
 	var b bytes.Buffer

@@ -14,7 +14,7 @@ destination = root / "resources" / f"{goos}-{arch}" / "workers"
 destination.mkdir(parents=True, exist_ok=True)
 subprocess.run([
     sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--onedir",
-    "--name", "screenpin-ocr", "--collect-all", "rapidocr", "--collect-all", "onnxruntime",
+    "--name", "screenpin-ocr", "--additional-hooks-dir", str(root / "workers/ocr/hooks"),
     "--exclude-module", "tkinter", "--exclude-module", "PyQt5",
     "--distpath", str(destination), "--workpath", str(root / "build" / "ocr-pyinstaller"),
     "--specpath", str(root / "build"), str(root / "workers" / "ocr" / "worker.py"),

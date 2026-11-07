@@ -33,6 +33,11 @@ type Result struct {
 	Error string `json:"error,omitempty"`
 }
 
+// Each worker loads its own models and inference runtime (about 200 MiB in
+// the Linux audit). Queue requests across image windows instead of loading
+// several copies at once. Closing a queued image still cancels immediately.
+var workerSlots = make(chan struct{}, 1)
+
 func (r Result) Text() string {
 	lines := make([]string, len(r.Lines))
 	for i, line := range r.Lines {
@@ -54,6 +59,15 @@ func Recognize(ctx context.Context, img *image.RGBA) (Result, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
+	select {
+	case workerSlots <- struct{}{}:
+		defer func() { <-workerSlots }()
+	case <-ctx.Done():
+		return Result{}, ctx.Err()
+	}
+	if err := ctx.Err(); err != nil {
+		return Result{}, err
+	}
 	cmd := exec.CommandContext(ctx, worker)
 	configureProcess(cmd)
 	in, err := cmd.StdinPipe()

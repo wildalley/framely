@@ -106,10 +106,13 @@ func (h *History) Undo() {
 	}
 	h.future = append([]historyState{h.state()}, h.future...)
 	if len(h.future) > historyLimit {
+		clear(h.future[historyLimit:])
 		h.future = h.future[:historyLimit]
 	}
-	h.restore(h.past[len(h.past)-1])
-	h.past = h.past[:len(h.past)-1]
+	last := len(h.past) - 1
+	h.restore(h.past[last])
+	h.past[last] = historyState{}
+	h.past = h.past[:last]
 }
 
 // Redo goes forward one step.
@@ -120,6 +123,7 @@ func (h *History) Redo() {
 	}
 	h.past = append(h.past, h.state())
 	h.restore(h.future[0])
+	h.future[0] = historyState{}
 	h.future = h.future[1:]
 }
 
