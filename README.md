@@ -1,191 +1,112 @@
 # ScreenPin
 
-ScreenPin 是一个面向 Linux、Windows 和 macOS 的截图与贴图工具。MyGo 原生重制版采用托盘工作流：每次截图、粘贴或打开图片都会创建独立窗口，支持标注、置顶、复制和保存图片；关闭后立即销毁该图片及其编辑记录。
+ScreenPin 是一个面向 Linux、Windows 和 macOS 的轻量、现代的桌面截图、标注与贴图工具。原生版使用 **Go + MyGo** 重制，采用托盘常驻与独立多贴图窗口架构：每次截图、粘贴或打开图片都会创建独立贴图窗口，支持标注涂鸦、置顶、复制、导出与离线 OCR；关闭贴图后即刻释放内存与图片资源。
 
-版本变更见 [更新日志](CHANGELOG.md)，当前进度和后续计划见 [改进记录与计划](IMPROVEMENTS.md)。
+版本变更详见 [更新日志](CHANGELOG.md)，开发演进与测试见 [原生开发说明](docs/NATIVE.md) 与 [改进记录与计划](IMPROVEMENTS.md)。
 
-MyGo 重制版正在 `refactor/mygo-native` 分支推进，已接通托盘、独立图片窗口、快捷键设置、PNG / JPEG / WebP 保存，以及 Windows/Linux 长截图和离线中英文 OCR。开发分支的 Windows 普通截图使用自有选区和内存采集，点击保存时才写入文件；长截图进入后直接框选，松开开始，支持自动或手动滚动；Linux 已获直接截图权限时按框选所在屏幕采集，各显示器分别记住共享授权。Windows 10 2004+ 提供浮动控制条；Wayland 自动滚动取决于桌面是否提供鼠标控制授权。原生版使用 Go + MyGo，Linux 窗口不依赖 WebKitGTK；组件构建、使用方式和当前迁移范围见 [原生开发说明](docs/NATIVE.md)。这些开发分支改进尚未包含在 v0.2.0 附件中；下方功能说明对应 Tauri 旧版，原生版下载与平台说明见下载部分。
+---
+
+## 核心特性
+
+- **多平台原生截图与快速选区**
+  - **Linux (Wayland / X11)**：通过 `xdg-desktop-portal` + PipeWire 原生采集，各显示器分别记忆授权；支持全屏选区拖选、按住空格移动选区、`Enter` 全屏、`Esc` 取消。无需依赖 WebKitGTK。
+  - **Windows**：纯内存桌面采集与自有原生全屏选区，点击保存前不产生磁盘临时文件。
+  - **macOS**：原生桌面捕获与窗口展示。
+- **现代化极简工具栏与快捷属性栏**
+  - 极简无框底图标与强调色激活状态，按功能逻辑分组。
+  - 现代连体胶囊数值组件 `[ 标签 数值 | ▲▼ ]`，支持直接输入或快捷加减。
+  - 标注线宽、字体大小、矩形及整图圆角、不透明度、颜色调色板一键直达。
+- **智能长截图（滚动截图）**
+  - 进入长截图后直接框选、松开即开始；Windows 10 2004+ 与 Linux 提供原生浮动控制条。
+  - 边滚边拼（40ms 极低延迟持续采样），无需等待拖动停止；自动识别去除右侧灰色滚动条，固定页脚防重复追加。
+- **离线中英文 OCR 文字识别**
+  - 开箱即用内置本地离线 OCR 模型与独立子进程运行时，不依赖系统安装 Python。
+  - 纯本地推演，图片不出本地，支持框选识别、长图切块识别、识别结果就地编辑与整段/逐行一键复制。
+- **独立多贴图与高效内存释放**
+  - 支持快捷键连续截图，每张贴图独立开窗，可随意移动、缩放、置顶（Pin）于屏幕最前。
+  - 贴图关闭后即刻销毁图片对象与撤销历史，严格控制驻留内存（日常待机仅约 20~30 MB）。
+  - 托盘图标动态显示全局快捷键与当前贴图数，支持「关闭所有贴图」一键批量清理。
+- **多样导出**
+  - PNG、WebP、JPEG 多格式导出；WebP / JPEG 质量无级可调；支持保留透明四角（PNG/WebP）或智能铺白底（JPEG）。
+
+---
 
 ## 下载与安装
 
-最新版为 [v0.2.0 MyGo 原生版](https://github.com/wildalley/screenpin/releases/tag/v0.2.0)。提供 Windows x64 安装程序、macOS Apple Silicon / Intel DMG、Linux DEB、Arch 包及便携包，完整包附带离线中英文 OCR。各附件校验值见 Release 的 `SHA256SUMS`。
+最新版本为 [ScreenPin v0.2.1](https://github.com/wildalley/screenpin/releases/tag/v0.2.1)。完整安装包均内置离线中英文 OCR 组件。
 
-- Windows：运行 `screenpin-0.2.0-windows-amd64-setup.exe`。
-- macOS 15+：按芯片选择 DMG，将 ScreenPin 拖入 Applications。本版尚未公证；长截图暂支持 Windows/Linux。
-- Ubuntu/Debian x64：`sudo apt install ./screenpin-0.2.0-linux-amd64.deb`。
-- Arch x64：`sudo pacman -U ./screenpin-native-0.2.0-1-x86_64.pkg.tar.zst`。
-- Linux 便携包：解压后运行 `./install.sh`，或保留 `workers` 目录直接运行 `./screenpin`。
+| 系统平台 | 安装方式 / 文件 |
+| :--- | :--- |
+| **Windows x64** | `screenpin-0.2.1-windows-amd64-setup.exe`；另提供免安装 `screenpin-0.2.1-windows-amd64-portable.zip` |
+| **macOS 15+ (Apple Silicon)** | `screenpin-0.2.1-darwin-arm64.dmg`（下载后将 ScreenPin 拖入 Applications） |
+| **macOS 15+ (Intel)** | `screenpin-0.2.1-darwin-amd64.dmg` |
+| **Ubuntu / Debian x64** | `sudo apt install ./screenpin-0.2.1-linux-amd64.deb` |
+| **Arch Linux x64** | `sudo pacman -U ./screenpin-native-0.2.1-1-x86_64.pkg.tar.zst` |
+| **其他 Linux x64** | 解压 `screenpin-0.2.1-linux-amd64-portable.tar.gz` 后运行 `./install.sh` 或 `./screenpin` |
 
-安装前请退出旧版。配置沿用旧版；原生版使用独立图片窗口，不再保存工程。完整功能和平台限制见 [v0.2.0 发布说明](docs/releases/v0.2.0.md) 与 [原生开发说明](docs/NATIVE.md)。
+所有安装包的 SHA-256 校验和见 Release 中的 `SHA256SUMS` 文件。
 
-以下特性与 Tauri 开发记录保留供旧版参考；旧版最后发行版本为 [v0.1.1](https://github.com/wildalley/screenpin/releases/tag/v0.1.1)。
+> [!NOTE]
+> 平台说明与发布细节请参阅 [v0.2.1 发布说明](docs/releases/v0.2.1.md)。
 
-## 特性
+---
 
-- **跨平台截图采集**
-  - Linux Wayland/X11：通过 `xdg-desktop-portal` 静默截取整个桌面，在每块显示器上用 ScreenPin 自己的选区窗口拖选，松开即确认，拖动时按住空格可移动选区，`Enter` 整屏，`Esc` 取消；首次截图时桌面可能询问是否允许，也可以在设置面板里点「授权」。原生 Wayland 窗口后端或静默截图被拒绝时，回退到门户的交互式选区
-  - macOS：调用 `screencapture -i` 选择区域
-  - Windows：打开系统 `ms-screenclip:` 选择区域；取消或超时不会退回整屏截图
-  
-- **八种标注工具**：矩形、椭圆、箭头、画笔、荧光笔、区域高亮、文字、马赛克
-  - 区域高亮（`G`）：拖出一个或多个选区，选区内保持原图亮度，其余区域压暗，适合聚焦讲解重点
-  
-- **实时编辑**
-  - 选中对象后移动、四角缩放、改颜色、调粗细/透明度、调整图层和删除
-  - 文字对象双击直接编辑，新建文字自动进入编辑状态
-  - `Ctrl/Cmd + Z`、`Ctrl/Cmd + Shift + Z` 撤销/重做
-  - 按 `?` 打开快捷键面板，列出全部工具和操作按键
-  - `Esc` 逐层后退：关闭面板 → 取消选中并回到选择工具 → 收回托盘
-  - 画笔、荧光笔画完不自动选中，可以连续画；矩形、箭头等形状画完保持选中，方便马上调整
-  - 无边框窗口，动态适配截图尺寸和缩放比例
-  - 大图低缩放时，选框控制点保持可操作尺寸
-  
-- **工作流集成**
-  - 复制到剪贴板，导出 PNG / JPEG / WebP（有损格式可调质量），保存/打开 `.screenpin` 工程
-  - 替换当前截图、打开其他工程或从托盘退出前，会提示确认尚未保存的工程修改；导出图片不等同于保存可编辑工程
-  - 马赛克处理失败时不会回退到原图，相关工具会被禁用，含马赛克的导出也会被阻止
-  - 置顶窗口继续修改，再次点击取消置顶
-  - 默认使用桌面级 `Win + Shift + S` 全局快捷键，可在设置面板中录制并保存其他组合键
-  - Wayland 下保存快捷键会等待桌面门户授权；新绑定和配置写入都成功后才替换旧绑定，失败时保留原绑定和配置
-  - 开机自启可在设置面板或托盘菜单开关，登录后静默启动到托盘；状态以操作系统的注册项为准，两处显示同步
-  - 系统托盘菜单：截图、显示主窗口、开机自启、退出；关闭主窗口隐藏到托盘
+## 本地开发与构建
 
-## 稳定版开发（Tauri）
+### 依赖环境
+- **Go**：>= 1.23
+- **MyGo 工具链**：`mygo`
+- **Linux 编译依赖**：`libayatana-appindicator3-dev`、`libpipewire-0.3-dev`、`pkg-config`
+
+### 常用命令
 
 ```bash
-npm install
-npm run dev
+# 运行单元测试
+go test ./...
+
+# 运行代码竞态检测
+go test -race ./...
+
+# 构建本地平台原生二进制与安装包
+go tool mygo build --platform linux/amd64
+
+# 一键安装到当前用户本地目录 (~/.local/bin) 并启动
+python3 scripts/install-local-linux.py --image assets/app-icon.png
 ```
 
-桌面端：
+详细的各平台编译步骤、离线 OCR 构建流程及测试见 [原生开发说明](docs/NATIVE.md)。
 
-```bash
-npm run tauri -- dev
-```
+---
 
-安装后可使用 `screenpin --hidden` 静默启动到系统托盘。Linux 下可运行 `screenpin --capture` 通知已启动的实例截图，适合桌面环境的全局快捷键绑定；已有实例时直接运行 `screenpin` 会唤出它的窗口。
+## 快捷键与配置
 
-构建 Tauri 支持的 Linux 安装包：
+可以在设置面板中直接录制全局截图快捷键。配置文件路径位于操作系统标准配置目录：
+- **Linux**：`~/.config/screenpin/config.json`
+- **Windows**：`%APPDATA%\ScreenPin\config.json`
 
-```bash
-npm run tauri -- build --bundles deb,rpm
-```
-
-在 Arch Linux 上可以直接构建 pacman 原生包：
-
-```bash
-npm run build:arch
-sudo pacman -U "$(cd packaging/arch && makepkg --packagelist)"
-```
-
-`build:arch` 会从当前工作区编译 release 二进制，并生成适配当前 CPU 架构的 `.pkg.tar.zst`。运行时依赖由 pacman 管理，不会打包一份 WebKitGTK。
-
-在 Wayland 会话中，ScreenPin 检测到 XWayland 后会自动让 WebKitGTK 窗口使用 X11，并关闭 DMA-BUF 渲染，以规避部分合成器上的 GDK protocol error 71。截图本身仍通过 `xdg-desktop-portal` 请求，不会绕过 Wayland 权限模型。
-
-如需测试原生 Wayland 窗口后端，可以显式覆盖：
-
-```bash
-SCREENPIN_GDK_BACKEND=wayland npm run tauri -- dev
-```
-
-检查：
-
-```bash
-npm run build
-npm test
-cargo check --manifest-path src-tauri/Cargo.toml --locked
-cargo test --manifest-path src-tauri/Cargo.toml --locked
-```
-
-Linux 图形会话下可单独验证选区窗口的进程释放：
-
-```bash
-GDK_BACKEND=x11 WEBKIT_DISABLE_DMABUF_RENDERER=1 cargo run --manifest-path src-tauri/Cargo.toml --example selection_lifecycle --locked
-```
-
-测试用屏幕外的合成页面模拟 12 轮双屏选区，不请求真实截图，也不修改正在运行的 ScreenPin。每轮结束后检查页面进程回到基线、选区窗口注销和编辑器状态保留，并输出测试进程组的 PSS。追加 `-- --without-cleanup` 可复现旧清理逻辑，预期以失败状态退出。该检查需要可用的 X11/XWayland 图形会话。
-
-Linux/glibc 还可在无图形会话下验证大图处理后的主进程内存回收：
-
-```bash
-cargo run --release --manifest-path src-tauri/Cargo.toml --example capture_memory --locked
-```
-
-此检查使用真实裁剪函数，在 20 个常驻工作线程上执行 40 轮 5120×1440 合成 PNG 的解码、裁剪、编码和 data URL/JSON 往返；检查结果像素及每轮处理后仍驻留的内存。追加 `-- --without-policy` 可验证旧分配策略会使检查失败。它与选区进程生命周期检查分别覆盖主进程图像缓冲和 WebKit 子进程。
-
-### 快捷键与自启设置
-
-在工具栏打开设置，点击“录制”、按下包含修饰键的组合，再点击“保存”。Linux 配置通常位于 `~/.config/screenpin/config.json`（遵循系统配置目录设置），默认内容为：
-
+默认配置：
 ```json
 {
-  "captureShortcut": "Super+Shift+S",
+  "captureShortcut": "Ctrl+Alt+A",
   "hideAfterCopy": false
 }
 ```
 
-`hideAfterCopy` 对应设置里的「复制后收回托盘」，窗口置顶时不生效。`Super` 在界面中显示为 `Win`；`CommandOrControl` 在 Windows/Linux 上对应 Ctrl，在 macOS 上对应 Cmd。开机自启由系统注册项管理，切换后立即生效，不写入此 JSON，也无需再点击“保存”。
+- Linux Wayland 下保存快捷键会自动请求桌面门户（`org.freedesktop.portal.GlobalShortcuts`）授权。
+- 开机自启由操作系统注册表 / 自启目录管理，在托盘菜单或设置中即可一键开关。
 
-Wayland 下，门户授权窗口可能在保存时出现，请完成授权后等待应用返回结果。授权期间原快捷键继续工作，重复保存会被拒绝。门户拒绝授权、未返回已分配的截图快捷键或配置写入失败时，应用会显示错误并保留原绑定；不要把门户仍在等待授权理解为保存成功。最终按键分配由桌面门户决定，仍需实际按键确认。
+---
 
-### Linux 依赖
+## 常用操作指引
 
-需要 WebKitGTK、GTK3、DBus 和 `xdg-desktop-portal`。Wayland 下截图权限与交互界面由桌面环境的 portal 后端决定；Hyprland 建议安装并启用 `xdg-desktop-portal-hyprland`。Wayland 全局快捷键使用 `org.freedesktop.portal.GlobalShortcuts`，首次启动或修改快捷键时可能由桌面门户请求授权。托盘图标使用 AppIndicator/StatusNotifier，Waybar 需要启用 `tray` 模块才能显示。
+- **框选截图**：默认快捷键 `Ctrl + Alt + A`（支持自定义），拖拽选择范围，松开即可生成贴图窗口。
+- **滚动长截图**：托盘菜单选择「长截图」或按长截图快捷键，框选要滚动的区域，松开后滚动鼠标滚轮或拖动内容，再次按快捷键或点击浮动栏「完成」即可生成长图。
+- **快速固定与置顶**：点击工具栏图钉或双击标题栏，窗口将固定在所有应用最前层。
+- **标注编辑**：画笔、矩形、圆形、箭头、荧光笔、文字、马赛克。画完图形后可直接拖拽四角调节点缩放或移动。
+- **复制与保存**：`Ctrl + C` 一键复制合成图，`Ctrl + S` 弹出保存选项。
 
-启动时若全局快捷键门户失败，应用会尝试 X11 快捷键注册；它在 Wayland 桌面的覆盖范围取决于合成器。如果需要桌面环境直接管理组合键，可将按键绑定到 `screenpin --capture`，并让 ScreenPin 保持后台运行。
-
-### 平铺窗口管理器
-
-Hyprland、Sway 等平铺合成器会接管窗口尺寸，`fit_window` 的调整可能被忽略，窗口也会被塞进 tiling 布局。建议加窗口规则让它浮动，例如 Hyprland 的 `~/.config/hypr/hyprland.conf`：
-
-```
-windowrulev2 = float, class:^(ScreenPin)$
-windowrulev2 = noborder, class:^(ScreenPin)$
-windowrulev2 = noanim, class:^(ScreenPin)$
-```
-
-类名以实际 `hyprctl clients` 输出为准。
-
-## 工程格式
-
-`.screenpin` 是版本化 JSON：
-
-```json
-{
-  "format": "screenpin-project",
-  "version": 1,
-  "title": "产品截图",
-  "createdAt": "2026-08-11T07:30:00.000Z",
-  "updatedAt": "2026-08-11T08:15:00.000Z",
-  "image": { "dataUrl": "...", "width": 1920, "height": 1080, "name": "screenshot.png" },
-  "annotations": [
-    { "id": "...", "type": "arrow", "x": 120, "y": 80, "width": 300, "height": 170, "endX": 420, "endY": 250, "color": "#e5484d", "fill": "transparent", "strokeWidth": 4, "opacity": 1, "fontSize": 28 }
-  ]
-}
-```
-
-区域高亮对象使用 `type: "area-highlight"`，并保存选区的 `x`、`y`、`width`、`height`、颜色和压暗强度。工程打开时会校验图片能否解码、真实尺寸、时间字段、标注类型、数值范围和对象 ID，非法、损坏或伪造图片尺寸的工程会被拒绝加载。
-
-后续版本可以在保持原图和对象坐标兼容的前提下增加 OCR、滚动截图、窗口录制、云同步和多图画布。
-
-## 技术栈
-
-原生预览版使用 Go + MyGo；模块分工见 [原生开发说明](docs/NATIVE.md#原生模块)。稳定版使用：
-
-- **前端**：React 19 + TypeScript + Vite
-- **桌面**：Tauri 2 (Rust)
-- **测试**：Vitest
-- **平台集成**：
-  - Linux：`xdg-desktop-portal` (截图)、`ashpd` (全局快捷键)、`arboard` (剪贴板)
-  - macOS：`screencapture` CLI
-  - Windows：`ms-screenclip:` URI、`arboard`（剪贴板）和 Windows 剪贴板序列号检测
-
-## 架构
-
-无边框窗口通过 `fit_window` command 动态调整尺寸以匹配截图缩放比例 + 工具栏高度。工具栏使用 ResizeObserver 测量自身，通过 CSS 自定义属性 `--bar-height` 传递给浮层定位。缩放计算受屏幕工作区约束，保证窗口不会超出可用空间。合成器或窗口管理器可能不按请求尺寸分配窗口，因此画布实际显示的缩放比例还会按 webview 的真实尺寸再收一次，保持宽高比，截图和工具栏都不会被裁掉。
-
-标注对象是 SVG 元素，保留原始坐标和样式参数。区域高亮通过 SVG mask 对全画布添加暗层，并挖出选区，因此导出图像中选区保持原图亮度、其他区域变暗。导出时克隆 SVG、移除选择框和编辑器元素、序列化为 Blob 后通过 Canvas 渲染，再按所选格式编码。马赛克使用低分辨率纹理并以像素化方式放大；如果纹理生成失败，应用会拒绝导出以避免泄露原图。JPEG 没有 alpha 通道，编码前先铺白底避免透明像素变黑；浏览器遇到不支持的格式会静默回退成 PNG，这种情况会直接报错而不是写出扩展名与实际内容不符的文件。
+---
 
 ## License
 
-MIT
+[MIT](LICENSE)
