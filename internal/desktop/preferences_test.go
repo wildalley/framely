@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/wildalley/screenpin/internal/capture"
 	"github.com/wildalley/screenpin/internal/config"
 )
 
@@ -76,12 +77,15 @@ func TestSettingsTabsShareDraftAndKeepSaveVisibleAtMinimumSize(t *testing.T) {
 	if _, ok := tt.Find("打开长截图"); !ok {
 		t.Fatal("capture permissions are not reachable")
 	}
-	wantAutomatic := !v.draft.AutomaticScroll
-	if err := tt.Click("长截图自动向下滚动"); err != nil {
-		t.Fatal(err)
-	}
-	if v.draft.AutomaticScroll != wantAutomatic {
-		t.Fatal("automatic scroll preference was not changed")
+	wantAutomatic := v.draft.AutomaticScroll
+	if capture.ScrollingSupported() {
+		wantAutomatic = !v.draft.AutomaticScroll
+		if err := tt.Click("长截图自动向下滚动"); err != nil {
+			t.Fatal(err)
+		}
+		if v.draft.AutomaticScroll != wantAutomatic {
+			t.Fatal("automatic scroll preference was not changed")
+		}
 	}
 	if err := tt.Click("快捷键"); err != nil {
 		t.Fatal(err)
