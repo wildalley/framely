@@ -82,8 +82,9 @@ type App struct {
 	textEdit       bool
 	displayZoom    float64
 
-	target *mygo.Rectangle
-	layout layoutKey
+	target    *mygo.Rectangle
+	selection *ScreenSelection
+	layout    layoutKey
 
 	OnClosed    func()
 	OnPaste     func()
@@ -132,6 +133,7 @@ func (a *App) loadPicture(picture Picture, target *mygo.Rectangle) {
 	im := picture.image
 	a.image, a.pixels, a.mosaicPx = &im, picture.pixels, picture.mosaic
 	a.title, a.target = picture.title, target
+	a.selection = picture.selection
 	a.bitmap = ui.NewBitmap(render.Preview(a.pixels, 4096))
 	if a.mosaicPx != nil {
 		a.mosaic = ui.NewBitmap(a.mosaicPx).Pixelated()
@@ -159,6 +161,7 @@ func (a *App) release() {
 	a.annotationText, a.styleText = ui.Handle{}, ui.Handle{}
 	a.propertyInputs, a.propertyValues, a.propertyEditKey = [4]ui.Handle{}, [4]string{}, ""
 	a.target, a.panel, a.lastPanel = nil, PanelNone, PanelNone
+	a.selection = nil
 	a.busy, a.pinned, a.textEdit, a.editFresh = false, false, false, false
 	done := a.OnClosed
 	a.OnClosed, a.OnPaste = nil, nil

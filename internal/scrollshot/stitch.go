@@ -20,6 +20,10 @@ var (
 	ErrLimit     = errors.New("长截图已达到长度或内存上限，请完成当前图片")
 )
 
+// A wide table may change only names/phone numbers when moving one full row;
+// most dates, labels and whitespace remain identical.
+const duplicateThreshold = 0.15
+
 type Outcome struct {
 	Added     int
 	Duplicate bool
@@ -37,6 +41,7 @@ type Stitcher struct {
 	last                       *undo
 	MaxPixels                  int64
 	MaxHeight                  int
+	scrollbar                  image.Rectangle
 }
 
 func New() *Stitcher              { return &Stitcher{MaxPixels: 24_000_000, MaxHeight: 30000} }
@@ -54,6 +59,7 @@ func (s *Stitcher) Undo() bool {
 func (s *Stitcher) Release() {
 	s.chunks, s.previous, s.footer, s.last = nil, nil, nil, nil
 	s.height, s.width = 0, 0
+	s.scrollbar = image.Rectangle{}
 }
 
 func (s *Stitcher) Add(frame *image.RGBA) (Outcome, error) {
@@ -69,14 +75,18 @@ func (s *Stitcher) Add(frame *image.RGBA) (Outcome, error) {
 		s.width, s.height = w, h
 		s.previous = first
 		s.chunks = []*image.RGBA{first}
+		s.scrollbar = scrollbarStrip(first)
 		return Outcome{Added: h, Height: h}, nil
 	}
 	if w != s.width || h != s.previous.Bounds().Dy() {
 		return Outcome{Height: s.height}, ErrSize
 	}
+	if Difference(s.previous, frame) < duplicateThreshold {
+		return Outcome{Duplicate: true, Height: s.height}, nil
+	}
 	a, b := sample(s.previous), sample(frame)
 	columns := movingColumns(a, b)
-	if len(columns) < 4 || Difference(s.previous, frame) < 0.45 {
+	if len(columns) < 4 {
 		return Outcome{Duplicate: true, Height: s.height}, nil
 	}
 	top, bottom := s.top, s.bottom
@@ -99,19 +109,36 @@ func (s *Stitcher) Add(frame *image.RGBA) (Outcome, error) {
 		return Outcome{Height: s.height}, ErrLimit
 	}
 	s.last = &undo{chunks: append([]*image.RGBA(nil), s.chunks...), previous: s.previous, footer: s.footer, top: s.top, bottom: s.bottom, height: s.height}
-	if s.bottom == 0 && bottom > 0 && len(s.chunks) == 1 {
-		old := s.chunks[0]
-		s.chunks[0] = old.SubImage(image.Rect(old.Rect.Min.X, old.Rect.Min.Y, old.Rect.Max.X, old.Rect.Max.Y-bottom)).(*image.RGBA)
-	}
+	// Replace the overlapping tail at a seam inside the moving content.
+	// Keeping only a newly revealed bottom strip duplicates sticky footers
+	// and can cut through rows when blank row padding is mistaken for a bar.
+	seam := (max(top, h/10) + h - max(bottom, h/12) - delta) / 2
+	cut := s.height - h + seam + delta
+	s.chunks = s.prefix(cut)
 	s.top, s.bottom = top, bottom
-	end := frame.Rect.Max.Y - bottom
-	s.chunks = append(s.chunks, clone(frame, image.Rect(frame.Rect.Min.X, end-delta, frame.Rect.Max.X, end)))
-	if bottom > 0 {
-		s.footer = clone(frame, image.Rect(frame.Rect.Min.X, frame.Rect.Max.Y-bottom, frame.Rect.Max.X, frame.Rect.Max.Y))
-	}
 	s.previous = clone(frame, frame.Bounds())
+	s.chunks = append(s.chunks, s.previous.SubImage(image.Rect(0, seam, w, h)).(*image.RGBA))
+	s.footer = nil
 	s.height += delta
 	return Outcome{Added: delta, Height: s.height}, nil
+}
+
+func (s *Stitcher) prefix(height int) []*image.RGBA {
+	chunks := make([]*image.RGBA, 0, len(s.chunks)+1)
+	for _, c := range s.chunks {
+		if height <= 0 {
+			break
+		}
+		if height >= c.Rect.Dy() {
+			chunks = append(chunks, c)
+			height -= c.Rect.Dy()
+		} else {
+			// Detach the small retained strip from the previous full viewport.
+			chunks = append(chunks, clone(c, image.Rect(c.Rect.Min.X, c.Rect.Min.Y, c.Rect.Max.X, c.Rect.Min.Y+height)))
+			break
+		}
+	}
+	return chunks
 }
 
 func (s *Stitcher) fits(w, h int) bool {
@@ -136,7 +163,7 @@ func (s *Stitcher) Image() image.Image {
 		y += c.Bounds().Dy()
 		ends[i] = y
 	}
-	return tiled{chunks: chunks, ends: ends, bounds: image.Rect(0, 0, s.width, s.height)}
+	return tiled{chunks: chunks, ends: ends, bounds: image.Rect(0, 0, s.width, s.height), scrollbar: s.scrollbar}
 }
 func (s *Stitcher) Flatten() *image.RGBA {
 	out := image.NewRGBA(image.Rect(0, 0, s.width, s.height))
@@ -149,19 +176,29 @@ func (s *Stitcher) Flatten() *image.RGBA {
 	if s.footer != nil {
 		draw.Draw(out, image.Rect(0, y, s.width, s.height), s.footer, s.footer.Rect.Min, draw.Src)
 	}
+	if !s.scrollbar.Empty() {
+		for y := range s.height {
+			background := out.RGBAAt(max(0, s.scrollbar.Min.X-2), y)
+			for x := s.scrollbar.Min.X; x < s.scrollbar.Max.X; x++ {
+				out.SetRGBA(x, y, background)
+			}
+		}
+	}
 	return out
 }
 func (s *Stitcher) Preview(w, h int) *image.RGBA {
 	ratio := math.Min(1, math.Min(float64(w)/float64(max(1, s.width)), float64(h)/float64(max(1, s.height))))
 	out := image.NewRGBA(image.Rect(0, 0, max(1, int(float64(s.width)*ratio)), max(1, int(float64(s.height)*ratio))))
-	xdraw.ApproxBiLinear.Scale(out, out.Bounds(), s.Image(), s.Image().Bounds(), draw.Src, nil)
+	view := s.Image()
+	xdraw.ApproxBiLinear.Scale(out, out.Bounds(), view, view.Bounds(), draw.Src, nil)
 	return out
 }
 
 type tiled struct {
-	chunks []*image.RGBA
-	ends   []int
-	bounds image.Rectangle
+	chunks    []*image.RGBA
+	ends      []int
+	bounds    image.Rectangle
+	scrollbar image.Rectangle
 }
 
 func (t tiled) ColorModel() color.Model { return color.RGBAModel }
@@ -169,6 +206,9 @@ func (t tiled) Bounds() image.Rectangle { return t.bounds }
 func (t tiled) At(x, y int) color.Color {
 	if !image.Pt(x, y).In(t.bounds) {
 		return color.RGBA{}
+	}
+	if !t.scrollbar.Empty() && x >= t.scrollbar.Min.X && x < t.scrollbar.Max.X {
+		x = max(0, t.scrollbar.Min.X-2)
 	}
 	i := sort.SearchInts(t.ends, y+1)
 	if i >= len(t.chunks) {
@@ -180,6 +220,55 @@ func (t tiled) At(x, y int) color.Color {
 	}
 	c := t.chunks[i]
 	return c.RGBAAt(c.Rect.Min.X+x, c.Rect.Min.Y+y-start)
+}
+
+// scrollbarStrip recognizes only a narrow neutral thumb at the right edge,
+// with a long light track around it. Text, colored graphics and full-height
+// borders do not qualify. Filling from the neighboring gutter keeps width
+// unchanged and prevents multiple thumb fragments in the finished image.
+func scrollbarStrip(frame *image.RGBA) image.Rectangle {
+	w, h := frame.Rect.Dx(), frame.Rect.Dy()
+	if w < 80 || h < 160 {
+		return image.Rectangle{}
+	}
+	type column struct{ x, top, length int }
+	var columns []column
+	for x := max(2, w-56); x < w; x++ {
+		start, run, bestTop, best, light := 0, 0, 0, 0, 0
+		for y := range h {
+			c := frame.RGBAAt(frame.Rect.Min.X+x, frame.Rect.Min.Y+y)
+			neutral := abs(int(c.R)-int(c.G)) <= 5 && abs(int(c.R)-int(c.B)) <= 5
+			if neutral && c.R >= 232 {
+				light++
+			}
+			if neutral && c.R >= 70 && c.R <= 210 {
+				if run == 0 {
+					start = y
+				}
+				run++
+				if run > best {
+					bestTop, best = start, run
+				}
+			} else {
+				run = 0
+			}
+		}
+		if light >= h/4 && best >= max(32, h/20) && best < h*3/4 {
+			columns = append(columns, column{x, bestTop, best})
+		}
+	}
+	for i := 0; i < len(columns); {
+		j := i + 1
+		for j < len(columns) && columns[j].x == columns[j-1].x+1 && abs(columns[j].top-columns[i].top) <= 3 && abs(columns[j].length-columns[i].length) <= 6 {
+			j++
+		}
+		if j-i >= 3 && j-i <= 16 {
+			// Include the rounded/antialiased edge of the recognized thumb.
+			return image.Rect(max(2, columns[i].x-2), 0, min(w, columns[j-1].x+3), h)
+		}
+		i = j
+	}
+	return image.Rectangle{}
 }
 
 // Difference ignores isolated cursor/animation pixels by sampling the image.
@@ -207,18 +296,27 @@ func abs(v int) int {
 
 type features struct {
 	rows []uint8
+	ink  []bool
 	n, h int
 }
 
 func sample(img *image.RGBA) features {
 	w, h := img.Rect.Dx(), img.Rect.Dy()
 	left, right := max(1, w/100), w-max(10, w/40)
-	n := min(96, right-left)
-	f := features{rows: make([]uint8, n*h), n: n, h: h}
+	n := min(192, right-left)
+	f := features{rows: make([]uint8, n*h), ink: make([]bool, n*h), n: n, h: h}
 	for y := range h {
 		for i := range n {
 			x := left + i*max(1, right-left-1)/max(1, n-1)
 			f.rows[y*n+i] = gray(img.RGBAAt(img.Rect.Min.X+x, img.Rect.Min.Y+y))
+		}
+	}
+	for y := range h {
+		for x := range n {
+			near := []int{int(f.rows[max(0, y-12)*n+x]), int(f.rows[max(0, y-6)*n+x]), int(f.rows[min(h-1, y+6)*n+x]), int(f.rows[min(h-1, y+12)*n+x])}
+			sort.Ints(near)
+			background := (near[1] + near[2]) / 2
+			f.ink[y*n+x] = abs(int(f.rows[y*n+x])-background) >= 10
 		}
 	}
 	return f
@@ -239,11 +337,15 @@ func movingColumns(a, b features) []int {
 	return cols
 }
 func rowError(a, b features, ay, by int, cols []int) float64 {
-	sum := 0
+	sum, count := 0, 0
 	for _, x := range cols {
+		if !a.ink[ay*a.n+x] && !b.ink[by*b.n+x] {
+			continue
+		}
 		sum += abs(int(a.rows[ay*a.n+x]) - int(b.rows[by*b.n+x]))
+		count++
 	}
-	return float64(sum) / float64(max(1, len(cols)))
+	return float64(sum) / float64(max(1, count))
 }
 func stationaryEdges(a, b features) (int, int) {
 	cols := make([]int, a.n)

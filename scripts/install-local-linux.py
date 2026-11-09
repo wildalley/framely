@@ -13,6 +13,8 @@ import time
 repo = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--image', type=Path, help='Open a test image after restarting')
+parser.add_argument('--replace-system-instance', action='store_true',
+                    help='Also stop this user\'s ScreenPin from the system package')
 args = parser.parse_args()
 launch_args = ['--scroll']
 if args.image is not None:
@@ -56,7 +58,10 @@ for line in result.stdout.splitlines():
         executable = os.readlink(proc / 'exe').removesuffix(' (deleted)')
     except FileNotFoundError:
         continue
-    if executable != str(binary):
+    allowed = {str(binary)}
+    if args.replace_system_instance:
+        allowed.update(['/usr/bin/screenpin', '/usr/lib/screenpin/screenpin'])
+    if executable not in allowed or proc.stat().st_uid != os.getuid():
         raise RuntimeError(f'Unexpected running ScreenPin: {pid} {executable}')
     os.kill(pid, signal.SIGTERM)
     for attempt in range(100):

@@ -36,10 +36,19 @@ static int write_all(const void *data, size_t size) {
 }
 
 static void state_changed(void *userdata, enum pw_stream_state old, enum pw_stream_state state, const char *error) {
-    (void)old; struct capture *c=userdata;
+    struct capture *c=userdata;
+    fprintf(stderr,"PipeWire state: %s -> %s%s%s\n",pw_stream_state_as_string(old),pw_stream_state_as_string(state),error?": ":"",error?error:"");
     if(state==PW_STREAM_STATE_ERROR) { fprintf(stderr,"PipeWire: %s\n",error?error:"stream failed");c->failed=1;pw_main_loop_quit(c->loop); }
     if(state==PW_STREAM_STATE_UNCONNECTED && c->sent) pw_main_loop_quit(c->loop);
 }
+
+static void core_error(void *userdata,uint32_t id,int seq,int res,const char *message) {
+    (void)seq;struct capture *c=userdata;
+    fprintf(stderr,"PipeWire core error: id=%u code=%d %s\n",id,res,message?message:"");
+    c->failed=1;pw_main_loop_quit(c->loop);
+}
+
+static const struct pw_core_events core_events={PW_VERSION_CORE_EVENTS,.error=core_error};
 
 static void param_changed(void *userdata,uint32_t id,const struct spa_pod *param) {
     struct capture *c=userdata;
@@ -58,7 +67,10 @@ static void param_changed(void *userdata,uint32_t id,const struct spa_pod *param
     const struct spa_pod *params[1];
     params[0]=spa_pod_builder_add_object(&builder,SPA_TYPE_OBJECT_ParamBuffers,SPA_PARAM_Buffers,
         SPA_PARAM_BUFFERS_buffers,SPA_POD_CHOICE_RANGE_Int(3,2,8),
-        SPA_PARAM_BUFFERS_dataType,SPA_POD_CHOICE_FLAGS_Int((1<<SPA_DATA_MemFd)|(1<<SPA_DATA_MemPtr)|(c->has_modifier?(1<<SPA_DATA_DmaBuf):0)));
+        SPA_PARAM_BUFFERS_blocks,SPA_POD_Int(1),
+        SPA_PARAM_BUFFERS_size,SPA_POD_Int(c->format.size.width*c->format.size.height*4),
+        SPA_PARAM_BUFFERS_stride,SPA_POD_Int(c->format.size.width*4),
+        SPA_PARAM_BUFFERS_dataType,SPA_POD_CHOICE_FLAGS_Int(c->has_modifier?(1<<SPA_DATA_DmaBuf):((1<<SPA_DATA_MemFd)|(1<<SPA_DATA_MemPtr))));
     pw_stream_update_params(c->stream,params,1);
 }
 
@@ -109,7 +121,11 @@ static void emit_buffer(struct capture *c,struct pw_buffer *pw) {
     uint32_t header[4]={0x31465053,width,height,pixel_format};
     if(write_all(header,sizeof(header))<0) {pw_main_loop_quit(c->loop);goto done;}
     pixels+=chunk->offset;
-    for(uint32_t y=0;y<height;y++) if(write_all(pixels+y*stride,width*4)<0) {pw_main_loop_quit(c->loop);goto done;}
+    if(stride==width*4) {
+        if(write_all(pixels,(size_t)width*height*4)<0) {pw_main_loop_quit(c->loop);goto done;}
+    } else {
+        for(uint32_t y=0;y<height;y++) if(write_all(pixels+y*stride,width*4)<0) {pw_main_loop_quit(c->loop);goto done;}
+    }
     c->sent=now;
 done:
     if(mapping!=MAP_FAILED)munmap(mapping,map_size);
@@ -135,9 +151,9 @@ static void process(void *userdata) {
     if(c->pending){pw_stream_queue_buffer(c->stream,c->pending);c->pending=NULL;}
     struct timespec ts;clock_gettime(CLOCK_MONOTONIC,&ts);
     uint64_t now=(uint64_t)ts.tv_sec*1000000000+ts.tv_nsec;
-    if(c->sent&&now-c->sent<120000000) {
+    if(c->sent&&now-c->sent<40000000) {
         // Damage-only streams still need their final settled frame flushed.
-        uint64_t delay=120000000-(now-c->sent);
+        uint64_t delay=40000000-(now-c->sent);
         struct timespec next={.tv_sec=0,.tv_nsec=(long)delay};
         c->pending=pw;
         pw_loop_update_timer(pw_main_loop_get_loop(c->loop),c->timer,&next,NULL,false);
@@ -147,6 +163,27 @@ static void process(void *userdata) {
 }
 
 static const struct pw_stream_events events={PW_VERSION_STREAM_EVENTS,.state_changed=state_changed,.param_changed=param_changed,.remove_buffer=remove_buffer,.process=process};
+
+static void capture_formats(struct spa_pod_builder *builder,const struct spa_pod **params) {
+    struct spa_pod_frame frame;
+    spa_pod_builder_push_object(builder,&frame,SPA_TYPE_OBJECT_Format,SPA_PARAM_EnumFormat);
+    spa_pod_builder_add(builder,
+        SPA_FORMAT_mediaType,SPA_POD_Id(SPA_MEDIA_TYPE_video),SPA_FORMAT_mediaSubtype,SPA_POD_Id(SPA_MEDIA_SUBTYPE_raw),
+        SPA_FORMAT_VIDEO_format,SPA_POD_CHOICE_ENUM_Id(5,SPA_VIDEO_FORMAT_BGRx,SPA_VIDEO_FORMAT_BGRx,SPA_VIDEO_FORMAT_BGRA,SPA_VIDEO_FORMAT_RGBA,SPA_VIDEO_FORMAT_RGBx),
+        SPA_FORMAT_VIDEO_size,SPA_POD_CHOICE_RANGE_Rectangle(&SPA_RECTANGLE(1920,1080),&SPA_RECTANGLE(1,1),&SPA_RECTANGLE(16384,16384)),
+        SPA_FORMAT_VIDEO_framerate,SPA_POD_CHOICE_RANGE_Fraction(&SPA_FRACTION(0,1),&SPA_FRACTION(0,1),&SPA_FRACTION(144,1)),0);
+    // Without MANDATORY, SPA can merge our modifier into a producer's CPU
+    // format. Mutter then receives a DMA-BUF-only layout for its MemFd source
+    // and produces unallocated buffers (invalid memory type 8).
+    spa_pod_builder_prop(builder,SPA_FORMAT_VIDEO_modifier,SPA_POD_PROP_FLAG_MANDATORY);
+    spa_pod_builder_long(builder,0);
+    params[0]=spa_pod_builder_pop(builder,&frame);
+    params[1]=spa_pod_builder_add_object(builder,SPA_TYPE_OBJECT_Format,SPA_PARAM_EnumFormat,
+        SPA_FORMAT_mediaType,SPA_POD_Id(SPA_MEDIA_TYPE_video),SPA_FORMAT_mediaSubtype,SPA_POD_Id(SPA_MEDIA_SUBTYPE_raw),
+        SPA_FORMAT_VIDEO_format,SPA_POD_CHOICE_ENUM_Id(5,SPA_VIDEO_FORMAT_BGRx,SPA_VIDEO_FORMAT_BGRx,SPA_VIDEO_FORMAT_BGRA,SPA_VIDEO_FORMAT_RGBA,SPA_VIDEO_FORMAT_RGBx),
+        SPA_FORMAT_VIDEO_size,SPA_POD_CHOICE_RANGE_Rectangle(&SPA_RECTANGLE(1920,1080),&SPA_RECTANGLE(1,1),&SPA_RECTANGLE(16384,16384)),
+        SPA_FORMAT_VIDEO_framerate,SPA_POD_CHOICE_RANGE_Fraction(&SPA_FRACTION(0,1),&SPA_FRACTION(0,1),&SPA_FRACTION(144,1)));
+}
 
 int main(int argc,char **argv) {
     int fd=-1;uint32_t node=PW_ID_ANY;
@@ -160,23 +197,15 @@ int main(int argc,char **argv) {
     struct pw_context *context=pw_context_new(pw_main_loop_get_loop(c.loop),NULL,0);
     struct pw_core *core=context?pw_context_connect_fd(context,fd,NULL,0):NULL;
     if(!core){fprintf(stderr,"Cannot connect to authorized PipeWire remote\n");return 1;}
+    struct spa_hook core_listener;pw_core_add_listener(core,&core_listener,&core_events,&c);
+    fprintf(stderr,"PipeWire authorized source node: %u\n",node);
     struct pw_properties *props=pw_properties_new(PW_KEY_MEDIA_TYPE,"Video",PW_KEY_MEDIA_CATEGORY,"Capture",PW_KEY_MEDIA_ROLE,"Screen",NULL);
     c.stream=pw_stream_new(core,"ScreenPin long screenshot",props);
     if(!c.stream)return 1;
     struct spa_hook listener;pw_stream_add_listener(c.stream,&listener,&events,&c);
     uint8_t storage[1024];struct spa_pod_builder builder=SPA_POD_BUILDER_INIT(storage,sizeof(storage));
     const struct spa_pod *params[2];
-    params[0]=spa_pod_builder_add_object(&builder,SPA_TYPE_OBJECT_Format,SPA_PARAM_EnumFormat,
-        SPA_FORMAT_mediaType,SPA_POD_Id(SPA_MEDIA_TYPE_video),SPA_FORMAT_mediaSubtype,SPA_POD_Id(SPA_MEDIA_SUBTYPE_raw),
-        SPA_FORMAT_VIDEO_format,SPA_POD_CHOICE_ENUM_Id(5,SPA_VIDEO_FORMAT_BGRx,SPA_VIDEO_FORMAT_BGRx,SPA_VIDEO_FORMAT_BGRA,SPA_VIDEO_FORMAT_RGBA,SPA_VIDEO_FORMAT_RGBx),
-        SPA_FORMAT_VIDEO_modifier,SPA_POD_Long(0),
-        SPA_FORMAT_VIDEO_size,SPA_POD_CHOICE_RANGE_Rectangle(&SPA_RECTANGLE(1920,1080),&SPA_RECTANGLE(1,1),&SPA_RECTANGLE(16384,16384)),
-        SPA_FORMAT_VIDEO_framerate,SPA_POD_CHOICE_RANGE_Fraction(&SPA_FRACTION(0,1),&SPA_FRACTION(0,1),&SPA_FRACTION(144,1)));
-    params[1]=spa_pod_builder_add_object(&builder,SPA_TYPE_OBJECT_Format,SPA_PARAM_EnumFormat,
-        SPA_FORMAT_mediaType,SPA_POD_Id(SPA_MEDIA_TYPE_video),SPA_FORMAT_mediaSubtype,SPA_POD_Id(SPA_MEDIA_SUBTYPE_raw),
-        SPA_FORMAT_VIDEO_format,SPA_POD_CHOICE_ENUM_Id(5,SPA_VIDEO_FORMAT_BGRx,SPA_VIDEO_FORMAT_BGRx,SPA_VIDEO_FORMAT_BGRA,SPA_VIDEO_FORMAT_RGBA,SPA_VIDEO_FORMAT_RGBx),
-        SPA_FORMAT_VIDEO_size,SPA_POD_CHOICE_RANGE_Rectangle(&SPA_RECTANGLE(1920,1080),&SPA_RECTANGLE(1,1),&SPA_RECTANGLE(16384,16384)),
-        SPA_FORMAT_VIDEO_framerate,SPA_POD_CHOICE_RANGE_Fraction(&SPA_FRACTION(0,1),&SPA_FRACTION(0,1),&SPA_FRACTION(144,1)));
+    capture_formats(&builder,params);
     // The portal returns a node ID, not an object.serial for target.object.
     if(pw_stream_connect(c.stream,PW_DIRECTION_INPUT,node,PW_STREAM_FLAG_AUTOCONNECT|PW_STREAM_FLAG_MAP_BUFFERS,params,2)<0){fprintf(stderr,"Cannot start PipeWire stream\n");return 1;}
     pw_main_loop_run(c.loop);

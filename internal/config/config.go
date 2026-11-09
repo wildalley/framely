@@ -22,11 +22,14 @@ type Config struct {
 	CaptureShortcut string `json:"captureShortcut"`
 	// HideAfterCopy closes an unpinned image after copying. The JSON key stays
 	// compatible with existing installations; closed images are not retained.
-	HideAfterCopy bool `json:"hideAfterCopy"`
+	HideAfterCopy   bool `json:"hideAfterCopy"`
+	AutomaticScroll bool `json:"automaticScroll"`
 }
 
 // Default is the configuration of a first launch.
-func Default() Config { return Config{CaptureShortcut: DefaultShortcut} }
+func Default() Config {
+	return Config{CaptureShortcut: DefaultShortcut, AutomaticScroll: runtime.GOOS == "windows"}
+}
 
 // Path is where the configuration is kept: ~/.config/screenpin/config.json
 // on Linux, and the platform's configuration directory elsewhere.

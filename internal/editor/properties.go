@@ -13,7 +13,7 @@ import (
 const propertyGroupHeight = 44
 
 func propertyCaption(c *ui.Context, caption string) {
-	ui.Text(c, caption).FontSize(12).LineHeight(1).Height(14).TextColor(c.Theme().TextMuted)
+	ui.Text(c, caption).FontSize(11).LineHeight(1).Height(14).TextColor(c.Theme().TextMuted)
 }
 
 // propertyNumber groups a typed value or a held stepper into one history
@@ -21,12 +21,13 @@ func propertyCaption(c *ui.Context, caption string) {
 func (a *App) propertyNumber(c *ui.Context, index int, key, label, caption string, value, lo, hi, width float64, set func(float64, bool)) {
 	ui.Column(c.Key(key)).Width(float32(width)).Height(propertyGroupHeight).Shrink(0).Gap(2).Children(func() {
 		propertyCaption(c, caption)
-		ui.Row(c).Gap(2).Height(28).Children(func() {
+		ui.Row(c).Gap(0).Height(28).Radius(5).Border(1, c.Theme().Border).Background(c.Theme().Background).Clip().Children(func() {
 			text := &a.propertyValues[index]
 			if !a.propertyInputs[index].FocusWithin(c) {
 				*text = strconv.FormatFloat(value, 'f', 0, 64)
 			}
-			field := ui.TextInput(c.Key("value"), text).Bind(&a.propertyInputs[index]).Label(label).Tooltip(label).Width(float32(width)-20).MinWidth(0).Height(28).Padding(2, 4).FontSize(12)
+			field := ui.TextInput(c.Key("value"), text).Bind(&a.propertyInputs[index]).Label(label).Tooltip(label).
+				Width(float32(width)-21).MinWidth(0).Height(28).Padding(2, 6).FontSize(12).Border(0, ui.Transparent)
 			apply := func(v float64) {
 				v = math.Round(clamp(v, lo, hi))
 				if a.propertyEditKey != key {
@@ -50,7 +51,9 @@ func (a *App) propertyNumber(c *ui.Context, index int, key, label, caption strin
 				apply(value - 1)
 				*text = strconv.FormatFloat(clamp(value-1, lo, hi), 'f', 0, 64)
 			}
-			step := ui.Stepper(c.Key("step"), &v, lo, hi, 1).Label(label + "增减").Tooltip(label + "增减").Width(18).Height(28)
+			ui.Box(c).Width(1).FillHeight().Background(c.Theme().Border.Alpha(0.6))
+			step := ui.Stepper(c.Key("step"), &v, lo, hi, 1).Label(label+"增减").Tooltip(label+"增减").
+				Width(20).Height(28).Border(0, ui.Transparent)
 			if step.Changed() {
 				if step.Pressed() || step.Dragging() {
 					apply(v)
@@ -75,9 +78,10 @@ func (a *App) propertyColors(c *ui.Context, style doc.Style, expanded bool) {
 		if expanded {
 			ui.Row(c).Height(28).Gap(3).AlignItems(ui.Center).Children(func() {
 				for _, col := range doc.Colors {
-					b := ui.Button(c.Key("inline-color-"+col), "").Size(24, 24).Padding(0).Radius(4).Background(ui.Hex(col)).Border(1, c.Theme().Border).Label("颜色 " + col).Tooltip(col)
+					b := ui.Button(c.Key("inline-color-"+col), "").Size(24, 24).Padding(0).Radius(12).
+						Background(ui.Hex(col)).Border(1, c.Theme().Border).Label("颜色 " + col).Tooltip(col)
 					if strings.EqualFold(style.Color, col) {
-						b.Border(2, c.Theme().Accent)
+						b.Border(2.5, c.Theme().Accent)
 					}
 					if b.Clicked() {
 						choose(col)
@@ -85,7 +89,8 @@ func (a *App) propertyColors(c *ui.Context, style doc.Style, expanded bool) {
 				}
 			})
 		} else {
-			ui.Button(c.Key("inline-color"), "").Size(24, 28).Padding(0).Radius(4).Background(ui.Hex(style.Color)).Border(1, c.Theme().Border).Label("颜色").Tooltip("标注颜色").Menu(func(m *ui.Menu) {
+			ui.Button(c.Key("inline-color"), "").Size(28, 28).Padding(0).Radius(6).
+				Background(ui.Hex(style.Color)).Border(1, c.Theme().Border).Label("颜色").Tooltip("标注颜色").Menu(func(m *ui.Menu) {
 				for i, col := range doc.Colors {
 					names := []string{"红色", "橙色", "黄色", "绿色", "蓝色", "紫色", "黑色", "白色"}
 					if m.Item(names[i]).Radio(strings.EqualFold(style.Color, col)).Chosen() {
@@ -98,7 +103,8 @@ func (a *App) propertyColors(c *ui.Context, style doc.Style, expanded bool) {
 }
 
 func (a *App) propertyRow(c *ui.Context, width float32) {
-	ui.Row(c.Key("properties")).Label("快捷属性").FillWidth().Height(propertyHeight).Gap(4).Padding(4, 6).AlignItems(ui.End).Background(c.Theme().Background).BorderWidth(1, 0, 0, 0).BorderColor(c.Theme().Border).Disabled(a.busy).Children(func() {
+	ui.Row(c.Key("properties")).Label("快捷属性").FillWidth().Height(propertyHeight).Gap(6).Padding(4, 8).AlignItems(ui.End).
+		Background(c.Theme().Surface).BorderWidth(1, 0, 0, 0).BorderColor(c.Theme().Border.Alpha(0.6)).Disabled(a.busy).Children(func() {
 		style := a.activeStyle()
 		scope := "截图"
 		options := []string{"截图"}
@@ -114,7 +120,7 @@ func (a *App) propertyRow(c *ui.Context, width float32) {
 		}
 		ui.Column(c).Width(scopeWidth).Height(propertyGroupHeight).Shrink(0).Gap(2).Children(func() {
 			propertyCaption(c, "目标")
-			if ui.Select(c.Key("property-scope"), &scope, options).Label("属性目标").FillWidth().MinWidth(0).Height(28).FontSize(12).Padding(2, 4).Changed() {
+			if ui.Select(c.Key("property-scope"), &scope, options).Label("属性目标").FillWidth().MinWidth(0).Height(28).FontSize(12).Padding(2, 4).Radius(5).Changed() {
 				a.finishEditing()
 				a.propertyImage = scope == "截图"
 			}
@@ -132,10 +138,18 @@ func (a *App) propertyRow(c *ui.Context, width float32) {
 				}
 				ui.Column(c).Height(propertyGroupHeight).Shrink(0).Gap(2).Children(func() {
 					propertyCaption(c, "预设")
-					ui.Row(c).Height(28).AlignItems(ui.Center).Gap(4).Children(func() {
+					ui.Row(c).Height(28).AlignItems(ui.Center).Gap(1).Radius(5).Background(c.Theme().Background).Border(1, c.Theme().Border).Padding(1).Children(func() {
 						for _, v := range presets {
 							on := math.Abs(a.history.ImageCornerRatio()*100-float64(v)) < .5
-							if ui.Toggle(c.Key(fmt.Sprintf("inline-image-%d", v)), &on, fmt.Sprintf("%d%%", v)).Label(fmt.Sprintf("快捷圆角 %d%%", v)).Height(28).Padding(0, 4).Changed() {
+							toggle := ui.Toggle(c.Key(fmt.Sprintf("inline-image-%d", v)), &on, fmt.Sprintf("%d%%", v)).
+								Label(fmt.Sprintf("快捷圆角 %d%%", v)).Height(24).Padding(0, 4).Radius(4).FontSize(11).
+								Border(0, ui.Transparent)
+							if on {
+								toggle.Background(c.Theme().Accent).TextColor(c.Theme().AccentText)
+							} else {
+								toggle.Background(ui.Transparent)
+							}
+							if toggle.Changed() {
 								a.finishEditing()
 								a.history.SetImageCornerRatio(float64(v) / 100)
 							}

@@ -177,11 +177,12 @@ func (v *settingsWindow) view(c *ui.Context) {
 				ui.Text(c, "ScreenPin "+Version+" · MyGo").FontSize(12).TextColor(c.Theme().TextMuted)
 			} else {
 				ui.Text(c, "长截图").FontWeight(600)
+				ui.Checkbox(c.Key("automatic-scroll"), &v.draft.AutomaticScroll, "长截图自动向下滚动").Disabled(v.saving || !capture.ScrollingSupported())
 				ui.Text(c, "长截图需要持续共享所选窗口或显示器；截图快捷键授权与屏幕共享是两个独立权限。").TextColor(c.Theme().TextMuted)
 				if v.streamIssue != "" {
 					ui.Text(c, v.streamIssue).TextColor(c.Theme().Danger).Selectable()
 				} else {
-					ui.Text(c, "开始长截图时选择共享来源；选好后框选滚动内容。自动滚动不可用时，可缓慢手动滚动。").FontSize(12).TextColor(c.Theme().TextMuted)
+					ui.Text(c, "在鼠标所在显示器框选，松开后滚动页面或拖动滚动条。自动滚动不可用时，可缓慢手动滚动。").FontSize(12).TextColor(c.Theme().TextMuted)
 				}
 				if !capture.ScrollingSupported() {
 					ui.Text(c, "当前系统暂不支持长截图。").FontSize(12).TextColor(c.Theme().TextMuted)
@@ -191,6 +192,23 @@ func (v *settingsWindow) view(c *ui.Context) {
 				}
 
 				if runtime.GOOS == "linux" {
+					ui.Text(c, "默认手动滚动；每块显示器首次使用时请选择对应共享来源，之后分别记住。自动模式需要额外的鼠标控制授权。").FontSize(12).TextColor(c.Theme().TextMuted)
+					if ui.Button(c, "更换共享来源").Disabled(s.captureBusy || v.saving).Clicked() {
+						v.app.worker(func() {
+							err := capture.ForgetScrollSource()
+							v.later(func() {
+								if err != nil {
+									v.notice = err.Error()
+									return
+								}
+								if s.scroll != nil {
+									s.scroll.start()
+								} else {
+									s.showScroll()
+								}
+							})
+						})
+					}
 					if ui.Button(c, "重新检查权限").Disabled(v.accessLoading || v.asking).Clicked() {
 						v.refreshAccess()
 					}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"image"
 	"math"
+	"runtime"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -23,11 +24,14 @@ const minRegion = 4
 // right click cancels, Enter takes the whole display, and Space held while
 // dragging moves the region.
 type pick struct {
-	full   *image.RGBA
-	bitmap *ui.Bitmap
-	views  []*pickView
-	done   bool
-	result chan pickResult
+	full     *image.RGBA
+	bitmap   *ui.Bitmap
+	views    []*pickView
+	done     bool
+	result   chan pickResult
+	displays []mygo.Display
+	minimum  image.Point
+	hint     string
 
 	active          *pickView
 	origin, corner  doc.Point
@@ -42,22 +46,43 @@ type pickView struct {
 }
 
 type pickResult struct {
-	png    []byte
+	region image.Rectangle
 	target *mygo.Rectangle
 	err    error
 }
 
 // pickRegion shows the overlays for the PNG of the whole desktop and waits
 // for the region. Call it off the main thread.
-func PickRegion(ctx context.Context, png []byte, token string) ([]byte, *mygo.Rectangle, error) {
+func PickRegion(ctx context.Context, png []byte, token string) ([]byte, *mygo.Rectangle, *ScreenSelection, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	full, err := capture.Decode(png)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	s := &pick{full: full, result: make(chan pickResult, 1)}
+	var displays []mygo.Display
+	mygo.RunOnMain(func() { displays = mygo.Screen.Displays() })
+	r, target, err := PickScreenRegion(ctx, full, displays, token, image.Pt(minRegion, minRegion), "")
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	selection, _ := ScreenSelectionFromDesktop(r, target, displays, full.Bounds())
+	data, err := capture.Crop(full, r)
+	return data, target, selection, err
+}
+
+// PickScreenRegion selects on a display and returns source pixel coordinates.
+// A single supplied display maps the stream frame onto that display.
+func PickScreenRegion(ctx context.Context, full *image.RGBA, displays []mygo.Display, token string, minimum image.Point, hint string) (image.Rectangle, *mygo.Rectangle, error) {
+	if err := ctx.Err(); err != nil {
+		return image.Rectangle{}, nil, err
+	}
+	if full == nil || full.Bounds().Empty() {
+		return image.Rectangle{}, nil, errors.New("无法选择空截图")
+	}
+	var err error
+	s := &pick{full: full, displays: displays, minimum: minimum, hint: hint, result: make(chan pickResult, 1)}
 	opened := false
 	mygo.RunOnMain(func() {
 		if ctx.Err() != nil {
@@ -68,29 +93,39 @@ func PickRegion(ctx context.Context, png []byte, token string) ([]byte, *mygo.Re
 	})
 	if !opened || err != nil {
 		if ctx.Err() != nil {
-			return nil, nil, ctx.Err()
+			return image.Rectangle{}, nil, ctx.Err()
 		}
 		if err != nil {
-			return nil, nil, err
+			return image.Rectangle{}, nil, err
 		}
-		return nil, nil, capture.ErrCancelled
+		return image.Rectangle{}, nil, capture.ErrCancelled
 	}
 	select {
 	case r := <-s.result:
-		return r.png, r.target, r.err
+		return r.region, r.target, r.err
 	case <-ctx.Done():
 		mygo.RunOnMain(func() { s.finish(nil, nil) })
-		return nil, nil, ctx.Err()
+		return image.Rectangle{}, nil, ctx.Err()
 	}
 }
 
 func (s *pick) open() error {
-	displays := mygo.Screen.Displays()
+	displays := s.displays
+	if displays == nil {
+		displays = mygo.Screen.Displays()
+	}
 	if len(displays) == 0 {
 		return errors.New("没有可用的显示器")
 	}
 	b := s.full.Bounds()
 	crops := layoutScreens(displays, b.Dx(), b.Dy())
+	if s.displays != nil && len(displays) == 1 {
+		crops[0] = b
+	} else if runtime.GOOS == "windows" {
+		for i, d := range displays {
+			crops[i] = physicalDisplay(d).Intersect(b)
+		}
+	}
 	s.bitmap = ui.NewBitmap(s.full)
 	for i, d := range displays {
 		v := &pickView{display: d, crop: crops[i]}
@@ -112,6 +147,9 @@ func (s *pick) open() error {
 			BackgroundColor: "#000000",
 			Content:         ui.View(func(c *ui.Context) { s.view(c, v) }),
 		})
+		if runtime.GOOS == "windows" {
+			capture.ExcludeWindow(v.win.NativeHandle())
+		}
 		// Window managers place a new window on the display with the
 		// pointer, whatever position it asks for, and Wayland gives apps
 		// no say at all: full screen on a given display is what both
@@ -124,6 +162,16 @@ func (s *pick) open() error {
 		v.win.OnClosed(func() { s.finish(nil, nil) })
 	}
 	return nil
+}
+
+func physicalDisplay(d mygo.Display) image.Rectangle {
+	scale := d.ScaleFactor
+	if scale <= 0 {
+		scale = 1
+	}
+	b := d.Bounds
+	x, y := int(math.Round(float64(b.X)*scale)), int(math.Round(float64(b.Y)*scale))
+	return image.Rect(x, y, x+int(math.Round(float64(b.Width)*scale)), y+int(math.Round(float64(b.Height)*scale)))
 }
 
 // layoutScreens maps each display onto the image of the whole desktop. The
@@ -149,6 +197,33 @@ func layoutScreens(displays []mygo.Display, width, height int) []image.Rectangle
 	return crops
 }
 
+// DesktopRegionToStream converts a whole-desktop selection into coordinates
+// of the selected display's stream. Display geometry, rather than enumeration
+// order or monitor name, identifies the selected screen.
+func DesktopRegionToStream(region image.Rectangle, target mygo.Rectangle, displays []mygo.Display, desktopSize, sourceSize image.Point) (image.Rectangle, error) {
+	if desktopSize.X <= 0 || desktopSize.Y <= 0 || sourceSize.X <= 0 || sourceSize.Y <= 0 || region.Empty() {
+		return image.Rectangle{}, errors.New("无效的桌面选区或采集尺寸")
+	}
+	crops := layoutScreens(displays, desktopSize.X, desktopSize.Y)
+	for i, display := range displays {
+		if display.Bounds != target {
+			continue
+		}
+		crop := crops[i]
+		if !region.In(crop) {
+			return image.Rectangle{}, errors.New("长截图选区超出了所选显示器")
+		}
+		sx, sy := float64(sourceSize.X)/float64(crop.Dx()), float64(sourceSize.Y)/float64(crop.Dy())
+		return image.Rect(
+			int(math.Floor(float64(region.Min.X-crop.Min.X)*sx)),
+			int(math.Floor(float64(region.Min.Y-crop.Min.Y)*sy)),
+			int(math.Ceil(float64(region.Max.X-crop.Min.X)*sx)),
+			int(math.Ceil(float64(region.Max.Y-crop.Min.Y)*sy)),
+		).Intersect(image.Rectangle{Max: sourceSize}), nil
+	}
+	return image.Rectangle{}, errors.New("框选的显示器已断开，请重新截图")
+}
+
 // regionToCrop maps a region of an overlay, in its DIPs, onto the image,
 // inside the overlay's display.
 func regionToCrop(r doc.Rect, viewW, viewH float64, crop image.Rectangle) (image.Rectangle, error) {
@@ -169,12 +244,17 @@ func (s *pick) finish(v *pickView, region *doc.Rect) {
 	if s.done {
 		return
 	}
+	if region != nil {
+		r, err := regionToCrop(*region, float64(v.display.Bounds.Width), float64(v.display.Bounds.Height), v.crop)
+		if err != nil || r.Dx() < s.minimum.X || r.Dy() < s.minimum.Y {
+			return
+		}
+	}
 	s.done = true
-	full := s.full
 	for _, o := range s.views {
 		o.win.Destroy()
 	}
-	s.full, s.bitmap, s.views, s.active = nil, nil, nil, nil
+	s.full, s.bitmap, s.views, s.active, s.displays = nil, nil, nil, nil, nil
 	s.dragging, s.shift = false, false
 	if region == nil {
 		s.result <- pickResult{err: capture.ErrCancelled}
@@ -182,15 +262,8 @@ func (s *pick) finish(v *pickView, region *doc.Rect) {
 	}
 	w, h := float64(v.display.Bounds.Width), float64(v.display.Bounds.Height)
 	target := v.display.Bounds
-	crop, selection, result := v.crop, *region, s.result
-	go func() {
-		r, err := regionToCrop(selection, w, h, crop)
-		var png []byte
-		if err == nil {
-			png, err = capture.Crop(full, r)
-		}
-		result <- pickResult{png: png, target: &target, err: err}
-	}()
+	r, err := regionToCrop(*region, w, h, v.crop)
+	s.result <- pickResult{region: r, target: &target, err: err}
 }
 
 func (s *pick) rect() doc.Rect {
@@ -253,9 +326,18 @@ func (s *pick) input(v *pickView, ev ui.InputEvent, w, h float64) bool {
 		if !s.dragging || s.active != v {
 			return false
 		}
+		if ev.Button != 0 {
+			return false
+		}
+		if !s.shift {
+			s.corner = doc.Point{X: clamp(float64(ev.X), 0, w), Y: clamp(float64(ev.Y), 0, h)}
+		}
 		s.dragging = false
 		if r := s.rect(); r.W >= minRegion && r.H >= minRegion {
-			s.finish(v, &r)
+			px, err := regionToCrop(r, w, h, v.crop)
+			if err == nil && px.Dx() >= s.minimum.X && px.Dy() >= s.minimum.Y {
+				s.finish(v, &r)
+			}
 		} else {
 			s.active = nil
 		}
@@ -277,17 +359,21 @@ func (s *pick) view(c *ui.Context, v *pickView) {
 	w, h := c.Size()
 	box := ui.Box(c.Key("pick")).Fill().Cursor(ui.CursorCrosshair).Focusable().FocusRing(false).Focus()
 	box.HandleInput(func(ev ui.InputEvent) bool { return s.input(v, ev, float64(w), float64(h)) })
-	bm, crop := s.bitmap, v.crop
+	bm, crop, bmOrigin := s.bitmap, v.crop, s.full.Bounds().Min
 	var sel *doc.Rect
 	if s.active == v {
 		r := s.rect()
 		sel = &r
 	}
 	box.Draw(func(p *ui.Painter, r ui.Rect) {
-		p.ImageRegion(bm, ui.Rect{X: float32(crop.Min.X), Y: float32(crop.Min.Y), W: float32(crop.Dx()), H: float32(crop.Dy())}, r, ui.ImageOptions{})
+		p.ImageRegion(bm, ui.Rect{X: float32(crop.Min.X - bmOrigin.X), Y: float32(crop.Min.Y - bmOrigin.Y), W: float32(crop.Dx()), H: float32(crop.Dy())}, r, ui.ImageOptions{})
 		if sel == nil || sel.W <= 0 || sel.H <= 0 {
 			p.Fill(r, pickDim, 0)
-			hint := ui.Span{Text: "拖动选择区域，松开截取 · 拖动时按住空格移动选区 · Enter 截取整屏 · Esc 取消", Size: 13, Color: pickWhite}
+			text := s.hint
+			if text == "" {
+				text = "拖动选择区域，松开截取 · 拖动时按住空格移动选区 · Enter 截取整屏 · Esc 取消"
+			}
+			hint := ui.Span{Text: text, Size: 13, Color: pickWhite}
 			tw, th := p.MeasureText(0, hint)
 			pill := ui.Rect{X: r.X + (r.W-tw)/2 - 14, Y: r.Y + 48, W: tw + 28, H: th + 14}
 			p.Fill(pill, pickHintBg, 6)
@@ -305,7 +391,11 @@ func (s *pick) view(c *ui.Context, v *pickView) {
 		if err != nil {
 			return
 		}
-		label := ui.Span{Text: fmt.Sprintf("%d × %d", px.Dx(), px.Dy()), Size: 12, Color: pickWhite}
+		text := fmt.Sprintf("%d × %d", px.Dx(), px.Dy())
+		if px.Dx() < s.minimum.X || px.Dy() < s.minimum.Y {
+			text += fmt.Sprintf(" · 至少 %d × %d", s.minimum.X, s.minimum.Y)
+		}
+		label := ui.Span{Text: text, Size: 12, Color: pickWhite}
 		lw, lh := p.MeasureText(0, label)
 		at := ui.Rect{X: x, Y: y - lh - 10, W: lw + 12, H: lh + 4}
 		if y-r.Y < 28 {

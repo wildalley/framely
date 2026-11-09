@@ -19,8 +19,9 @@ var ErrAutomaticUnavailable = errors.New("当前桌面未提供指针控制接�
 func ScrollingSupported() bool { return runtime.GOOS == "linux" || runtime.GOOS == "windows" }
 
 type StreamOptions struct {
-	Automatic bool
-	Monitor   int
+	Automatic     bool
+	Monitor       int
+	DisplayBounds image.Rectangle
 }
 type Monitor struct {
 	ID         int    `json:"id"`
@@ -45,6 +46,41 @@ type processStream struct {
 	control       chan controlReply
 	width, height atomic.Int32
 	log           *streamLog
+	displayBounds image.Rectangle
+	sourceType    uint32
+}
+
+// StreamSourceType uses portal source types: 1 is a monitor, 2 a window.
+func StreamSourceType(source Stream) uint32 {
+	if s, ok := source.(*processStream); ok {
+		return s.sourceType
+	}
+	return 0
+}
+
+// StreamDisplayBounds is available when the portal identifies a whole display
+// in desktop logical coordinates. Window-only streams use the image picker.
+func StreamDisplayBounds(source Stream) (image.Rectangle, bool) {
+	s, ok := source.(*processStream)
+	if !ok {
+		return image.Rectangle{}, false
+	}
+	return s.displayBounds, !s.displayBounds.Empty()
+}
+
+// Read diagnostics only after Close has stopped the stderr writer.
+func StreamDiagnostic(source Stream, err error) error {
+	if s, ok := source.(*processStream); ok && s.closed.Load() && s.log != nil {
+		select {
+		case <-s.done:
+		default:
+			return err
+		}
+		if s.log.Len() > 0 {
+			return fmt.Errorf("%w\n%s", err, s.log.String())
+		}
+	}
+	return err
 }
 
 func startStream(parent context.Context, cmd *exec.Cmd, cancel context.CancelFunc, cleanup func()) (*processStream, error) {

@@ -71,3 +71,23 @@ func TestRegionCanResizeAndMoveWithoutRedrawing(t *testing.T) {
 		}
 	}
 }
+
+func TestQuickScrollRegionStartsOnReleaseWithoutConfirmation(t *testing.T) {
+	for _, scale := range []float32{1, 1.5, 2} {
+		p := &imagePicker{bounds: image.Rect(0, 0, 1000, 500), bitmap: ui.NewBitmap(image.NewRGBA(image.Rect(0, 0, 1000, 500))), result: make(chan regionChoice, 1), quick: true, minimum: image.Pt(80, 160)}
+		tt := ui.NewTester(p.view, 600, 500)
+		tt.SetScale(scale)
+		box, _ := tt.Find("图片选区")
+		r := p.imageRect
+		tt.Press(box.X+r.X+r.W/4, box.Y+r.Y+r.H/10)
+		tt.Release(box.X+r.X+r.W*3/4, box.Y+r.Y+r.H*9/10)
+		select {
+		case choice := <-p.result:
+			if choice.err != nil || choice.rect.Dx() < 498 || choice.rect.Dy() < 398 {
+				t.Fatal(choice)
+			}
+		default:
+			t.Fatalf("scale=%g still needs confirmation", scale)
+		}
+	}
+}

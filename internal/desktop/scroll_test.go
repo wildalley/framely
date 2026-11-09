@@ -2,13 +2,36 @@ package desktop
 
 import (
 	"context"
+	"fmt"
 	"image"
 	"image/color"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/wildalley/screenpin/internal/capture"
+	"github.com/wildalley/screenpin/internal/portal"
+	"github.com/wildalley/screenpin/internal/scrollshot"
 )
+
+func TestCancelledLongScreenshotDoesNotRetainAController(t *testing.T) {
+	for _, err := range []error{capture.ErrCancelled, portal.ErrCancelled, context.Canceled, fmt.Errorf("picker: %w", capture.ErrCancelled)} {
+		// Repeat cancellation while the coordinator stays alive, as when
+		// the user cancels several shots before taking the next one.
+		s := &application{ctx: context.Background(), settings: &settingsWindow{}}
+		for i := 0; i < 5; i++ {
+			ctx, cancel := context.WithCancel(s.ctx)
+			v := &scrollWindow{app: s, ctx: ctx, cancel: cancel, busy: true, holdsCapture: true, preview: ui.NewBitmap(image.NewRGBA(image.Rect(0, 0, 20, 20)))}
+			s.scroll, s.captureBusy, s.operations = v, true, 1
+			v.applyStartFailure(err)
+			v.applyStartFailure(err)
+			if !v.closed || v.ctx.Err() == nil || v.preview != nil || s.scroll != nil || s.captureBusy || s.operations != 0 {
+				t.Fatalf("cancelled shot %d remained restorable: closed=%t scroll=%v busy=%t operations=%d", i, v.closed, s.scroll, s.captureBusy, s.operations)
+			}
+		}
+	}
+}
 
 func TestLongScreenshotPreviewReusesBitmapWithChangingAspectRatio(t *testing.T) {
 	v := &scrollWindow{}
@@ -59,5 +82,125 @@ func TestRecordingDuringLongCaptureDoesNotFinishIt(t *testing.T) {
 	s.CaptureWithActivation("recorded")
 	if v.ending {
 		t.Fatal("recording a shortcut finished the long screenshot")
+	}
+}
+
+func TestFloatingScrollControlsStayVisibleAndCanPauseAndResume(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		for _, scale := range []float32{1, 1.5, 2} {
+			v := &scrollWindow{running: true, floating: true, automatic: true, autoGranted: true, canUndo: true, height: 12000, commands: make(chan scrollCommand, 8)}
+			tt := ui.NewTester(v.view, 420, 170)
+			tt.SetDark(dark)
+			tt.SetScale(scale)
+			for _, label := range []string{"取消", "撤回", "暂停", "完成", "自动滚动"} {
+				r, ok := tt.Find(label)
+				if !ok || r.X < 0 || r.Y < 0 || r.X+r.W > 420.5 || r.Y+r.H > 170.5 {
+					t.Fatalf("dark=%v scale=%g %s: %+v", dark, scale, label, r)
+				}
+			}
+			if err := tt.Click("暂停"); err != nil {
+				t.Fatal(err)
+			}
+			if cmd := <-v.commands; cmd.kind != "pause" || !v.paused {
+				t.Fatal(cmd)
+			}
+			if err := tt.Click("继续"); err != nil {
+				t.Fatal(err)
+			}
+			if cmd := <-v.commands; cmd.kind != "resume" || v.paused {
+				t.Fatal(cmd)
+			}
+		}
+	}
+}
+
+type finalScrollStream struct {
+	frame    *image.RGBA
+	scrolled bool
+}
+
+func (s *finalScrollStream) Next(ctx context.Context) (*image.RGBA, error) {
+	if s.frame != nil {
+		frame := s.frame
+		s.frame = nil
+		return frame, nil
+	}
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+func (s *finalScrollStream) Scroll(context.Context, image.Point) error { s.scrolled = true; return nil }
+func (*finalScrollStream) Close()                                      {}
+
+func TestFinishKeepsLastSettledScrollAndStopsAutomaticInput(t *testing.T) {
+	page := image.NewRGBA(image.Rect(0, 0, 160, 400))
+	seed := uint32(1234)
+	for i := 0; i < len(page.Pix); i += 4 {
+		seed = seed*1664525 + 1013904223
+		page.Pix[i], page.Pix[i+1], page.Pix[i+2], page.Pix[i+3] = uint8(seed>>24), uint8(seed>>16), uint8(seed>>8), 255
+	}
+	region := image.Rect(0, 0, 160, 240)
+	c, err := scrollshot.NewController(page.SubImage(region).(*image.RGBA), true, time.Now().Add(-time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame := image.NewRGBA(region)
+	for y := 0; y < 240; y++ {
+		copy(frame.Pix[y*frame.Stride:(y+1)*frame.Stride], page.Pix[(y+45)*page.Stride:(y+46)*page.Stride])
+	}
+	source := &finalScrollStream{frame: frame}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	v := &scrollWindow{ctx: ctx, commands: make(chan scrollCommand, 1)}
+	v.commands <- scrollCommand{kind: "finish"}
+	if !v.run(source, region, region.Size(), c) || c.Stitch.Height() != 285 || source.scrolled {
+		t.Fatalf("height=%d scrolled=%v", c.Stitch.Height(), source.scrolled)
+	}
+}
+
+func TestScrollToolbarAvoidsSelectionAndControlsFit(t *testing.T) {
+	for _, region := range []ui.Rect{
+		{X: 100, Y: 100, W: 600, H: 450},
+		{X: 50, Y: 140, W: 1100, H: 550},
+		{X: 300, Y: 5, W: 600, H: 770},
+	} {
+		toolbar, ok := toolbarBeside(region, 1280, 800)
+		if !ok {
+			t.Fatalf("no controls beside %+v", region)
+		}
+		if toolbar.X < region.X+region.W && toolbar.X+toolbar.W > region.X && toolbar.Y < region.Y+region.H && toolbar.Y+toolbar.H > region.Y {
+			t.Fatal("toolbar contaminates capture")
+		}
+		if max(toolbar.X-region.X-region.W, region.X-toolbar.X-toolbar.W, toolbar.Y-region.Y-region.H, region.Y-toolbar.Y-toolbar.H) < 32 {
+			t.Fatal("compositor shadow can enter selection")
+		}
+		for _, dark := range []bool{false, true} {
+			v := &scrollWindow{running: true, floating: true, overlayRegion: region, overlayToolbar: toolbar, height: 5000, canUndo: true}
+			tt := ui.NewTester(v.overlayView, int(toolbar.W), int(toolbar.H))
+			tt.SetDark(dark)
+			for _, label := range []string{"取消", "撤回", "暂停", "完成"} {
+				r, found := tt.Find(label)
+				if !found || r.X < 0 || r.Y < 0 || r.X+r.W > toolbar.W+.5 || r.Y+r.H > toolbar.H+.5 {
+					t.Fatalf("action=%s dark=%t bounds=%+v toolbar=%+v", label, dark, r, toolbar)
+				}
+			}
+		}
+	}
+	if _, ok := toolbarBeside(ui.Rect{W: 1280, H: 800}, 1280, 800); ok {
+		t.Fatal("full-screen selection silently covered by toolbar")
+	}
+}
+
+func TestWideScrollSelectionKeepsControlsByTheLowerRightCorner(t *testing.T) {
+	// These are real desktop selections whose former 126px panel would
+	// jump to the upper left, over two thousand pixels from release.
+	for _, region := range []ui.Rect{
+		{X: 271, Y: 222, W: 2260, H: 1104},
+		{X: 268, Y: 408, W: 2225, H: 920},
+		{X: 270, Y: 10, W: 2260, H: 1320},
+	} {
+		toolbar, ok := toolbarBeside(region, 2560, 1440)
+		if !ok || toolbar.W != 420 || toolbar.H != 52 || toolbar.Y != region.Y+region.H+32 || toolbar.X+toolbar.W != min(region.X+region.W, 2560-32) {
+			t.Fatalf("toolbar no longer follows the lower right corner: region=%v toolbar=%v", region, toolbar)
+		}
 	}
 }

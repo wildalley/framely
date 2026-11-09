@@ -76,11 +76,21 @@ func TestSettingsTabsShareDraftAndKeepSaveVisibleAtMinimumSize(t *testing.T) {
 	if _, ok := tt.Find("打开长截图"); !ok {
 		t.Fatal("capture permissions are not reachable")
 	}
+	wantAutomatic := !v.draft.AutomaticScroll
+	if err := tt.Click("长截图自动向下滚动"); err != nil {
+		t.Fatal(err)
+	}
+	if v.draft.AutomaticScroll != wantAutomatic {
+		t.Fatal("automatic scroll preference was not changed")
+	}
 	if err := tt.Click("快捷键"); err != nil {
 		t.Fatal(err)
 	}
 	if !v.draft.HideAfterCopy {
 		t.Fatal("tab navigation discarded pending settings")
+	}
+	if v.draft.AutomaticScroll != wantAutomatic {
+		t.Fatal("tab navigation discarded automatic scroll preference")
 	}
 	for _, label := range []string{"保存设置", "关闭"} {
 		r, ok := tt.Find(label)

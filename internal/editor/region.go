@@ -31,18 +31,29 @@ type imagePicker struct {
 	dragStart      image.Point
 	original       image.Rectangle
 	cursor         ui.Cursor
+	quick          bool
+	minimum        image.Point
 }
 
 // SelectImageRegion chooses pixel coordinates from an immutable frame. The
 // letterbox, UI scaling and high-DPI display do not change its source pixels.
 func SelectImageRegion(ctx context.Context, img *image.RGBA, title string) (image.Rectangle, error) {
+	return selectImageRegion(ctx, img, title, false, image.Pt(1, 1))
+}
+
+// SelectScrollRegion confirms on release; OCR keeps its adjustable picker.
+func SelectScrollRegion(ctx context.Context, img *image.RGBA) (image.Rectangle, error) {
+	return selectImageRegion(ctx, img, "框选滚动内容，松开开始长截图", true, image.Pt(80, 160))
+}
+
+func selectImageRegion(ctx context.Context, img *image.RGBA, title string, quick bool, minimum image.Point) (image.Rectangle, error) {
 	if err := ctx.Err(); err != nil {
 		return image.Rectangle{}, err
 	}
 	if img == nil || img.Bounds().Empty() {
 		return image.Rectangle{}, errors.New("无法选择空图片")
 	}
-	p := &imagePicker{bounds: image.Rect(0, 0, img.Rect.Dx(), img.Rect.Dy()), result: make(chan regionChoice, 1), title: title}
+	p := &imagePicker{bounds: image.Rect(0, 0, img.Rect.Dx(), img.Rect.Dy()), result: make(chan regionChoice, 1), title: title, quick: quick, minimum: minimum}
 	mygo.RunOnMain(func() {
 		if ctx.Err() != nil {
 			return
@@ -70,6 +81,9 @@ func (p *imagePicker) selection() image.Rectangle {
 }
 func (p *imagePicker) finish(rect image.Rectangle) {
 	if p.done {
+		return
+	}
+	if !rect.Empty() && (rect.Dx() < p.minimum.X || rect.Dy() < p.minimum.Y) {
 		return
 	}
 	p.done = true
@@ -185,7 +199,11 @@ func (p *imagePicker) view(c *ui.Context) {
 	}
 	ui.Column(c).Fill().Padding(12).Gap(10).Children(func() {
 		ui.Text(c, p.title).FontWeight(600)
-		ui.Text(c, "拖动框选；框内移动，边缘缩放。方向键移动，Shift+方向键调大小，Enter 确认。").FontSize(12).TextColor(c.Theme().TextMuted)
+		hint := "拖动框选；框内移动，边缘缩放。方向键移动，Shift+方向键调大小，Enter 确认。"
+		if p.quick {
+			hint = "避开滚动条和动画；框选至少 80 × 160 像素，松开立即开始。Esc 取消。"
+		}
+		ui.Text(c, hint).FontSize(12).TextColor(c.Theme().TextMuted)
 		cursor := p.cursor
 		if cursor == ui.CursorDefault {
 			cursor = ui.CursorCrosshair
@@ -194,6 +212,10 @@ func (p *imagePicker) view(c *ui.Context) {
 		box.HandleInput(func(ev ui.InputEvent) bool {
 			switch ev.Kind {
 			case ui.InputPointerDown:
+				if p.quick && ev.Button == 1 {
+					p.finish(image.Rectangle{})
+					return true
+				}
 				if ev.Button != 0 {
 					return false
 				}
@@ -224,9 +246,12 @@ func (p *imagePicker) view(c *ui.Context) {
 				}
 				return true
 			case ui.InputPointerUp:
-				if p.dragging {
+				if p.dragging && ev.Button == 0 {
 					p.dragTo(p.point(ev.X, ev.Y))
 					p.dragging = false
+					if p.quick && p.selection().Dx() >= p.minimum.X && p.selection().Dy() >= p.minimum.Y {
+						p.finish(p.selection())
+					}
 					return true
 				}
 			}
@@ -255,7 +280,7 @@ func (p *imagePicker) view(c *ui.Context) {
 			if ui.Button(c, "选择整张").Clicked() {
 				p.finish(p.bounds)
 			}
-			if ui.PrimaryButton(c, "使用选区").Disabled(p.selection().Empty()).Clicked() {
+			if !p.quick && ui.PrimaryButton(c, "使用选区").Disabled(p.selection().Empty()).Clicked() {
 				p.finish(p.selection())
 			}
 		})

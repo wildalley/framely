@@ -4,7 +4,7 @@ ScreenPin 是一个面向 Linux、Windows 和 macOS 的截图与贴图工具。M
 
 版本变更见 [更新日志](CHANGELOG.md)，当前进度和后续计划见 [改进记录与计划](IMPROVEMENTS.md)。
 
-MyGo 重制版正在 `refactor/mygo-native` 分支推进，已接通托盘、独立图片窗口、快捷键设置、PNG / JPEG / WebP 保存，以及 Windows/Linux 长截图和离线中英文 OCR。长截图支持自动或手动滚动；Wayland 自动滚动取决于桌面是否提供鼠标控制授权。原生版使用 Go + MyGo，Linux 窗口不依赖 WebKitGTK；组件构建、使用方式和当前迁移范围见 [原生开发说明](docs/NATIVE.md)。下方功能说明对应 Tauri 旧版；原生版下载与平台说明见下载部分。
+MyGo 重制版正在 `refactor/mygo-native` 分支推进，已接通托盘、独立图片窗口、快捷键设置、PNG / JPEG / WebP 保存，以及 Windows/Linux 长截图和离线中英文 OCR。开发分支的 Windows 普通截图使用自有选区和内存采集，点击保存时才写入文件；长截图进入后直接框选，松开开始，支持自动或手动滚动；Linux 已获直接截图权限时按框选所在屏幕采集，各显示器分别记住共享授权。Windows 10 2004+ 提供浮动控制条；Wayland 自动滚动取决于桌面是否提供鼠标控制授权。原生版使用 Go + MyGo，Linux 窗口不依赖 WebKitGTK；组件构建、使用方式和当前迁移范围见 [原生开发说明](docs/NATIVE.md)。这些开发分支改进尚未包含在 v0.2.0 附件中；下方功能说明对应 Tauri 旧版，原生版下载与平台说明见下载部分。
 
 ## 下载与安装
 

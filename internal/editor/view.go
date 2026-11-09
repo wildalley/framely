@@ -257,15 +257,39 @@ func (a *App) moveLayer(dir int) {
 }
 
 func iconButton(c *ui.Context, key string, svg *ui.SVG, label string, disabled bool) ui.Element {
-	return ui.Button(c.Key(key), "").Size(32, 32).Padding(0).Center().Shrink(0).
+	b := ui.Button(c.Key(key), "").Size(32, 32).Padding(0).Radius(6).Center().Shrink(0).
 		Label(label).Tooltip(label).Disabled(disabled).
-		Children(func() { ui.Icon(c, svg).Size(18, 18).Shrink(0) })
+		Border(0, ui.Transparent)
+	bg := ui.Transparent
+	if b.Pressed() {
+		bg = c.Theme().SurfacePressed
+	} else if b.Hovered() {
+		bg = c.Theme().SurfaceHover
+	}
+	b.Background(bg)
+	return b.Children(func() { ui.Icon(c, svg).Size(18, 18).Shrink(0) })
 }
 
 func iconToggle(c *ui.Context, key string, svg *ui.SVG, label string, on *bool, disabled bool) ui.Element {
-	return ui.Toggle(c.Key(key), on, "").Size(32, 32).Padding(0).Center().Shrink(0).
+	b := ui.Toggle(c.Key(key), on, "").Size(32, 32).Padding(0).Radius(6).Center().Shrink(0).
 		Label(label).Tooltip(label).Disabled(disabled).
-		Children(func() { ui.Icon(c, svg).Size(18, 18).Shrink(0) })
+		Border(0, ui.Transparent)
+	bg := ui.Transparent
+	switch {
+	case *on && !disabled:
+		bg = c.Theme().Accent.Alpha(0.18)
+		b.Border(1.5, c.Theme().Accent)
+	case b.Pressed():
+		bg = c.Theme().SurfacePressed
+	case b.Hovered():
+		bg = c.Theme().SurfaceHover
+	}
+	b.Background(bg)
+	return b.Children(func() { ui.Icon(c, svg).Size(18, 18).Shrink(0) })
+}
+
+func toolbarDivider(c *ui.Context, key string) {
+	ui.Box(c.Key(key)).Width(1).Height(18).Margin(0, 4).Background(c.Theme().Border.Alpha(0.6)).Shrink(0)
 }
 
 // Keep capture, OCR and image actions visible. Compact windows use two rows;
@@ -313,7 +337,11 @@ func (a *App) bar(c *ui.Context) {
 		if iconButton(c, "capture", iconCapture, "新截图", a.busy || a.OnCapture == nil).Clicked() {
 			a.OnCapture()
 		}
-		if iconButton(c, "scroll", iconScroll, "长截图", a.busy || a.OnScroll == nil).Clicked() {
+		scrollLabel := "长截图 (" + commandKey() + "+Shift+L)"
+		if a.selection != nil {
+			scrollLabel = "长截图：沿用本次选区 (" + commandKey() + "+Shift+L)"
+		}
+		if iconButton(c, "scroll", iconScroll, "长截图", a.busy || a.OnScroll == nil).Tooltip(scrollLabel).Clicked() {
 			a.OnScroll()
 		}
 		ocrLabel := "识别文字"
@@ -323,16 +351,21 @@ func (a *App) bar(c *ui.Context) {
 		iconButton(c, "ocr", iconOCR, ocrLabel, a.OnOCRResult == nil || a.busy).Menu(a.ocrMenu)
 		if width < 760 {
 			ui.Spacer(c).Grow(1).MinWidth(0)
+		} else {
+			toolbarDivider(c, "div-actions")
 		}
 		pinned := a.pinned
 		if iconToggle(c, "pin", iconPin, "置顶", &pinned, false).Changed() {
 			a.TogglePin()
 		}
 		iconButton(c, "save", iconDownload, "保存图片 ("+commandKey()+"+S)", a.busy).Menu(a.imageMenu)
-		copy := ui.PrimaryButton(c.Key("copy"), "复制").Height(32).Padding(0, 10).Shrink(0).Disabled(a.busy).
+		copy := ui.PrimaryButton(c.Key("copy"), "复制").Height(32).Padding(0, 10).Radius(6).Shrink(0).Disabled(a.busy).
 			Tooltip("复制图片 (" + commandKey() + "+C)")
 		if copy.Clicked() {
 			a.Copy()
+		}
+		if width >= 760 {
+			toolbarDivider(c, "div-window")
 		}
 		if iconButton(c, "settings", iconSettings, "设置与快捷键", a.OnSettings == nil).Clicked() {
 			a.OnSettings()
@@ -345,13 +378,17 @@ func (a *App) bar(c *ui.Context) {
 		ui.Row(c.Key(key)).FillWidth().Height(barHeight).Gap(4).Padding(4, 6).AlignItems(ui.Center).DragWindow().Children(content)
 	}
 	ui.Column(c.Key("bar")).FillWidth().Height(float32(toolbarHeight(width))).Background(c.Theme().Background).
-		BorderWidth(1, 0, 0, 0).BorderColor(c.Theme().Border).Children(func() {
+		BorderWidth(1, 0, 0, 0).BorderColor(c.Theme().Border.Alpha(0.6)).Children(func() {
 		if width < 760 {
 			row("annotation-row", tools)
 			a.propertyRow(c, width)
 			row("actions-row", actions)
 		} else {
-			row("combined-row", func() { tools(); actions() })
+			row("combined-row", func() {
+				tools()
+				toolbarDivider(c, "div-tools")
+				actions()
+			})
 			a.propertyRow(c, width)
 		}
 	})

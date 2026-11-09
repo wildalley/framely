@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"log"
 	"os"
 	"os/exec"
 	"strconv"
@@ -51,7 +52,31 @@ func pointerAvailable(ctx context.Context, c *portal.Client) bool {
 	return ok && types&2 != 0
 }
 
+func persistentPortal(ctx context.Context, c *portal.Client, iface string) bool {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	var version dbus.Variant
+	if c.Call(ctx, portal.Destination, portal.ObjectPath, "org.freedesktop.DBus.Properties.Get", iface, "version").Store(&version) != nil {
+		return false
+	}
+	n, _ := version.Value().(uint32)
+	if iface == remoteDesktop {
+		return n >= 2
+	}
+	return n >= 4
+}
+
 func OpenStream(parent context.Context, options StreamOptions) (Stream, error) {
+	source, err := openPortalStream(parent, options, false)
+	if errors.Is(err, errRestoredOtherDisplay) && parent.Err() == nil {
+		return openPortalStream(parent, options, true)
+	}
+	return source, err
+}
+
+var errRestoredOtherDisplay = errors.New("上次授权的来源位于另一显示器，请选择当前鼠标所在的显示器")
+
+func openPortalStream(parent context.Context, options StreamOptions, forceChoose bool) (Stream, error) {
 	helper, err := components.Find("screenpin-capture")
 	if err != nil {
 		return nil, err
@@ -80,6 +105,11 @@ func OpenStream(parent context.Context, options StreamOptions) (Stream, error) {
 	}
 	requestCtx, requestDone := context.WithTimeout(ctx, 2*time.Minute)
 	defer requestDone()
+	persistent := persistentPortal(requestCtx, c, iface)
+	restore := ""
+	if persistent && !forceChoose {
+		restore, _ = takeDisplayRestoreToken(iface, options.DisplayBounds)
+	}
 	result, err := c.Request(requestCtx, iface, "CreateSession", nil, map[string]dbus.Variant{"session_handle_token": dbus.MakeVariant(fmt.Sprintf("screenpin_capture_%d_%d", os.Getpid(), streamTokens.Add(1)))})
 	if err != nil {
 		return fail(err)
@@ -94,13 +124,27 @@ func OpenStream(parent context.Context, options StreamOptions) (Stream, error) {
 		return fail(errors.New("屏幕共享门户返回了无效会话"))
 	}
 	if options.Automatic {
-		if _, err = c.Request(requestCtx, remoteDesktop, "SelectDevices", []any{session}, map[string]dbus.Variant{"types": dbus.MakeVariant(uint32(2))}); err != nil {
+		devices := map[string]dbus.Variant{"types": dbus.MakeVariant(uint32(2))}
+		if persistent {
+			devices["persist_mode"] = dbus.MakeVariant(uint32(2))
+			if restore != "" {
+				devices["restore_token"] = dbus.MakeVariant(restore)
+			}
+		}
+		if _, err = c.Request(requestCtx, remoteDesktop, "SelectDevices", []any{session}, devices); err != nil {
 			return fail(err)
 		}
 	}
-	if _, err = c.Request(requestCtx, screenCast, "SelectSources", []any{session}, map[string]dbus.Variant{
+	sources := map[string]dbus.Variant{
 		"types": dbus.MakeVariant(uint32(3)), "multiple": dbus.MakeVariant(false), "cursor_mode": dbus.MakeVariant(uint32(1)),
-	}); err != nil {
+	}
+	if persistent && !options.Automatic {
+		sources["persist_mode"] = dbus.MakeVariant(uint32(2))
+		if restore != "" {
+			sources["restore_token"] = dbus.MakeVariant(restore)
+		}
+	}
+	if _, err = c.Request(requestCtx, screenCast, "SelectSources", []any{session}, sources); err != nil {
 		return fail(err)
 	}
 	result, err = c.Request(requestCtx, iface, "Start", []any{session, ""}, nil)
@@ -114,8 +158,30 @@ func OpenStream(parent context.Context, options StreamOptions) (Stream, error) {
 		}
 	}
 	var streams []portalStream
-	if dbus.Store([]any{result["streams"].Value()}, &streams) != nil || len(streams) != 1 {
-		return fail(errors.New("请选择一个窗口或显示器"))
+	value := result["streams"].Value()
+	if value == nil || dbus.Store([]any{value}, &streams) != nil || len(streams) != 1 {
+		if options.Automatic {
+			return fail(fmt.Errorf("%w：桌面未返回可采集的共享来源", ErrAutomaticUnavailable))
+		}
+		return fail(errors.New("屏幕共享未返回可采集的来源，请重新选择一个窗口或显示器"))
+	}
+	if persistent {
+		token, _ := result["restore_token"].Value().(string)
+		bounds := portalDisplayBounds(streams[0].Properties)
+		if options.DisplayBounds.Empty() {
+			bounds = image.Rectangle{}
+		}
+		if bounds.Empty() && !options.DisplayBounds.Empty() {
+			bounds = options.DisplayBounds
+		}
+		if err := saveDisplayRestoreToken(iface, token, bounds); err != nil {
+			log.Printf("ScreenPin: shared source could not be remembered: %v", err)
+		}
+	}
+	actualBounds := portalDisplayBounds(streams[0].Properties)
+	if restore != "" && !options.DisplayBounds.Empty() && !actualBounds.Empty() && actualBounds != options.DisplayBounds {
+		log.Printf("ScreenPin: restored display %v differs from requested %v; requesting source selection", actualBounds, options.DisplayBounds)
+		return fail(errRestoredOtherDisplay)
 	}
 	var fd dbus.UnixFD
 	if err = c.Call(requestCtx, portal.Destination, portal.ObjectPath, screenCast+".OpenPipeWireRemote", session, map[string]dbus.Variant{}).Store(&fd); err != nil {
@@ -132,6 +198,8 @@ func OpenStream(parent context.Context, options StreamOptions) (Stream, error) {
 	if err != nil {
 		return nil, err
 	}
+	s.displayBounds = portalDisplayBounds(streams[0].Properties)
+	s.sourceType, _ = streams[0].Properties["source_type"].Value().(uint32)
 	if options.Automatic {
 		logicalW, logicalH := streamSize(streams[0].Properties["logical_size"])
 		if logicalW == 0 {
@@ -159,9 +227,27 @@ func OpenStream(parent context.Context, options StreamOptions) (Stream, error) {
 }
 
 func streamSize(v dbus.Variant) (float64, float64) {
+	if v.Value() == nil {
+		return 0, 0
+	}
 	var pair struct{ W, H int32 }
 	if dbus.Store([]any{v.Value()}, &pair) != nil || pair.W <= 0 || pair.H <= 0 {
 		return 0, 0
 	}
 	return float64(pair.W), float64(pair.H)
+}
+
+func portalDisplayBounds(properties map[string]dbus.Variant) image.Rectangle {
+	if sourceType, _ := properties["source_type"].Value().(uint32); sourceType != 1 {
+		return image.Rectangle{}
+	}
+	var position struct{ X, Y int32 }
+	if properties["position"].Value() == nil {
+		return image.Rectangle{}
+	}
+	w, h := streamSize(properties["size"])
+	if dbus.Store([]any{properties["position"].Value()}, &position) != nil || w <= 0 || h <= 0 {
+		return image.Rectangle{}
+	}
+	return image.Rect(int(position.X), int(position.Y), int(position.X)+int(w), int(position.Y)+int(h))
 }

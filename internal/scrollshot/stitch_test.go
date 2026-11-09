@@ -2,6 +2,7 @@ package scrollshot
 
 import (
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
@@ -12,6 +13,99 @@ import (
 	"golang.org/x/image/font/basicfont"
 	"golang.org/x/image/math/fixed"
 )
+
+func tableDocument(w, h int) *image.RGBA {
+	page := image.NewRGBA(image.Rect(0, 0, w, h))
+	draw.Draw(page, page.Bounds(), image.White, image.Point{}, draw.Src)
+	pen := font.Drawer{Dst: page, Src: image.NewUniform(color.RGBA{65, 65, 65, 255}), Face: basicfont.Face7x13}
+	rng := rand.New(rand.NewPCG(51, 117))
+	for y := 0; y < h-64; y += 64 {
+		for _, cell := range []struct {
+			x    int
+			text string
+		}{
+			{20, fmt.Sprintf("Member %08x", rng.Uint32())},
+			{440, "3 days overdue"}, {660, "364 days inactive"}, {990, "2026-11-09"}, {1280, "2025-11-10"}, {1710, "Coach"}, {2000, "Follow / Edit"},
+		} {
+			pen.Dot = fixed.P(cell.x, y+30)
+			pen.DrawString(cell.text)
+		}
+		pen.Dot = fixed.P(20, y+47)
+		pen.DrawString(fmt.Sprintf("13%09d", rng.IntN(1_000_000_000)))
+		draw.Draw(page, image.Rect(0, y+63, w, y+64), image.NewUniform(color.RGBA{235, 235, 235, 255}), image.Point{}, draw.Src)
+	}
+	return page
+}
+
+func tableViewport(page *image.RGBA, at, body, top, bottom int) *image.RGBA {
+	frame := viewport(page, at, body, top, bottom)
+	draw.Draw(frame, image.Rect(0, 0, page.Rect.Dx(), top), image.White, image.Point{}, draw.Src)
+	draw.Draw(frame, image.Rect(0, top+body, page.Rect.Dx(), frame.Rect.Dy()), image.White, image.Point{}, draw.Src)
+	pen := font.Drawer{Dst: frame, Src: image.Black, Face: basicfont.Face7x13, Dot: fixed.P(20, top-15)}
+	pen.DrawString("Member             Follow-up             Due date       Last activity      Coach       Actions")
+	pen.Dot = fixed.P(page.Rect.Dx()-300, frame.Rect.Dy()-12)
+	pen.DrawString("Page 1 / 1    Previous / Next")
+	return frame
+}
+
+func TestWideTableWithRepeatedDatesAndStickyFooter(t *testing.T) {
+	page := tableDocument(2250, 3000)
+	s := New()
+	for _, at := range []int{0, 2, 17, 83, 95, 159, 173, 241, 257, 389, 407, 512, 641} {
+		frame := tableViewport(page, at, 590, 150, 55)
+		out, err := s.Add(frame)
+		if err != nil || out.Height != 795+at {
+			t.Fatalf("table at %d: %+v %v", at, out, err)
+		}
+	}
+	got, want := s.Flatten(), tableViewport(page, 0, 590+641, 150, 55)
+	for y := range got.Rect.Dy() {
+		for x := range got.Rect.Dx() {
+			if got.RGBAAt(x, y) != want.RGBAAt(x, y) {
+				t.Fatalf("lost/repeated table pixel %d,%d", x, y)
+			}
+		}
+	}
+}
+
+func TestScrollbarThumbFragmentsAreRemovedWithoutChangingWidth(t *testing.T) {
+	page := document(200, 1000)
+	s := New()
+	for _, at := range []int{0, 45, 95, 127} {
+		frame := viewport(page, at, 240, 20, 16)
+		draw.Draw(frame, image.Rect(188, 0, 196, 276), image.White, image.Point{}, draw.Src)
+		draw.Draw(frame, image.Rect(190, 25+at/2, 196, 105+at/2), image.NewUniform(color.RGBA{145, 145, 145, 255}), image.Point{}, draw.Src)
+		if _, err := s.Add(frame); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if s.scrollbar.Empty() {
+		t.Fatal("scrollbar was not recognized")
+	}
+	got := s.Flatten()
+	if got.Rect.Dx() != 200 || got.Rect.Dy() != 403 {
+		t.Fatal("scrollbar cleanup cropped the image")
+	}
+	view := s.Image()
+	for y := range got.Rect.Dy() {
+		for x := s.scrollbar.Min.X; x < s.scrollbar.Max.X; x++ {
+			if got.RGBAAt(x, y) != got.RGBAAt(s.scrollbar.Min.X-2, y) || view.At(x, y) != got.At(x, y) {
+				t.Fatal("scrollbar fragments remain or preview differs")
+			}
+		}
+	}
+}
+
+func TestScrollbarRecognitionPreservesTextAndSolidBorder(t *testing.T) {
+	page := tableDocument(2250, 1000)
+	if !scrollbarStrip(page).Empty() {
+		t.Fatal("table text mistaken for scrollbar")
+	}
+	draw.Draw(page, image.Rect(2240, 0, 2246, 1000), image.NewUniform(color.RGBA{145, 145, 145, 255}), image.Point{}, draw.Src)
+	if !scrollbarStrip(page).Empty() {
+		t.Fatal("full-height border mistaken for scrollbar")
+	}
+}
 
 func document(w, h int) *image.RGBA {
 	img := image.NewRGBA(image.Rect(0, 0, w, h))

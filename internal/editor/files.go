@@ -18,10 +18,11 @@ const maxImageSize = 220 << 20
 // Picture is a validated image ready to open. It has no file, project or
 // persistence lifecycle. Encoded input is released after decoding.
 type Picture struct {
-	image  doc.Image
-	pixels *image.RGBA
-	mosaic *image.RGBA
-	title  string
+	image     doc.Image
+	pixels    *image.RGBA
+	mosaic    *image.RGBA
+	title     string
+	selection *ScreenSelection
 }
 
 // PictureFromPixels takes ownership of completed native capture pixels without

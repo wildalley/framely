@@ -7,6 +7,10 @@
 #include "pipewire.c"
 #undef main
 #include <assert.h>
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+#include <spa/pod/filter.h>
+#pragma GCC diagnostic pop
 
 static unsigned sync_calls, queued, quit_calls;
 int capture_test_ioctl(int fd,unsigned long request,...) {
@@ -18,6 +22,20 @@ int capture_test_queue(struct pw_stream *stream,struct pw_buffer *buffer) {
 int capture_test_quit(struct pw_main_loop *loop) { (void)loop;quit_calls++;return 0; }
 
 int main(void) {
+    // A CPU-only source must not inherit the DMA modifier from our offer.
+    // Exercise SPA's real negotiation rather than just inspecting a flag.
+    uint8_t offers[1024],filtered[2048];
+    struct spa_pod_builder offer_builder=SPA_POD_BUILDER_INIT(offers,sizeof(offers));
+    const struct spa_pod *formats[2];capture_formats(&offer_builder,formats);
+    struct spa_pod_builder filter_builder=SPA_POD_BUILDER_INIT(filtered,sizeof(filtered));
+    struct spa_pod *negotiated=NULL;
+    assert(spa_pod_filter(&filter_builder,&negotiated,formats[1],formats[0])<0);
+    filter_builder=(struct spa_pod_builder)SPA_POD_BUILDER_INIT(filtered,sizeof(filtered));
+    assert(spa_pod_filter(&filter_builder,&negotiated,formats[1],formats[1])==0);
+    assert(spa_pod_find_prop(negotiated,NULL,SPA_FORMAT_VIDEO_modifier)==NULL);
+    filter_builder=(struct spa_pod_builder)SPA_POD_BUILDER_INIT(filtered,sizeof(filtered));
+    assert(spa_pod_filter(&filter_builder,&negotiated,formats[0],formats[0])==0);
+    assert(spa_pod_find_prop(negotiated,NULL,SPA_FORMAT_VIDEO_modifier)!=NULL);
     FILE *backing=tmpfile(),*output=tmpfile();assert(backing&&output);
     int saved_stdout=dup(STDOUT_FILENO);assert(saved_stdout>=0);
     assert(dup2(fileno(output),STDOUT_FILENO)>=0);

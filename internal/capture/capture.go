@@ -1,12 +1,13 @@
 // Package capture takes screenshots with what each platform provides: the
-// screenshot portal on Linux, screencapture on macOS and the Snipping Tool
-// on Windows.
+// screenshot portal on Linux, screencapture on macOS and in-memory desktop
+// pixels on Windows.
 package capture
 
 import (
 	"bytes"
 	"errors"
 	"image"
+	"image/draw"
 	"image/png"
 
 	"github.com/wildalley/screenpin/internal/portal"
@@ -21,6 +22,17 @@ var ErrCancelled = errors.New("截图已取消")
 // match the installed io.screenpin.desktop.desktop, as it did before, so the
 // permissions already granted carry over.
 const AppID = portal.AppID
+
+// CropPixels detaches the selection from the desktop without encoding it.
+func CropPixels(img *image.RGBA, r image.Rectangle) (*image.RGBA, error) {
+	r = r.Intersect(img.Bounds())
+	if r.Empty() {
+		return nil, errors.New("截图选区超出图片范围")
+	}
+	out := image.NewRGBA(image.Rect(0, 0, r.Dx(), r.Dy()))
+	draw.Draw(out, out.Bounds(), img, r.Min, draw.Src)
+	return out, nil
+}
 
 // Crop cuts r out of img and encodes it as PNG.
 func Crop(img *image.RGBA, r image.Rectangle) ([]byte, error) {

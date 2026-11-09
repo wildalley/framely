@@ -38,4 +38,4 @@ jobs:
           gh release create "$GITHUB_REF_NAME" release-assets/*
           --verify-tag --latest
           --title "ScreenPin $GITHUB_REF_NAME — MyGo 原生版"
-          --notes-file docs/releases/v0.2.0.md
+          --notes-file docs/releases/${GITHUB_REF_NAME}.md

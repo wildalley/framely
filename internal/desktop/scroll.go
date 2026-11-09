@@ -8,6 +8,7 @@ import (
 	"image/draw"
 	"log"
 	"math"
+	"runtime"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -50,9 +51,19 @@ type scrollWindow struct {
 	height                                   int
 	canUndo                                  bool
 	hidden                                   []*mygo.Window
+	floating                                 bool
+	holdsCapture                             bool
+	display                                  mygo.Display
+	overlay                                  *mygo.Window
+	overlayRegion, overlayToolbar            ui.Rect
+	reuse                                    *editor.ScreenSelection
 }
 
 func (s *application) showScroll() {
+	s.showScrollForSelection(nil)
+}
+
+func (s *application) showScrollForSelection(selection *editor.ScreenSelection) {
 	if !capture.ScrollingSupported() {
 		s.notify("当前系统暂不支持长截图，截图、标注和离线 OCR 可正常使用。")
 		return
@@ -66,11 +77,26 @@ func (s *application) showScroll() {
 		return
 	}
 	ctx, cancel := context.WithCancel(s.ctx)
-	v := &scrollWindow{app: s, ctx: ctx, cancel: cancel, commands: make(chan scrollCommand, 8), loading: true}
+	v := &scrollWindow{app: s, ctx: ctx, cancel: cancel, commands: make(chan scrollCommand, 8), loading: true, holdsCapture: true, display: mygo.Screen.DisplayNearestPoint(mygo.Screen.CursorScreenPoint())}
+	if selection != nil && selection.Region.Dx() >= 80 && selection.Region.Dy() >= 160 {
+		for _, display := range mygo.Screen.Displays() {
+			if display.Bounds == selection.Display {
+				copy := *selection
+				v.reuse, v.display = &copy, display
+				break
+			}
+		}
+	}
 	s.scroll = v
+	s.captureBusy = true
 	s.operations++
-	v.win = mygo.NewWindow(mygo.WindowOptions{Title: "ScreenPin 长截图", Width: 620, Height: 620, MinWidth: 380, MinHeight: 380, UseContentSize: true, Content: ui.View(v.view)})
+	v.win = mygo.NewWindow(mygo.WindowOptions{Title: "ScreenPin 长截图", Width: 620, Height: 620, MinWidth: 380, MinHeight: 140, UseContentSize: true, AlwaysOnTop: true, Hidden: true, Content: ui.View(v.view)})
+	v.floating = capture.ExcludeWindow(v.win.NativeHandle())
+	if runtime.GOOS == "windows" {
+		v.win.Hide()
+	}
 	v.win.OnClosed(v.release)
+	s.refreshTray()
 	v.checkSetup()
 }
 func (v *scrollWindow) checkSetup() {
@@ -78,6 +104,7 @@ func (v *scrollWindow) checkSetup() {
 		return
 	}
 	v.loading = true
+	displays := mygo.Screen.Displays()
 	v.app.worker(func() {
 		_, err := components.Find("screenpin-capture")
 		if issue := capture.StreamConfigurationIssue(); err == nil && issue != "" {
@@ -90,7 +117,7 @@ func (v *scrollWindow) checkSetup() {
 		canAuto := err == nil && capture.AutomaticScrollAvailable(v.ctx)
 		v.later(func() {
 			v.loading = false
-			v.canAuto, v.automatic = canAuto, canAuto
+			v.canAuto, v.automatic = canAuto, canAuto && v.app.cfg.AutomaticScroll
 			v.monitors = monitors
 			if len(monitors) > 0 {
 				v.monitorName = monitors[0].Name
@@ -99,10 +126,22 @@ func (v *scrollWindow) checkSetup() {
 						v.monitorName = m.Name
 					}
 				}
+				// Resolve the source using the display under the pointer before
+				// opening any ScreenPin window, not the pointer during setup.
+				for i, d := range displays {
+					if d.ID == v.display.ID && i < len(monitors) {
+						v.monitorName = monitors[i].Name
+					}
+				}
 			}
 			v.setupError = ""
 			if err != nil {
 				v.setupError = err.Error()
+				v.holdsCapture, v.app.captureBusy = false, false
+				v.app.refreshTray()
+				v.win.Show()
+			} else {
+				v.start()
 			}
 		})
 	})
@@ -121,13 +160,19 @@ func (v *scrollWindow) release() {
 	}
 	v.closed = true
 	v.cancel()
+	if v.overlay != nil {
+		v.overlay.Destroy()
+		v.overlay = nil
+	}
 	v.restore()
 	v.preview = nil
 	v.previewSize = image.Point{}
 	v.monitors = nil
 	if v.app.scroll == v {
 		v.app.scroll = nil
-		v.app.captureBusy = false
+		if v.holdsCapture {
+			v.app.captureBusy = false
+		}
 		v.app.operations--
 		v.app.refreshTray()
 		v.app.maybeQuit()
@@ -170,6 +215,10 @@ func (v *scrollWindow) send(kind string) {
 	}
 }
 func (v *scrollWindow) show() {
+	if v.overlay != nil {
+		v.overlay.ShowInactive()
+		return
+	}
 	if v.running && !v.paused {
 		v.paused = true
 		v.send("pause")
@@ -182,8 +231,13 @@ func (v *scrollWindow) finish() {
 		return
 	}
 	v.ending = true
+	log.Print("ScreenPin: long screenshot finish requested")
 	v.send("finish")
-	v.win.Show()
+	if v.overlay != nil {
+		v.overlay.Invalidate()
+	} else {
+		v.win.Show()
+	}
 	v.win.Invalidate()
 }
 
@@ -196,11 +250,19 @@ func (v *scrollWindow) view(c *ui.Context) {
 		v.win.Close()
 		return
 	}
+	if v.running && c.Shortcut(0, ui.KeyEnter) {
+		v.finish()
+		return
+	}
+	if v.running && v.floating {
+		v.floatingView(c)
+		return
+	}
 	ui.Column(c).Fill().Padding(18).Gap(12).Children(func() {
 		ui.Scroll(c).Grow(1).MinHeight(0).Gap(12).Children(func() {
 			ui.Text(c, "长截图").FontSize(20).FontWeight(600)
 			if !v.running {
-				ui.Text(c, "选择窗口或显示器，再框选滚动内容。截图过程中可从托盘查看、暂停或完成。").TextColor(c.Theme().TextMuted)
+				ui.Text(c, "框选滚动内容，松开立即开始。截图过程中可从托盘查看或完成。").TextColor(c.Theme().TextMuted)
 				if v.loading {
 					ui.Text(c, "正在检查采集组件…")
 				}
@@ -262,9 +324,7 @@ func (v *scrollWindow) view(c *ui.Context) {
 					v.send("undo")
 				}
 				if ui.Button(c, "继续截图").Disabled(!v.paused || v.ending || v.sourceEnded).Clicked() {
-					v.paused = false
-					v.hideAll()
-					v.send("resume")
+					v.resume()
 				}
 				if ui.PrimaryButton(c, "完成截图").Disabled(v.ending).Clicked() {
 					v.finish()
@@ -285,37 +345,206 @@ func (v *scrollWindow) view(c *ui.Context) {
 	})
 }
 
+func (v *scrollWindow) resume() {
+	v.paused = false
+	if !v.floating {
+		v.hideAll()
+	}
+	v.send("resume")
+}
+
+func (v *scrollWindow) floatingView(c *ui.Context) {
+	ui.Column(c).Fill().Padding(12).Gap(8).Children(func() {
+		ui.Row(c).Gap(12).Children(func() {
+			ui.Text(c, fmt.Sprintf("长截图 · %d px", v.height)).FontWeight(600).Grow(1)
+			auto := ui.Checkbox(c, &v.automatic, "自动滚动").Disabled(!v.autoGranted || v.sourceEnded || v.ending)
+			if auto.Changed() {
+				v.paused = true
+				v.send("pause")
+			}
+		})
+		status := "缓慢向下滚动；按截图快捷键完成"
+		if v.automatic {
+			status = "正在自动滚动；按截图快捷键完成"
+		}
+		if v.paused {
+			status = "已暂停，可继续或完成截图"
+		}
+		if v.ending {
+			status = "正在生成长截图…"
+		}
+		if v.notice != "" {
+			status = v.notice
+		}
+		ui.Scroll(c).Grow(1).MinHeight(0).Children(func() { ui.Text(c, status).FontSize(12).TextColor(c.Theme().TextMuted) })
+		ui.Row(c).Gap(6).Justify(ui.End).Children(func() {
+			if ui.Button(c, "取消").Disabled(v.ending).Clicked() {
+				v.win.Close()
+			}
+			if ui.Button(c, "撤回").Disabled(!v.canUndo || v.ending).Clicked() {
+				v.paused = true
+				v.send("undo")
+			}
+			if v.paused {
+				if ui.Button(c, "继续").Disabled(v.sourceEnded || v.ending).Clicked() {
+					v.resume()
+				}
+			} else if ui.Button(c, "暂停").Disabled(v.ending).Clicked() {
+				v.paused = true
+				v.send("pause")
+			}
+			if ui.PrimaryButton(c, "完成").Disabled(v.ending).Clicked() {
+				v.finish()
+			}
+		})
+	})
+}
+
+type desktopScrollSelection struct {
+	display     mygo.Display
+	region      image.Rectangle
+	desktopSize image.Point
+	pixels      *image.RGBA
+}
+
+// With existing screenshot permission, select on the whole desktop first.
+// This gets the intended monitor from the drag itself, even when Wayland
+// intentionally withholds the global cursor position from background apps.
+// If silent screenshots are unavailable, retain the portal-first flow.
+func (v *scrollWindow) pickDesktopScrollRegion(displays []mygo.Display) (*desktopScrollSelection, error) {
+	if capture.ScreenshotAccessContext(v.ctx) != capture.AccessGranted {
+		return nil, v.ctx.Err()
+	}
+	// Let ScreenPin's existing windows finish their hide animation.
+	timer := time.NewTimer(180 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-v.ctx.Done():
+		return nil, v.ctx.Err()
+	case <-timer.C:
+	}
+	data, err := capture.ScreenshotContext(v.ctx, false)
+	if err != nil {
+		if cancelled(err) || v.ctx.Err() != nil {
+			return nil, err
+		}
+		log.Printf("ScreenPin: long screenshot desktop frame unavailable: %v; selecting shared source first", err)
+		return nil, nil
+	}
+	full, err := capture.Decode(data)
+	if err != nil {
+		log.Printf("ScreenPin: long screenshot desktop frame: %v; selecting shared source first", err)
+		return nil, nil
+	}
+	region, target, err := editor.PickScreenRegion(v.ctx, full, displays, "", image.Pt(80, 160), "框选滚动内容，松开开始 · 首次共享请选择此屏 · Esc 取消")
+	if err != nil {
+		return nil, err
+	}
+	if target == nil {
+		return nil, errors.New("无法确定框选所在的显示器")
+	}
+	for _, display := range displays {
+		if display.Bounds == *target {
+			pixels, err := capture.CropPixels(full, region)
+			if err != nil {
+				return nil, err
+			}
+			log.Printf("ScreenPin: long screenshot desktop selection: id=%d display=%v region=%v", display.ID, display.Bounds, region)
+			return &desktopScrollSelection{display: display, region: region, desktopSize: full.Bounds().Size(), pixels: pixels}, nil
+		}
+	}
+	return nil, errors.New("框选所在的显示器已断开")
+}
+
 func (v *scrollWindow) start() {
 	if v.closed || v.busy || v.running {
 		return
 	}
+	if v.app.settings != nil && v.app.settings.asking {
+		v.notice = "正在等待截图授权，请先完成系统提示。"
+		v.win.Show()
+		v.win.Invalidate()
+		return
+	}
+	if v.app.captureBusy && !v.holdsCapture {
+		v.notice = "请先完成当前截图，再开始长截图。"
+		v.win.Invalidate()
+		return
+	}
 	v.busy = true
-	v.notice = "正在打开系统共享选择器，请选择窗口或显示器。若未出现选择器，可取消后检查权限与长截图设置。"
+	v.holdsCapture = true
+	v.notice = "正在打开系统共享选择器，请选择窗口或显示器。"
 	v.app.captureBusy = true
 	v.app.refreshTray()
 	options := capture.StreamOptions{Automatic: v.automatic}
-	for _, m := range v.monitors {
+	for i, m := range v.monitors {
 		if m.Name == v.monitorName {
 			options.Monitor = m.ID
+			displays := mygo.Screen.Displays()
+			if i < len(displays) {
+				v.display = displays[i]
+			}
 		}
 	}
-	// Keep the controller and Cancel available while the system chooser opens.
+	b := v.display.Bounds
+	options.DisplayBounds = image.Rect(b.X, b.Y, b.X+b.Width, b.Y+b.Height)
+	if runtime.GOOS == "linux" {
+		// Wayland may return stale global pointer coordinates. The actual
+		// region selection identifies the display before source restoration.
+		if v.reuse == nil {
+			options.DisplayBounds = image.Rectangle{}
+		}
+		v.notice = "正在准备框选；首次共享时请选择框选所在的显示器。"
+	}
+	// Keep Cancel available during portal authorization; Windows has no chooser.
 	for _, w := range mygo.Windows() {
 		if w != v.win && w.IsVisible() {
 			v.hidden = append(v.hidden, w)
 			w.Hide()
 		}
 	}
+	v.win.Hide()
 	v.win.Invalidate()
+	displays := mygo.Screen.Displays()
+	display := v.display
+	reuse := v.reuse
 	v.app.worker(func() {
-		timer := time.NewTimer(180 * time.Millisecond)
-		select {
-		case <-v.ctx.Done():
-			timer.Stop()
-			return
-		case <-timer.C:
+		var selected *desktopScrollSelection
+		if runtime.GOOS == "linux" && reuse != nil {
+			// The converted screenshot editor may still be shrinking on
+			// GNOME. Take the baseline after its close animation finishes.
+			timer := time.NewTimer(250 * time.Millisecond)
+			select {
+			case <-v.ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
 		}
+		if runtime.GOOS == "linux" && reuse == nil {
+			var err error
+			selected, err = v.pickDesktopScrollRegion(displays)
+			if err != nil {
+				v.startFailed(err)
+				return
+			}
+			if selected != nil {
+				display = selected.display
+				b := display.Bounds
+				options.DisplayBounds = image.Rect(b.X, b.Y, b.X+b.Width, b.Y+b.Height)
+				mygo.RunOnMain(func() { v.display = display })
+			}
+		}
+		log.Printf("ScreenPin: long screenshot requested display: id=%d bounds=%v", display.ID, options.DisplayBounds)
 		source, err := capture.OpenStream(v.ctx, options)
+		fallback := false
+		if options.Automatic && errors.Is(err, capture.ErrAutomaticUnavailable) && v.ctx.Err() == nil {
+			options.Automatic, fallback = false, true
+			v.later(func() {
+				v.notice = "桌面未提供可用的自动采集，正在切换手动长截图，请选择共享来源。"
+			})
+			source, err = capture.OpenStream(v.ctx, options)
+		}
 		if err != nil {
 			v.startFailed(err)
 			return
@@ -326,24 +555,57 @@ func (v *scrollWindow) start() {
 		first, err := source.Next(firstCtx)
 		done()
 		if err != nil {
+			source.Close()
+			err = capture.StreamDiagnostic(source, err)
 			v.startFailed(err)
 			return
 		}
+		log.Printf("ScreenPin: long screenshot connected: %dx%d", first.Rect.Dx(), first.Rect.Dy())
 		// Let the portal's source chooser disappear before taking the frame
 		// used for region selection; this is still the same capture session.
-		timer = time.NewTimer(350 * time.Millisecond)
-		select {
-		case <-v.ctx.Done():
-			timer.Stop()
-			return
-		case <-timer.C:
+		if runtime.GOOS == "linux" {
+			timer := time.NewTimer(180 * time.Millisecond)
+			select {
+			case <-v.ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+			freshCtx, stop := context.WithTimeout(v.ctx, time.Millisecond)
+			if fresh, e := source.Next(freshCtx); e == nil {
+				first = fresh
+			}
+			stop()
 		}
-		freshCtx, stop := context.WithTimeout(v.ctx, 500*time.Millisecond)
-		if fresh, e := source.Next(freshCtx); e == nil {
-			first = fresh
+		var region image.Rectangle
+		var screen *mygo.Display
+		if runtime.GOOS == "windows" {
+			screen = &display
+		} else if bounds, ok := capture.StreamDisplayBounds(source); ok {
+			for _, d := range displays {
+				if d.Bounds.X == bounds.Min.X && d.Bounds.Y == bounds.Min.Y && d.Bounds.Width == bounds.Dx() && d.Bounds.Height == bounds.Dy() {
+					selected := d
+					screen = &selected
+					break
+				}
+			}
 		}
-		stop()
-		region, err := editor.SelectImageRegion(v.ctx, first, "选择长截图的滚动区域")
+		// Monitor position is optional in the portal. With a single monitor
+		// there is no ambiguity, even when logical and physical sizes differ.
+		if screen == nil && capture.StreamSourceType(source) == 1 && len(displays) == 1 {
+			selected := displays[0]
+			screen = &selected
+		}
+		if reuse != nil && screen != nil && screen.Bounds == reuse.Display {
+			region, err = reuse.ForStream(first.Bounds().Size())
+			log.Printf("ScreenPin: long screenshot reused selection: display=%v region=%v", screen.Bounds, region)
+		} else if selected != nil && screen != nil && screen.Bounds == selected.display.Bounds {
+			region, err = editor.DesktopRegionToStream(selected.region, screen.Bounds, displays, selected.desktopSize, first.Bounds().Size())
+		} else if screen != nil {
+			region, _, err = editor.PickScreenRegion(v.ctx, first, []mygo.Display{*screen}, "", image.Pt(80, 160), "框选滚动内容，松开开始 · 避开滚动条和动画 · Esc 取消")
+		} else {
+			region, err = editor.SelectScrollRegion(v.ctx, first)
+		}
 		if err != nil {
 			v.startFailed(err)
 			return
@@ -352,24 +614,76 @@ func (v *scrollWindow) start() {
 			v.startFailed(errors.New("长截图选区至少需要 80 × 160 像素，请扩大滚动区域"))
 			return
 		}
-		controller, err := scrollshot.NewController(first.SubImage(region).(*image.RGBA), options.Automatic, time.Now())
+		// Keep the known-clean frame captured before opening the picker.
+		// GNOME animates a closing window: a frame received just after release
+		// can still contain a faded/shrinking selection overlay.
+		if runtime.GOOS == "linux" {
+			timer := time.NewTimer(250 * time.Millisecond)
+			select {
+			case <-v.ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+		}
+		baseline := first.SubImage(region).(*image.RGBA)
+		if selected != nil && screen != nil && screen.Bounds == selected.display.Bounds && selected.pixels.Bounds().Size() == region.Size() {
+			baseline = selected.pixels
+		}
+		selected = nil
+		controller, err := scrollshot.NewController(baseline, options.Automatic, time.Now())
 		if err != nil {
 			v.startFailed(err)
 			return
 		}
 		defer controller.Stitch.Release()
+		if fallback {
+			controller.Notice = "已切换手动模式，请缓慢向下滚动，按截图快捷键完成。"
+		}
 		sourceSize := first.Bounds().Size()
 		first = nil
-		v.later(func() { v.busy = false; v.running = true; v.autoGranted = options.Automatic; v.app.refreshTray() })
+		// Install the controls synchronously before publishing stitch updates.
+		controlsNotice := ""
+		mygo.RunOnMain(func() {
+			if v.closed {
+				return
+			}
+			v.busy = false
+			v.running = true
+			v.autoGranted = options.Automatic
+			v.notice = ""
+			if screen != nil {
+				v.display = *screen
+			}
+			if runtime.GOOS == "linux" && screen != nil {
+				v.openOverlay(*screen, region, sourceSize)
+			} else if capture.StreamSourceType(source) == 2 {
+				// A separate controller is never part of a window-only stream.
+				v.floating = true
+			}
+			if v.floating && v.overlay == nil {
+				area := v.display.WorkArea
+				v.win.SetBounds(mygo.Rectangle{X: area.X + max(0, area.Width-440), Y: area.Y + 16, Width: 420, Height: 170})
+				v.win.ShowInactive()
+			}
+			log.Printf("ScreenPin: long screenshot selection: source=%d region=%v overlay=%t floating=%t", capture.StreamSourceType(source), region, v.overlay != nil, v.floating)
+			controlsNotice = v.notice
+			v.app.refreshTray()
+		})
+		if controlsNotice != "" {
+			controller.Notice = controlsNotice
+		}
 		v.publish(controller, false)
 		finished := v.run(source, region, sourceSize, controller)
 		if !finished || v.ctx.Err() != nil {
 			return
 		}
 		pixels := controller.Stitch.Flatten()
-		source.Close()
+		log.Printf("ScreenPin: long screenshot completed: %dx%d", pixels.Rect.Dx(), pixels.Rect.Dy())
+		// Image preparation runs off the UI thread; portal/helper teardown
+		// is deferred until after the editor handoff has been queued.
+		picture, err := editor.PictureFromPixels(pixels, "长截图 "+time.Now().Format("15-04-05"))
 		v.later(func() {
-			picture, err := editor.PictureFromPixels(pixels, "长截图 "+time.Now().Format("15-04-05"))
 			if err != nil {
 				v.notice = err.Error()
 				v.ending = false
@@ -377,7 +691,9 @@ func (v *scrollWindow) start() {
 			}
 			v.app.operations++ // keep no-tray mode alive during window handoff
 			v.win.Destroy()
-			v.app.showPicture(picture, nil, "")
+			target := v.display.Bounds
+			v.app.showPicture(picture, &target, "")
+			log.Print("ScreenPin: long screenshot editor opened")
 			v.app.operations--
 			v.app.maybeQuit()
 		})
@@ -388,25 +704,43 @@ func (v *scrollWindow) startFailed(err error) {
 	if !cancelled(err) {
 		log.Printf("ScreenPin: long screenshot: %v", err)
 	}
-	v.later(func() {
-		v.busy = false
-		v.app.captureBusy = false
-		v.restore()
-		v.win.Show()
-		v.app.refreshTray()
-		if !cancelled(err) {
-			v.notice = err.Error()
+	v.later(func() { v.applyStartFailure(err) })
+}
+
+func (v *scrollWindow) applyStartFailure(err error) {
+	if cancelled(err) {
+		log.Print("ScreenPin: long screenshot cancelled; discarding controller")
+		if v.win != nil {
+			v.win.Destroy()
+		} else {
+			v.release()
 		}
-	})
+		return
+	}
+	v.busy = false
+	v.holdsCapture = false
+	v.app.captureBusy = false
+	v.restore()
+	v.win.Show()
+	v.app.refreshTray()
+	v.notice = err.Error()
 }
 
 func (v *scrollWindow) publish(c *scrollshot.Controller, show bool) {
-	preview := c.Stitch.Preview(previewWidth, previewHeight)
+	var preview *image.RGBA
+	if !v.floating {
+		preview = c.Stitch.Preview(previewWidth, previewHeight)
+	}
 	height, canUndo, paused, automatic, notice := c.Stitch.Height(), c.Stitch.CanUndo(), c.Paused, c.Automatic, c.Notice
+	log.Printf("ScreenPin: long screenshot progress: height=%d paused=%t notice=%q", height, paused, notice)
 	v.later(func() {
-		v.setPreview(preview)
+		if preview != nil {
+			v.setPreview(preview)
+		}
 		v.height, v.canUndo, v.paused, v.automatic, v.notice = height, canUndo, paused, automatic, notice
-		if show {
+		if v.overlay != nil {
+			v.overlay.Invalidate()
+		} else if show {
 			v.win.Show()
 			v.win.Focus()
 		}
@@ -440,6 +774,34 @@ func (v *scrollWindow) drawPreview(p *ui.Painter, r ui.Rect) {
 }
 
 func (v *scrollWindow) run(source capture.Stream, region image.Rectangle, sourceSize image.Point, c *scrollshot.Controller) bool {
+	finishCapture := func() bool {
+		// Stop generating input immediately, then accept the last settled
+		// viewport instead of dropping the user's final scroll on Finish.
+		if c.Paused {
+			return true
+		}
+		c.Automatic = false
+		until := time.Now().Add(400 * time.Millisecond)
+		for v.ctx.Err() == nil && time.Now().Before(until) {
+			ctx, cancel := context.WithTimeout(v.ctx, 40*time.Millisecond)
+			frame, err := source.Next(ctx)
+			cancel()
+			if err != nil && !errors.Is(err, context.DeadlineExceeded) {
+				break
+			}
+			if frame != nil {
+				if frame.Bounds().Size() != sourceSize || !region.In(frame.Bounds()) {
+					break
+				}
+				c.Feed(frame.SubImage(region).(*image.RGBA), time.Now())
+			}
+			changed, _ := c.Tick(time.Now())
+			if changed || c.Paused || c.Settled(time.Now()) {
+				break
+			}
+		}
+		return v.ctx.Err() == nil
+	}
 	processCommands := func() (finish bool) {
 		for {
 			select {
@@ -463,13 +825,16 @@ func (v *scrollWindow) run(source capture.Stream, region image.Rectangle, source
 	}
 	for v.ctx.Err() == nil {
 		if processCommands() {
-			return true
+			return finishCapture()
 		}
 		frameCtx, done := context.WithTimeout(v.ctx, 100*time.Millisecond)
 		frame, err := source.Next(frameCtx)
 		done()
 		if processCommands() {
-			return true
+			if frame != nil && frame.Bounds().Size() == sourceSize && region.In(frame.Bounds()) {
+				c.Feed(frame.SubImage(region).(*image.RGBA), time.Now())
+			}
+			return finishCapture()
 		}
 		if frame != nil && frame.Bounds().Size() != sourceSize {
 			err = scrollshot.ErrSize

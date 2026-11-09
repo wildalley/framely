@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"image"
 	"log"
 	"path/filepath"
 	"runtime"
@@ -40,6 +41,7 @@ type application struct {
 	tray                *mygo.Tray
 	menu                *mygo.Menu
 	captureItem         *mygo.MenuItem
+	closeAllItem        *mygo.MenuItem
 	captureBusy         bool
 	openingDialog       bool
 	scroll              *scrollWindow
@@ -208,7 +210,16 @@ func (s *application) showPicture(picture editor.Picture, target *mygo.Rectangle
 	image.OnPaste = s.Paste
 	image.OnCapture = s.Capture
 	if capture.ScrollingSupported() {
-		image.OnScroll = s.showScroll
+		image.OnScroll = func() {
+			selection := image.ScreenSelection()
+			previous := s.scroll
+			s.showScrollForSelection(selection)
+			if previous == nil && selection != nil && s.scroll != nil && s.scroll.reuse != nil {
+				// Converting a fresh screenshot replaces this draft. It must
+				// not reappear beside the completed or cancelled long capture.
+				image.Close()
+			}
+		}
 	}
 	image.OnSettings = func() { s.showSettings("") }
 	image.OnOCRResult = s.showOCR
@@ -216,10 +227,12 @@ func (s *application) showPicture(picture editor.Picture, target *mygo.Rectangle
 		if i := slices.Index(s.images, image); i >= 0 {
 			s.images = slices.Delete(s.images, i, i+1)
 		}
+		s.refreshTray()
 		s.maybeQuit()
 	}
 	if image.Open(s.ctx, picture, target, token) != nil {
 		s.images = append(s.images, image)
+		s.refreshTray()
 	}
 }
 
@@ -357,12 +370,31 @@ func (s *application) CaptureWithActivation(token string) {
 			case <-timer.C:
 			}
 		}
-		data, target, remaining, err := grab(ctx, token)
+		if runtime.GOOS == "windows" {
+			full, err := capture.DesktopPixels(ctx)
+			if err != nil {
+				return editor.Picture{}, nil, "", err
+			}
+			var displays []mygo.Display
+			mygo.RunOnMain(func() { displays = mygo.Screen.Displays() })
+			r, target, err := editor.PickScreenRegion(ctx, full, displays, token, image.Pt(4, 4), "")
+			if err != nil {
+				return editor.Picture{}, nil, "", err
+			}
+			pixels, err := capture.CropPixels(full, r)
+			if err != nil {
+				return editor.Picture{}, nil, "", err
+			}
+			picture, err := editor.PictureFromPixels(pixels, "截图 "+time.Now().Format("15-04-05"))
+			selection, _ := editor.ScreenSelectionFromDesktop(r, target, displays, full.Bounds())
+			return picture.WithScreenSelection(selection), target, "", err
+		}
+		data, target, selection, remaining, err := grab(ctx, token)
 		if err != nil {
 			return editor.Picture{}, nil, "", err
 		}
 		picture, err := editor.DecodePicture(data, "截图 "+time.Now().Format("15-04-05"))
-		return picture, target, remaining, err
+		return picture.WithScreenSelection(selection), target, remaining, err
 	}, func() {
 		for _, win := range hidden {
 			if !win.IsDestroyed() {
@@ -379,44 +411,57 @@ func (s *application) CaptureWithActivation(token string) {
 
 // First-use capture uses the system selector without opening a fake editor
 // just to focus a permission prompt. Once granted, use ScreenPin's own picker.
-func grab(ctx context.Context, token string) ([]byte, *mygo.Rectangle, string, error) {
+func grab(ctx context.Context, token string) ([]byte, *mygo.Rectangle, *editor.ScreenSelection, string, error) {
 	if runtime.GOOS != "linux" {
 		data, err := capture.SystemContext(ctx, mygo.Clipboard.ReadImage)
-		return data, nil, token, err
+		return data, nil, nil, token, err
 	}
 	if capture.ScreenshotAccessContext(ctx) == capture.AccessGranted {
 		full, err := capture.ScreenshotContext(ctx, false)
 		if err == nil {
-			data, target, pickErr := editor.PickRegion(ctx, full, token)
+			data, target, selection, pickErr := editor.PickRegion(ctx, full, token)
 			// The token activated the picker; it must not be used a second time.
 			token = ""
 			if pickErr == nil || cancelled(pickErr) || ctx.Err() != nil {
-				return data, target, token, pickErr
+				return data, target, selection, token, pickErr
 			}
 			log.Printf("ScreenPin: region picker: %v; using system selector", pickErr)
 		} else if cancelled(err) || ctx.Err() != nil {
-			return nil, nil, token, err
+			return nil, nil, nil, token, err
 		}
 	}
 	data, err := capture.ScreenshotContext(ctx, true)
-	return data, nil, token, err
+	return data, nil, nil, token, err
 }
 
 // trayItems is shared by the native tray and its interaction regression tests.
 func (s *application) trayItems() []*mygo.MenuItem {
 	s.captureItem = &mygo.MenuItem{ID: "capture", Label: "截图", Click: func(*mygo.MenuItem, *mygo.Window) { s.Capture() }}
+	s.closeAllItem = &mygo.MenuItem{
+		ID: "close-all-images", Label: "关闭所有贴图", Hidden: true,
+		Click: func(*mygo.MenuItem, *mygo.Window) { s.closeAllImages() },
+	}
 	return []*mygo.MenuItem{
 		s.captureItem,
 		{ID: "scroll-capture", Label: "长截图…", Disabled: !capture.ScrollingSupported(), Click: func(*mygo.MenuItem, *mygo.Window) { s.showScroll() }},
 		mygo.Separator(),
 		{ID: "paste", Label: "粘贴图片", Click: func(*mygo.MenuItem, *mygo.Window) { s.Paste() }},
 		{ID: "open-image", Label: "打开图片…", Click: func(*mygo.MenuItem, *mygo.Window) { s.OpenImage() }},
+		s.closeAllItem,
 		mygo.Separator(),
 		{ID: "settings", Label: "设置与快捷键…", Click: func(*mygo.MenuItem, *mygo.Window) { s.showSettings("") }},
 		mygo.Separator(),
 		{ID: "quit", Label: "退出 ScreenPin", Click: func(*mygo.MenuItem, *mygo.Window) { mygo.App.Quit() }},
 	}
 }
+
+func (s *application) closeAllImages() {
+	list := slices.Clone(s.images)
+	for _, img := range list {
+		img.Close()
+	}
+}
+
 func (s *application) createTray() {
 	s.menu = mygo.NewMenu(s.trayItems())
 	tray, err := mygo.NewTray(mygo.TrayOptions{ID: capture.AppID, Icon: assets.TrayIcon, ToolTip: "ScreenPin", Menu: s.menu})
@@ -444,9 +489,16 @@ func (s *application) refreshTray() {
 	}
 	s.captureItem.SetLabel(label)
 	s.captureItem.SetEnabled(!s.captureBusy || s.scroll != nil && s.scroll.running)
-	longActive := s.scroll != nil && (s.scroll.busy || s.scroll.running)
+	longActive := s.scroll != nil && (s.scroll.loading || s.scroll.busy || s.scroll.running)
 	for _, id := range []string{"paste", "open-image"} {
 		s.menu.ItemByID(id).SetEnabled(!longActive)
+	}
+	if s.closeAllItem != nil {
+		count := len(s.images)
+		s.closeAllItem.SetVisible(count > 0 && !longActive)
+		if count > 0 {
+			s.closeAllItem.SetLabel(fmt.Sprintf("关闭所有贴图（%d）", count))
+		}
 	}
 	scroll := s.menu.ItemByID("scroll-capture")
 	scroll.SetEnabled(capture.ScrollingSupported() && (!s.captureBusy || s.scroll != nil))
@@ -454,6 +506,16 @@ func (s *application) refreshTray() {
 	if longActive {
 		scroll.SetLabel("查看长截图…")
 	}
+	tip := "ScreenPin"
+	if !s.shortcutPending && s.shortcutError == "" {
+		tip = fmt.Sprintf("ScreenPin (%s)", config.DisplayShortcut(s.cfg.CaptureShortcut))
+	}
+	if s.captureBusy {
+		tip = "ScreenPin — 正在截图…"
+	} else if s.scroll != nil && s.scroll.running {
+		tip = "ScreenPin — 正在进行长截图"
+	}
+	s.tray.SetToolTip(tip)
 	s.tray.SetMenu(s.menu)
 }
 
