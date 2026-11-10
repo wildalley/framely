@@ -45,6 +45,11 @@ def tool(name, env):
     raise RuntimeError(f"{name} not found outside {system}; install it with MSYS2 and add C:\\msys64\\usr\\bin to PATH")
 
 
+# FFmpeg's pkg-config files omit the Media Foundation GUID libraries that the
+# static h264_mf encoder needs (IID_ICodecAPI, IID_IMFTransform, ...).
+WINDOWS_MEDIA_LIBS = ["mfplat.lib", "mfuuid.lib", "strmiids.lib", "ole32.lib"]
+
+
 def build_env():
     env = os.environ.copy()
     if SYSTEM == "Windows":
@@ -111,7 +116,7 @@ def main():
     env["PKG_CONFIG_PATH"] = pkg_config_path()
     if SYSTEM == "Windows":
         # pkgconf from MSYS2 must resolve native Windows paths for cl/link.
-        native_libs = shlex.split(subprocess.check_output([tool("pkg-config", env), "--msvc-syntax", "--static", "--libs", "libavformat", "libavcodec", "libavutil", "libswscale"], env=env, text=True))
+        native_libs = shlex.split(subprocess.check_output([tool("pkg-config", env), "--msvc-syntax", "--static", "--libs", "libavformat", "libavcodec", "libavutil", "libswscale"], env=env, text=True)) + WINDOWS_MEDIA_LIBS
         run(["cl", "/nologo", "/O2", "/MT", "/std:c11", "/c", "/I" + str(PREFIX / "include"), "/Fo" + str(WORK / "recorder.obj"), ROOT / "workers/media/recorder.c"], env=env)
         run(["cl", "/nologo", "/std:c++20", "/EHsc", "/O2", "/MT", "/utf-8", "/DSCREENPIN_RECORD", "/Fo" + str(WORK / "record-windows.obj"), "/Fe" + str(DEST / "screenpin-record.exe"), ROOT / "workers/capture/windows.cpp", WORK / "recorder.obj", "/link", *native_libs, "windowsapp.lib", "d3d11.lib", "dxgi.lib", "user32.lib", "shell32.lib"], env=env)
     else:

@@ -14,7 +14,7 @@ env["PKG_CONFIG_PATH"] = media.pkg_config_path()
 binary = media.WORK / ("recorder-test.exe" if media.SYSTEM == "Windows" else "recorder-test")
 if media.SYSTEM == "Windows":
     import shlex
-    libs = shlex.split(subprocess.check_output([media.tool("pkg-config", env), "--msvc-syntax", "--static", "--libs", "libavformat", "libavcodec", "libavutil", "libswscale"], env=env, text=True))
+    libs = shlex.split(subprocess.check_output([media.tool("pkg-config", env), "--msvc-syntax", "--static", "--libs", "libavformat", "libavcodec", "libavutil", "libswscale"], env=env, text=True)) + media.WINDOWS_MEDIA_LIBS
     media.run(["cl", "/nologo", "/O2", "/MT", "/std:c11", "/I"+str(media.PREFIX / "include"), "/Fo"+str(media.WORK)+"\\", "/Fe"+str(binary), ROOT / "workers/media/recorder_test.c", ROOT / "workers/media/recorder.c", "/link", *libs])
 else:
     import shlex
