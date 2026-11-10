@@ -48,8 +48,10 @@ func serveTestWorker() {
 func installTestWorker(t *testing.T) {
 	t.Helper()
 	Close()
-	t.Cleanup(Close)
 	dir := t.TempDir()
+	// Cleanups run in reverse registration order. Reap the reusable worker
+	// before TempDir removes its executable, which Windows keeps locked.
+	t.Cleanup(Close)
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
