@@ -493,7 +493,7 @@ func (v *videoWindow) start() {
 	if v.busy || v.running || v.app.captureBusy {
 		return
 	}
-	if _, err := components.Find("screenpin-record"); err != nil {
+	if _, err := components.FindProtocol("screenpin-record", components.FrameProtocol); err != nil {
 		v.notice = err.Error()
 		return
 	}

@@ -82,7 +82,7 @@ func openPortalStream(parent context.Context, options StreamOptions, forceChoose
 	if options.Recording != nil {
 		name = "screenpin-record"
 	}
-	helper, err := components.Find(name)
+	helper, err := components.FindProtocol(name, components.FrameProtocol)
 	if err != nil {
 		return nil, err
 	}

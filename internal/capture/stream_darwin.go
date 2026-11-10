@@ -14,7 +14,7 @@ func OpenStream(parent context.Context, options StreamOptions) (Stream, error) {
 	if options.Recording == nil {
 		return nil, errors.New("macOS 当前支持录屏，暂不支持长截图")
 	}
-	helper, err := components.Find("screenpin-record")
+	helper, err := components.FindProtocol("screenpin-record", components.FrameProtocol)
 	if err != nil {
 		return nil, err
 	}

@@ -36,7 +36,7 @@ func OpenStream(parent context.Context, options StreamOptions) (Stream, error) {
 	if options.Recording != nil {
 		name = "screenpin-record"
 	}
-	helper, err := components.Find(name)
+	helper, err := components.FindProtocol(name, components.FrameProtocol)
 	if err != nil {
 		return nil, err
 	}

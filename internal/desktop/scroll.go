@@ -107,7 +107,7 @@ func (v *scrollWindow) checkSetup() {
 	v.loading = true
 	displays := mygo.Screen.Displays()
 	v.app.worker(func() {
-		_, err := components.Find("screenpin-capture")
+		_, err := components.FindProtocol("screenpin-capture", components.FrameProtocol)
 		if issue := capture.StreamConfigurationIssue(); err == nil && issue != "" {
 			err = errors.New(issue)
 		}

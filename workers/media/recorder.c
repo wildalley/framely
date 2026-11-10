@@ -53,7 +53,7 @@ static int open_codec(struct sp_recorder *r,const char *name,int width,int heigh
         c->hw_frames_ctx=av_hwframe_ctx_alloc(device);av_buffer_unref(&device);
         if(!c->hw_frames_ctx)goto bad;
         AVHWFramesContext *frames=(AVHWFramesContext*)c->hw_frames_ctx->data;
-        frames->format=AV_PIX_FMT_VAAPI;frames->sw_format=AV_PIX_FMT_NV12;frames->width=width;frames->height=height;frames->initial_pool_size=4;
+        frames->format=AV_PIX_FMT_VAAPI;frames->sw_format=AV_PIX_FMT_NV12;frames->width=width;frames->height=height;frames->initial_pool_size=16; // Encoder lookahead holds several surfaces.
         if(av_hwframe_ctx_init(c->hw_frames_ctx)<0)goto bad;
         c->pix_fmt=AV_PIX_FMT_VAAPI;
         r->hardware=av_frame_alloc();if(!r->hardware || av_hwframe_get_buffer(c->hw_frames_ctx,r->hardware,0)<0)goto bad;
@@ -200,7 +200,10 @@ int sp_record_tick(struct sp_recorder *r,int64_t now) {
     int64_t started=av_gettime_relative();
     r->frame->pts=pts;AVFrame *frame=r->frame;
     if(r->hardware) {
-        int result=av_frame_make_writable(r->hardware);if(result<0)return fail(r,result,"Prepare hardware frame");
+        // Hardware surfaces cannot be made writable in place: the encoder
+        // still references the last one. Take a fresh surface from the pool.
+        av_frame_unref(r->hardware);
+        int result=av_hwframe_get_buffer(r->codec->hw_frames_ctx,r->hardware,0);if(result<0)return fail(r,result,"Prepare hardware frame");
         result=av_hwframe_transfer_data(r->hardware,r->frame,0);if(result<0)return fail(r,result,"Upload pixels");
         r->hardware->pts=pts;frame=r->hardware;
     }
