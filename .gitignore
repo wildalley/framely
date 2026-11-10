@@ -1,16 +1,9 @@
-node_modules
-dist
 build
 __pycache__/
 resources/linux-*/workers/
 resources/windows-*/workers/
 resources/darwin-*/workers/
 cmd/screenpin/mygo_windows_*.syso
-src-tauri/target
-src-tauri/gen/schemas
-packaging/arch/pkg
-packaging/arch/src
-packaging/arch/*.pkg.tar.*
 packaging/arch-native/pkg
 packaging/arch-native/src
 packaging/arch-native/*.pkg.tar.*
