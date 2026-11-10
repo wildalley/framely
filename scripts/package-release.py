@@ -15,6 +15,29 @@ ROOT = Path(__file__).resolve().parents[1]
 DESKTOP_ID = "io.screenpin.desktop.desktop"
 
 
+def verify_ocr_resources(resources):
+    worker = resources / "screenpin-ocr"
+    manifest = json.loads((worker / "manifest.json").read_text(encoding="utf-8"))
+    if not manifest.get("offline") or manifest.get("protocol") != 2:
+        raise ValueError("Offline OCR protocol 2 runtime is required")
+    for name in ("requirements.lock", "rapidocr.lock"):
+        expected = hashlib.sha256((ROOT / "workers/ocr" / name).read_bytes()).hexdigest()
+        if manifest.get("dependency_locks", {}).get(name) != expected:
+            raise ValueError(f"OCR runtime was not built from the current {name}")
+    expected = hashlib.sha256((ROOT / "workers/ocr/worker.py").read_bytes()).hexdigest()
+    if manifest.get("worker_sha256") != expected:
+        raise ValueError("OCR runtime contains a stale worker implementation")
+    sbom = json.loads((worker / "sbom.cdx.json").read_text(encoding="utf-8"))
+    if sbom.get("bomFormat") != "CycloneDX" or not sbom.get("components"):
+        raise ValueError("Missing OCR dependency inventory")
+    inventory = {item["name"]: item["version"] for item in sbom["components"]}
+    for name in ("rapidocr", "onnxruntime"):
+        if inventory.get(name) != manifest.get(name):
+            raise ValueError(f"OCR inventory disagrees with manifest: {name}")
+    if not (worker / "licenses/LICENSE.jieba").is_file():
+        raise ValueError("Missing segmentation dictionary license")
+
+
 def restore_hidden_resources(source, destination):
     # MyGo 0.7.4 skips dot directories, including PyInstaller's .dylibs.
     # Restore them before sealing the bundle and creating the release image.
@@ -47,12 +70,15 @@ def main():
     binary = app / "Contents/MacOS/ScreenPin" if goos == "darwin" else bundle / ("ScreenPin.exe" if goos == "windows" else "screenpin")
     resources = app / "Contents/Resources/workers" if goos == "darwin" else bundle / "workers"
     actual = subprocess.check_output([str(binary), "--version"], text=True).strip()
-    assert actual == f"ScreenPin {version} (mygo)", actual
-    manifest = json.loads((resources / "screenpin-ocr/manifest.json").read_text())
-    assert manifest["offline"] and manifest["protocol"] == 2
+    if actual != f"ScreenPin {version} (mygo)":
+        raise ValueError(f"Unexpected application version: {actual}")
+    verify_ocr_resources(resources)
     if goos != "darwin":
         capture = resources / ("screenpin-capture.exe" if goos == "windows" else "screenpin-capture")
-        assert capture.is_file(), "Missing native capture worker"
+        if not capture.is_file():
+            raise ValueError("Missing native capture worker")
+        if subprocess.check_output([str(capture), "--protocol-version"], text=True, timeout=10).strip() != "2":
+            raise ValueError("Native capture protocol 2 runtime is required")
         if goos == "windows":
             json.loads(subprocess.check_output([str(capture), "--list"], text=True))
     else:
@@ -119,7 +145,13 @@ def main():
             subprocess.run(["dpkg-deb", "--build", "--root-owner-group", str(deb), str(out / f"{prefix}.deb")], check=True)
     for item in sorted(out.iterdir()):
         if item.is_file():
-            digest = hashlib.sha256(item.read_bytes()).hexdigest()
+            # Installers are hundreds of MB; hash incrementally instead of
+            # retaining another complete archive in the packaging process.
+            hasher = hashlib.sha256()
+            with item.open("rb") as stream:
+                for chunk in iter(lambda: stream.read(1 << 20), b""):
+                    hasher.update(chunk)
+            digest = hasher.hexdigest()
             print(f"{digest}  {item.name}")
             print(f"Release asset size: {item.name} {item.stat().st_size} bytes")
 

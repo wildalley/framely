@@ -9,9 +9,13 @@ import (
 	"strings"
 )
 
-// Find searches the installed resource directory, then the development bundle.
+// Find searches explicit or installed resource directories. A working directory
+// (including one with a forged go.mod) is never an executable search root.
 // Workers are launched directly, never through a shell or a PATH lookup.
 func Find(name string) (string, error) {
+	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
+		return "", fmt.Errorf("组件名称无效")
+	}
 	exe, err := os.Executable()
 	if err != nil {
 		return "", err
@@ -19,7 +23,12 @@ func Find(name string) (string, error) {
 	base := filepath.Dir(exe)
 	var roots []string
 	if override := os.Getenv("SCREENPIN_COMPONENTS_DIR"); override != "" {
-		roots = append(roots, override)
+		if !filepath.IsAbs(override) {
+			return "", fmt.Errorf("SCREENPIN_COMPONENTS_DIR 必须是绝对路径")
+		}
+		// Explicit configuration is authoritative: missing or stale development
+		// components must not silently fall back to another installed runtime.
+		return findIn(name, []string{override})
 	}
 	roots = append(roots, filepath.Join(base, "workers"))
 	if runtime.GOOS == "darwin" {
@@ -28,20 +37,10 @@ func Find(name string) (string, error) {
 	if home, err := os.UserHomeDir(); err == nil {
 		roots = append(roots, filepath.Join(home, ".local", "share", "screenpin", "workers"))
 	}
-	if cwd, err := os.Getwd(); err == nil {
-		for dir := cwd; ; dir = filepath.Dir(dir) {
-			if data, err := os.ReadFile(filepath.Join(dir, "go.mod")); err == nil {
-				fields := strings.Fields(string(data))
-				if len(fields) >= 2 && fields[0] == "module" && fields[1] == "github.com/wildalley/screenpin" {
-					roots = append(roots, filepath.Join(dir, "resources", runtime.GOOS+"-"+runtime.GOARCH, "workers"))
-				}
-				break
-			}
-			if filepath.Dir(dir) == dir {
-				break
-			}
-		}
-	}
+	return findIn(name, roots)
+}
+
+func findIn(name string, roots []string) (string, error) {
 	if runtime.GOOS == "windows" {
 		name += ".exe"
 	}

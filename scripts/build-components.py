@@ -20,9 +20,10 @@ if not python.is_file():
     subprocess.run([uv, "venv", "--python", "3.12", str(venv)], check=True)
 if subprocess.check_output([str(python), "-c", "import sys; print('.'.join(map(str, sys.version_info[:2])))"], text=True).strip() != "3.12":
     sys.exit("build/ocr-venv must use Python 3.12; recreate this build environment")
-subprocess.run([uv, "pip", "uninstall", "--python", str(python), "opencv-python"], check=True)
-subprocess.run([uv, "pip", "install", "--python", str(python), "-r", "workers/ocr/requirements.txt"], check=True)
-subprocess.run([uv, "pip", "install", "--python", str(python), "--no-deps", "rapidocr==3.9.2"], check=True)
+# sync installs exactly the hashed distributions and removes stale packages,
+# including the GUI OpenCV dependency replaced by our headless runtime.
+subprocess.run([uv, "pip", "sync", "--python", str(python), "--require-hashes", "--only-binary", ":all:",
+                "workers/ocr/requirements.lock", "workers/ocr/rapidocr.lock"], check=True)
 subprocess.run([str(python), "scripts/build-ocr.py"], check=True)
 if system == "Windows":
     subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/build-capture.ps1"], check=True)

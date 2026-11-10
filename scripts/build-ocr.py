@@ -4,6 +4,7 @@ import hashlib
 import importlib.metadata
 from pathlib import Path
 import platform
+import re
 import subprocess
 import sys
 
@@ -24,6 +25,19 @@ subprocess.run([
     "onnxruntime": importlib.metadata.version("onnxruntime"), "models": "PP-OCRv6-small",
     "offline": True,
     "worker_sha256": hashlib.sha256((root / "workers/ocr/worker.py").read_bytes()).hexdigest(),
+    "dependency_locks": {name: hashlib.sha256((root / "workers/ocr" / name).read_bytes()).hexdigest()
+                         for name in ("requirements.lock", "rapidocr.lock")},
+}, indent=2), encoding="utf-8")
+# Portable component inventory for downstream dependency scanning. Hashes of
+# the exact wheel/source allowlists are carried in the adjacent manifest.
+components = []
+for distribution in importlib.metadata.distributions():
+    name = re.sub(r"[-_.]+", "-", distribution.metadata["Name"]).lower()
+    components.append({"type": "library", "name": name, "version": distribution.version,
+                       "purl": f"pkg:pypi/{name}@{distribution.version}"})
+(destination / "screenpin-ocr" / "sbom.cdx.json").write_text(json.dumps({
+    "bomFormat": "CycloneDX", "specVersion": "1.6", "version": 1,
+    "components": sorted(components, key=lambda item: item["name"]),
 }, indent=2), encoding="utf-8")
 notices = destination / "screenpin-ocr" / "licenses"
 notices.mkdir(exist_ok=True)
