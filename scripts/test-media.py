@@ -10,7 +10,7 @@ spec = importlib.util.spec_from_file_location("build_media", ROOT / "scripts/bui
 media = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(media)
 env = media.build_env()
-env["PKG_CONFIG_PATH"] = (media.PREFIX / "lib/pkgconfig").as_posix()
+env["PKG_CONFIG_PATH"] = media.pkg_config_path()
 binary = media.WORK / ("recorder-test.exe" if media.SYSTEM == "Windows" else "recorder-test")
 if media.SYSTEM == "Windows":
     import shlex

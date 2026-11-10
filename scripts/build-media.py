@@ -56,6 +56,15 @@ def build_env():
     return env
 
 
+def pkg_config_path():
+    """PKG_CONFIG_PATH for MSYS2's pkgconf, which splits the list on ":",
+    so a Windows "D:/..." path must be given in its /d/... form."""
+    path = (PREFIX / "lib/pkgconfig").as_posix()
+    if SYSTEM == "Windows" and path[1:2] == ":":
+        path = "/" + path[0].lower() + path[2:]
+    return path
+
+
 def source(url, checksum, folder):
     archive = WORK / url.rsplit("/", 1)[1]
     if not archive.exists() or hashlib.sha256(archive.read_bytes()).hexdigest() != checksum:
@@ -89,7 +98,7 @@ def main():
     if SYSTEM != "Darwin":
         nv = source("https://codeload.github.com/FFmpeg/nv-codec-headers/tar.gz/refs/tags/n13.0.19.0", "86d15d1a7c0ac73a0eafdfc57bebfeba7da8264595bf531cf4d8db1c22940116", "nv-codec-headers-n13.0.19.0")
         run([tool("make", env), f"PREFIX={PREFIX.as_posix()}", "install"], cwd=nv, env=env)
-        env["PKG_CONFIG_PATH"] = (PREFIX / "lib/pkgconfig").as_posix()
+        env["PKG_CONFIG_PATH"] = pkg_config_path()
         options += ["--enable-ffnvcodec", "--enable-nvenc", "--enable-encoder=h264_nvenc"]
     configure = WORK / "configure-options.json"
     if not (PREFIX / "bin" / ("ffmpeg.exe" if SYSTEM == "Windows" else "ffmpeg")).exists() or not configure.exists() or json.loads(configure.read_text()) != options:
@@ -99,7 +108,7 @@ def main():
         configure.write_text(json.dumps(options, indent=2) + "\n")
     suffix = ".exe" if SYSTEM == "Windows" else ""
     shutil.copy2(PREFIX / "bin" / ("ffmpeg" + suffix), DEST / ("screenpin-ffmpeg" + suffix))
-    env["PKG_CONFIG_PATH"] = (PREFIX / "lib/pkgconfig").as_posix()
+    env["PKG_CONFIG_PATH"] = pkg_config_path()
     if SYSTEM == "Windows":
         # pkgconf from MSYS2 must resolve native Windows paths for cl/link.
         native_libs = shlex.split(subprocess.check_output([tool("pkg-config", env), "--msvc-syntax", "--static", "--libs", "libavformat", "libavcodec", "libavutil", "libswscale"], env=env, text=True))
