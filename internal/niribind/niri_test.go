@@ -272,3 +272,37 @@ func TestManagedRecognitionDoesNotClaimAnotherKeyOrBinary(t *testing.T) {
 		t.Fatal("a binding for a different binary was reported as active")
 	}
 }
+
+func TestCaptureAndScrollBindingsShareManagedFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.kdl")
+	if err := os.WriteFile(path, []byte("binds {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p, err := prepareShortcuts(path, "/usr/bin/screenpin", "Super+Shift+S", "Super+Shift+L", func(context.Context, string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, text := range []string{`"Super+Shift+S" repeat=false { spawn "/usr/bin/screenpin" "--capture"; }`, `"Super+Shift+L" repeat=false { spawn "/usr/bin/screenpin" "--scroll"; }`, `"Mod+Shift+L"`} {
+		if !strings.Contains(string(p.content), text) {
+			t.Fatalf("missing %q in %s", text, p.content)
+		}
+	}
+}
+func TestRecordShortcutSharesManagedFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.kdl")
+	if err := os.WriteFile(path, []byte("binds {}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	p, err := prepareShortcuts(path, "/usr/bin/screenpin", "Super+Shift+S", "Super+Shift+L", func(context.Context, string) error { return nil }, "Super+Shift+R")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, action := range []string{"--capture", "--scroll", "--record"} {
+		if !strings.Contains(string(p.content), action) {
+			t.Fatalf("missing %s in %s", action, p.content)
+		}
+	}
+	if p.RecordKey != "Super+Shift+R" {
+		t.Fatal(p.RecordKey)
+	}
+}

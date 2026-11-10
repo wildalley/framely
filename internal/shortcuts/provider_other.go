@@ -2,4 +2,4 @@
 
 package shortcuts
 
-func newPlatformProvider() Provider { return nativeProvider{} }
+func newPlatformProvider() Provider { return &nativeProvider{} }

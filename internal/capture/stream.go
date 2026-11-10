@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"image"
@@ -25,6 +26,7 @@ type StreamOptions struct {
 	Automatic     bool
 	Monitor       int
 	DisplayBounds image.Rectangle
+	Recording     *RecordingOptions
 }
 type Monitor struct {
 	ID         int    `json:"id"`
@@ -56,6 +58,8 @@ type processStream struct {
 	input         io.WriteCloser
 	commandMu     sync.Mutex
 	commandID     uint32
+	statusMu      sync.Mutex
+	status        RecordingStatus
 }
 
 type streamFrame struct {
@@ -63,6 +67,7 @@ type streamFrame struct {
 	source     image.Point
 	generation uint32
 	protocol   uint32
+	status     *RecordingStatus
 }
 
 // SetStreamRegion switches native capture to tightly packed region pixels.
@@ -90,7 +95,11 @@ func SetStreamRegion(ctx context.Context, source Stream, region image.Rectangle,
 
 // Caller serializes command writes and replies with commandMu.
 func (s *processStream) sendCommand(ctx context.Context, name string, args ...int) (uint32, error) {
-	ctx, done := context.WithTimeout(ctx, 2*time.Second)
+	timeout := 2 * time.Second
+	if name == "record" || name == "finish" {
+		timeout = 15 * time.Second
+	}
+	ctx, done := context.WithTimeout(ctx, timeout)
 	defer done()
 	if err := ctx.Err(); err != nil {
 		return 0, err
@@ -207,6 +216,12 @@ func startStream(parent context.Context, cmd *exec.Cmd, cancel context.CancelFun
 				}
 				continue
 			}
+			if frame.status != nil {
+				s.statusMu.Lock()
+				s.status = *frame.status
+				s.statusMu.Unlock()
+				continue
+			}
 			s.width.Store(int32(frame.source.X))
 			s.height.Store(int32(frame.source.Y))
 			s.protocol.Store(frame.protocol)
@@ -321,6 +336,25 @@ func readStreamPacket(r io.Reader) (streamFrame, *controlReply, error) {
 			reply.err = errors.New(string(message))
 		}
 		return frame, reply, nil
+	}
+	if string(header[:4]) == "SPR1" {
+		n := binary.LittleEndian.Uint32(header[4:8])
+		if n > 4096 {
+			return frame, nil, errors.New("录屏状态过大")
+		}
+		data := make([]byte, n)
+		if _, err := io.ReadFull(r, data); err != nil {
+			return frame, nil, err
+		}
+		var status RecordingStatus
+		if err := json.Unmarshal(data, &status); err != nil {
+			return frame, nil, err
+		}
+		if status.ElapsedMS < 0 || status.Frames < 0 || status.Captured < 0 || status.Repeated < 0 || status.Repeated > status.Frames || status.Missed < 0 || status.Width < 0 || status.Height < 0 || status.Width > 3840 || status.Height > 3840 || (status.FPS != 30 && status.FPS != 60) {
+			return frame, nil, errors.New("录屏状态无效")
+		}
+		frame.status = &status
+		return frame, nil, nil
 	}
 	magic := string(header[:4])
 	if magic != "SPF1" && magic != "SPF2" {

@@ -61,6 +61,10 @@ func SelectScrollRegion(ctx context.Context, img *image.RGBA) (image.Rectangle, 
 	return selectImageRegion(ctx, img, "框选滚动内容，松开开始长截图", true, image.Pt(80, 160))
 }
 
+func SelectVideoRegion(ctx context.Context, img *image.RGBA) (image.Rectangle, error) {
+	return selectImageRegion(ctx, img, "框选录屏区域，松开开始录制", true, image.Pt(64, 64))
+}
+
 func selectImageRegion(ctx context.Context, img *image.RGBA, title string, quick bool, minimum image.Point) (image.Rectangle, error) {
 	return selectRegion(ctx, img, title, quick, minimum, nil, nil)
 }

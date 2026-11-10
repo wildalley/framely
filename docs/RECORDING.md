@@ -1,0 +1,53 @@
+# 区域录屏与 GIF 导出（未发布）
+
+这部分是 `0.2.3` 之后的工作区功能，已发布的 v0.2.3 安装包不包含录屏。第一阶段录制**无声视频**，暂不采集麦克风或系统音频。
+
+## 使用
+
+1. 从托盘「录屏…」、设置中的「打开录屏」或 `screenpin --record` 进入。
+2. 选择 30/60 fps 与最大分辨率，点击「选择区域并开始…」，先指定 MP4 保存位置，再框选。输出保持比例，不放大小区域；1080p 对应最长边最多 1920 像素。
+3. 录制时控制窗隐藏，通过托盘暂停、继续、结束。需要控制窗时从托盘重新打开，Linux 上注意放到录制区域外；Linux 门户没有通用的排除应用窗口接口。
+4. 正常关闭录屏控制窗或退出应用会先结束保存。保存后可查看首帧、播放视频、打开文件夹。
+5. GIF 可以单独指定开始秒数、时长（最多 60 秒）、10/15/20/30 fps 和宽度。默认 15 fps / 960 像素，导出过程可取消，原 MP4 保留。
+
+独立录屏快捷键推荐 Windows `Win+Shift+R`、macOS `⌘+⇧+R`、Linux `Super+Shift+R`；首次不自动占用该按键。按一次打开录屏面板，录制中再按结束保存。Wayland 通过「配置系统快捷键」分配，Windows/macOS/X11 在设置录入；niri 生成独立 `--record` 动作。截图、长截图与录屏的组合不能重复。
+
+## 60 fps 与资源使用
+
+目标是 1080p60，提供 30 fps 供低性能设备使用。实际帧率受共享来源、显示器刷新率、桌面合成器与编码设备限制，选择 60 fps 不代表收到 60 个不同画面。静止桌面按编码时钟复用最后一帧，暂停不计入视频时间；界面分别显示采集帧、编码帧、复用帧和错过时隙。
+
+Linux 使用 PipeWire，Windows 使用 Windows Graphics Capture，macOS 使用 ScreenCaptureKit。原生组件内完成裁剪、缩放和编码，录制开始后停止原始帧 IPC，Go/UI 只接收有大小上限的状态消息。缓存固定数量的图像与编码缓冲区，不把整段视频留在内存。Linux 及时复制并归还来源缓冲，在编码时钟上转换最新画面，避免高刷新率来源让转换工作跟着跑到 144/240 fps。
+
+优先 H.264 硬件编码：NVIDIA NVENC、Linux VAAPI、Windows Media Foundation、macOS VideoToolbox。NVIDIA 直接接收 BGRA，减少 CPU 色彩转换；其他设备按编码器需要转换像素。仍有 CPU 读取、缩放及上传，**不是 GPU 零拷贝**。硬件不可用时发行包使用 MPEG-4 Part 2 软件编码，仍存储为 MP4，兼容性与体积可能不同于 H.264；界面会明确显示软件编码。
+
+GIF 使用两次顺序处理：先生成固定大小调色板，再渲染选段。限制尺寸、时长和编码线程；取消会终止子进程并删除未完成导出，不覆盖原视频或已有 GIF。
+
+## 保存与权限
+
+- 只使用系统允许的屏幕来源；Linux 请求 ScreenCast，录屏不申请鼠标控制权限。macOS 由系统管理屏幕录制许可。
+- MP4 先写入目标目录的 `.screenpin-record-*.mp4` 私有临时文件，完成并同步后替换目标文件。成功保存前不改动原文件。
+- 使用分段 MP4。进程崩溃、来源断开等异常时保留片段并显示位置；只有已落盘的完整片段可能恢复，强制终止或磁盘写入失败不能保证完整视频。
+- 媒体工具由应用资源目录直接启动，不通过 shell 或工作目录搜索。FFmpeg 构建禁用网络，仅启用 `file`/`pipe`，导出显式限制协议；不在运行时下载编码器或上传内容。
+
+## 构建与许可证
+
+FFmpeg 固定为 **9.0.2**，下载档案 SHA-256 在 `scripts/build-media.py` 中校验。没有启用 GPL、nonfree、x264 或 CUDA SDK 依赖；NVENC 只使用独立接口头文件和系统 NVIDIA 驱动。
+
+- Linux：C 编译器、make、bash、pkg-config、PipeWire/VAAPI 开发库，x64 安装 NASM。Ubuntu 示例依赖为 `libpipewire-0.3-dev libva-dev nasm pkg-config`，Arch 为 `libpipewire libva nasm pkgconf`。
+- Windows：x64 MSVC 开发环境、Windows SDK，MSYS2 的 bash/make/pkgconf/nasm 加入 PATH。脚本优先使用 MSVC linker，防止误调用 MSYS2 同名工具。
+- macOS 15+：Xcode、make、pkgconf，Intel 构建安装 NASM。
+
+```bash
+python3 scripts/build-media.py
+python3 scripts/test-media.py
+```
+
+完整 `build-components.py` 会同时构建媒体、采集和 OCR。仅开发录屏时无需重复构建 OCR。`test-media.py` 使用同一套静态库生成 1080p60 视频，验证暂停时间和解码帧数，并用实际打包的 FFmpeg 检查 GIF、空选段及取消保护。
+
+两个可执行组件为 `screenpin-record`、`screenpin-ffmpeg`（Windows 有 `.exe`），另有 `media-manifest.json` 与 `media-licenses/`。后者包含 FFmpeg 完整对应源码、ScreenPin 媒体组件源码、必要接口头文件、构建配置和许可证。允许用修改后的库重建和替换组件；不得删去这些材料后分发静态链接的版本。安装包校验要求媒体组件、许可证和源码齐全。
+
+## 验证范围
+
+Linux 本机已经验证：真实 GNOME/PipeWire 授权来源、2560×1440 缩放到 1920×1080、NVENC、暂停/继续/结束；精简软件编码器与 GIF 实际导出、输入边界、取消保护、深浅主题和最小窗口布局也有测试。具体测量在最终验收记录中列出，不能据此保证所有设备、4K 或所有共享来源都达到 60 fps。
+
+Go 主程序可交叉编译到 Windows/macOS；这不等同于验证 WGC/ScreenCaptureKit 原生工作进程。目标平台 CI 会编译媒体组件并运行软件编码与 GIF 集成测试，仍需 Windows/macOS 真机验证共享许可、多屏、硬件编码与中文保存路径。

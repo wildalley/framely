@@ -23,7 +23,7 @@ func TestShortcutAuthorizationIsVisibleAndCannotBeSubmittedTwice(t *testing.T) {
 	}
 	s.shortcutPending = true
 	tt.Frame()
-	for _, label := range []string{"授权快捷键", "保存设置", "录制快捷键"} {
+	for _, label := range []string{"授权快捷键", "保存设置", "录制快捷键", "恢复默认快捷键"} {
 		if err := tt.Click(label); err != nil {
 			t.Fatal(err)
 		}

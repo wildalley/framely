@@ -31,3 +31,5 @@ elif system == "Linux":
     subprocess.run(["bash", "scripts/build-capture.sh"], check=True)
 else:
     print("macOS: offline OCR bundled; scrolling capture is not yet supported")
+
+subprocess.run([sys.executable, "scripts/build-media.py"], check=True)

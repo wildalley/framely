@@ -9,6 +9,7 @@
 - **截图与贴图**：区域截图、粘贴和导入图片；多窗口独立标注、缩放、置顶和关闭。
 - **标注编辑**：画笔、荧光笔、矩形、椭圆、箭头、文字和马赛克；调整颜色、粗细、透明度和圆角，支持撤销与重做。
 - **滚动长截图**：Linux 与 Windows 支持框选后连续拼接、暂停、撤回和完成；采集组件只传输选区像素，自动滚动以桌面授权能力为准。
+- **区域录屏（未发布）**：30/60 fps 无声 MP4，暂停、继续与结束保存；录完可按起点、时长、宽度和帧率导出 GIF。平台实测范围见 [录屏说明](docs/RECORDING.md)。
 - **离线 OCR**：内置中英文模型，无需安装 Python；从托盘“框选取字…”或 `screenpin --ocr` 直接识别，长图逐块显示结果。
 - **“大爆炸”式选词**：中文分词、单字模式、点击或拖动选词、Shift 连选、反选和全文编辑，按原文顺序组合复制。
 - **图片导出**：复制到剪贴板，或保存为 PNG、JPEG、WebP；PNG/WebP 支持透明度，JPEG 使用白色背景。
@@ -41,9 +42,9 @@ Windows/macOS 包暂未配置正式开发者签名与公证。更多平台限制
 ## 快速使用
 
 1. 启动 ScreenPin，从托盘截图、粘贴图片或打开文件。
-2. 默认全局截图键为 **Win+Shift+S**，macOS 显示为 **Cmd+Shift+S**；可在设置中修改。已有配置保留原来的快捷键。
+2. 默认全局截图键：Windows **Win+Shift+S**、macOS **⌘+⇧+S**、Linux **Super+Shift+S**。设置页以独立键帽显示；Wayland 点击“配置系统快捷键”，以系统实际分配为准；已有配置保留原来的快捷键。
 3. 在图片窗口标注后，按 `Ctrl/Cmd+C` 复制、`Ctrl/Cmd+S` 保存、`Ctrl/Cmd+W` 关闭。
-4. 长截图从托盘或图片工具栏进入，也可在图片窗口按 `Ctrl/Cmd+Shift+L`；完成时再次按截图快捷键。
+4. 长截图从托盘或图片工具栏进入，也可在图片窗口按 `Ctrl/Cmd+Shift+L`；可在设置中配置独立的全局长截图键（推荐 `Super+Shift+L`），再次按下完成；截图快捷键也可用于完成。
 5. OCR 从托盘“框选取字…”进入，或在图片窗口按 `Ctrl/Cmd+Shift+O` 识别整图。
 
 ```bash
@@ -51,6 +52,7 @@ screenpin                    # 启动或唤起托盘实例
 screenpin --capture          # 截图
 screenpin --scroll           # 长截图（Linux / Windows）
 screenpin --ocr              # 直接框选取字
+screenpin --record           # 打开录屏；录制中再次调用结束保存（未发布）
 screenpin ./example.png      # 打开图片
 ```
 
@@ -60,7 +62,7 @@ Linux Wayland 的截图、屏幕共享与快捷键授权由系统门户分别管
 
 ## 开发与构建
 
-需要 Go 1.27.3+。完整发行包还需要 `uv`，构建脚本会准备 Python 3.12 环境。Linux 采集组件需要 C 编译器、`pkg-config` 和 PipeWire 开发头文件；Windows 需要 Visual Studio x64 Native Tools 与 Windows SDK；macOS 使用本机工具链。MyGo 由 `go.mod` 的工具依赖管理。
+需要 Go 1.27.3+。完整发行包还需要 `uv`，构建脚本会准备 Python 3.12 环境。Linux 采集组件需要 C 编译器、`pkg-config` 和 PipeWire 开发头文件；媒体组件另需 bash、make、pkg-config 和 NASM（x64 性能构建）；Linux 另需 VAAPI 开发库。Windows 需要 Visual Studio x64 Native Tools、Windows SDK 与 MSYS2；macOS 使用 Xcode。本机工具安装与完整步骤见 [录屏构建说明](docs/RECORDING.md)。MyGo 由 `go.mod` 的工具依赖管理。
 
 ```bash
 # Go 测试与静态检查
@@ -100,4 +102,4 @@ go run ./cmd/screenpin
 
 ## 许可证
 
-项目采用 [MIT](LICENSE) 许可证。分词词典及图标的第三方许可证保留在各自目录；发行包附带 OCR 依赖许可证与 Python 依赖清单。
+项目采用 [MIT](LICENSE) 许可证。分词词典及图标的第三方许可证保留在各自目录；发行包附带 OCR 依赖许可证与 Python 依赖清单。新增录屏组件采用精简 LGPL FFmpeg；随包提供对应源码、构建配置和许可证，详见录屏说明。

@@ -13,21 +13,26 @@ import (
 )
 
 type settingsWindow struct {
-	app           *application
-	win           *mygo.Window
-	ctx           context.Context
-	cancel        context.CancelFunc
-	draft         config.Config
-	autostart     bool
-	access        capture.Access
-	accessLoading bool
-	asking        bool
-	saving        bool
-	confirming    bool
-	recording     bool
-	notice        string
-	tab           int
-	streamIssue   string
+	app             *application
+	win             *mygo.Window
+	ctx             context.Context
+	cancel          context.CancelFunc
+	draft           config.Config
+	autostart       bool
+	access          capture.Access
+	accessLoading   bool
+	asking          bool
+	saving          bool
+	confirming      bool
+	recording       bool
+	recordingScroll bool
+	recordingVideo  bool
+	recordingMods   ui.Modifiers
+	shortcutHint    string
+	shortcutInvalid bool
+	notice          string
+	tab             int
+	streamIssue     string
 }
 
 func (s *application) showSettings(notice string) {
@@ -84,7 +89,7 @@ func (v *settingsWindow) later(fn func()) {
 
 func (v *settingsWindow) view(c *ui.Context) {
 	panelTheme(c)
-	if !v.recording && c.Shortcut(0, ui.KeyEscape) || c.Shortcut(ui.Cmd, ui.KeyW) {
+	if !v.recording && (c.Shortcut(0, ui.KeyEscape) || c.Shortcut(ui.Cmd, ui.KeyW)) {
 		v.win.Close()
 		return
 	}
@@ -94,59 +99,55 @@ func (v *settingsWindow) view(c *ui.Context) {
 		previousTab := v.tab
 		ui.Tabs(c, &v.tab, "快捷键", "常规", "权限与长截图")
 		if previousTab != v.tab {
-			v.recording = false
+			v.stopRecording()
 		}
 		ui.Scroll(c.Key("settings-content")).Grow(1).MinHeight(0).Gap(16).Children(func() {
 			if v.tab == 0 {
 				ui.Column(c).Gap(8).Children(func() {
-					ui.Text(c, "截图快捷键").FontWeight(600)
-					ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-						ui.Text(c, config.DisplayShortcut(v.draft.CaptureShortcut)).Font("monospace").Grow(1)
-						label := "录制快捷键"
-						if v.recording {
-							label = "按下组合键…"
-						}
-						record := ui.Button(c.Key("record"), label).Disabled(v.saving || s.shortcutPending)
-						if v.recording {
-							record.Focus().HandleInput(func(ev ui.InputEvent) bool {
-								if ev.Kind != ui.InputKeyDown {
-									return false
-								}
-								if ev.Key == ui.KeyEscape {
-									v.recording = false
-									return true
-								}
-								if key, ok := accelerator(ev.Mods, ev.Key); ok {
-									v.draft.CaptureShortcut = key
-									v.recording = false
-								}
-								return true
-							})
-						}
-						if record.Clicked() {
-							v.recording = !v.recording
-						}
-					})
-					ui.Text(c, "当前按键："+s.shortcutDescription).FontSize(12).TextColor(c.Theme().TextMuted)
 					if s.shortcutError != "" {
-						ui.Text(c, "快捷键不可用："+s.shortcutError+"。可从托盘截图，或绑定 screenpin --capture。").
-							FontSize(12).TextColor(c.Theme().Danger)
+						ui.Text(c, "快捷键不可用："+s.shortcutError).FontSize(12).TextColor(c.Theme().Danger)
 						if runtime.GOOS == "linux" {
 							if niribind.Current() {
-								ui.Text(c, "可由 niri 直接管理截图按键，配置前会显示确认框。").FontSize(12).TextColor(c.Theme().TextMuted)
-								if ui.Button(c.Key("niri-shortcut"), "配置 niri 快捷键").Disabled(v.saving || s.shortcutPending).Clicked() {
+								if ui.Button(c.Key("niri-shortcut"), "配置 niri 快捷键").Disabled(v.saving || s.shortcutPending || v.recording).Clicked() {
 									v.setupNiri()
 								}
-							} else if ui.Button(c.Key("authorize-shortcut"), "授权快捷键").
-								Tooltip("请求系统授权并保存当前快捷键").Disabled(v.saving || s.shortcutPending).Clicked() {
+							} else if ui.Button(c.Key("authorize-shortcut"), "授权快捷键").Disabled(v.saving || s.shortcutPending || v.recording).Clicked() {
 								v.save()
 							}
 						}
 					}
 					if s.shortcutPending {
-						ui.Text(c, "正在请求系统快捷键授权，请在系统弹窗中确认。若没有弹窗，当前桌面可能不支持此功能。").
-							FontSize(12).TextColor(c.Theme().TextMuted)
+						ui.Text(c, "正在请求系统快捷键授权，请在系统弹窗中确认。").FontSize(12).TextColor(c.Theme().TextMuted)
 					}
+					if s.shortcutSystemManaged {
+						ui.Text(c, "全局快捷键").FontWeight(600)
+						globalKeyRow(c, s.shortcutDescription, "截图")
+						if capture.ScrollingSupported() {
+							key := s.scrollShortcutDescription
+							if key == "" {
+								key = "未绑定"
+							}
+							globalKeyRow(c, key, "长截图")
+						}
+						globalKeyRow(c, s.recordShortcutDescription, "录屏")
+						ui.Text(c, "再次按下可结束长截图或录屏；系统改键后自动更新。").FontSize(12).TextColor(c.Theme().TextMuted)
+						if ui.Button(c, "配置系统快捷键").Disabled(v.saving || s.shortcutPending).Clicked() {
+							v.configureShortcuts()
+						}
+					} else {
+						ui.Text(c, "截图快捷键").FontWeight(600)
+						ui.Column(c.Key("capture-shortcut")).Gap(8).Children(func() { v.shortcutEntry(c, false, false) })
+						ui.Text(c, "当前按键："+s.shortcutDescription).FontSize(12).TextColor(c.Theme().TextMuted)
+						if capture.ScrollingSupported() {
+							ui.Text(c, "长截图快捷键").FontWeight(600)
+							ui.Column(c.Key("scroll-shortcut")).Gap(8).Children(func() { v.shortcutEntry(c, true, false) })
+							ui.Text(c, "留空不绑定。按下开始长截图，再次按下完成。").FontSize(12).TextColor(c.Theme().TextMuted)
+						}
+						ui.Text(c, "录屏快捷键").FontWeight(600)
+						ui.Column(c.Key("record-shortcut")).Gap(8).Children(func() { v.shortcutEntry(c, false, true) })
+						ui.Text(c, "留空不绑定。打开录屏，再次按下结束。").FontSize(12).TextColor(c.Theme().TextMuted)
+					}
+
 				})
 				ui.Text(c, "图片窗口快捷键").FontWeight(600)
 				ui.Text(c, "以下按键仅在图片窗口中生效；输入文字时保留文本编辑操作。").FontSize(12).TextColor(c.Theme().TextMuted)
@@ -176,6 +177,11 @@ func (v *settingsWindow) view(c *ui.Context) {
 				})
 				ui.Text(c, "ScreenPin "+Version+" · MyGo").FontSize(12).TextColor(c.Theme().TextMuted)
 			} else {
+				ui.Text(c, "录屏").FontWeight(600)
+				ui.Text(c, "区域录制为无声 MP4，支持 30/60 fps；录完可导出 GIF。").FontSize(12).TextColor(c.Theme().TextMuted)
+				if ui.Button(c, "打开录屏").Disabled(s.captureBusy).Clicked() {
+					s.showVideo()
+				}
 				ui.Text(c, "长截图").FontWeight(600)
 				ui.Checkbox(c.Key("automatic-scroll"), &v.draft.AutomaticScroll, "长截图自动向下滚动").Disabled(v.saving || !capture.ScrollingSupported())
 				ui.Text(c, "长截图需要持续共享所选窗口或显示器；截图快捷键授权与屏幕共享是两个独立权限。").TextColor(c.Theme().TextMuted)
@@ -260,7 +266,7 @@ func (v *settingsWindow) view(c *ui.Context) {
 			} else if v.saving {
 				label = "保存中…"
 			}
-			if ui.PrimaryButton(c.Key("save"), label).Disabled(v.saving || s.shortcutPending).Clicked() {
+			if ui.PrimaryButton(c.Key("save"), label).Disabled(v.saving || s.shortcutPending || v.recording).Clicked() {
 				v.save()
 			}
 		})
@@ -284,14 +290,14 @@ func (v *settingsWindow) askAccess() {
 }
 
 func (v *settingsWindow) save() {
-	if v.saving || v.app.shortcutPending {
+	if v.saving || v.app.shortcutPending || v.recording {
 		return
 	}
-	if err := config.ValidateShortcut(v.draft.CaptureShortcut); err != nil {
+	if err := v.draft.Validate(); err != nil {
 		v.notice = err.Error()
 		return
 	}
-	if niribind.Current() && niribind.Installed() && v.draft.CaptureShortcut != v.app.cfg.CaptureShortcut {
+	if niribind.Current() && niribind.Installed() && (v.draft.CaptureShortcut != v.app.cfg.CaptureShortcut || v.draft.ScrollShortcut != v.app.cfg.ScrollShortcut || v.draft.RecordShortcut != v.app.cfg.RecordShortcut) {
 		v.setupNiri()
 		return
 	}
@@ -315,17 +321,17 @@ func (v *settingsWindow) save() {
 // setupNiri is an application configuration confirmation, not a simulated
 // system permission dialog. The user sees the key, command and files first.
 func (v *settingsWindow) setupNiri() {
-	if v.saving || v.app.shortcutPending {
+	if v.saving || v.app.shortcutPending || v.recording {
 		return
 	}
 	next := v.draft
-	if err := config.ValidateShortcut(next.CaptureShortcut); err != nil {
+	if err := next.Validate(); err != nil {
 		v.notice = err.Error()
 		return
 	}
 	v.recording, v.saving, v.confirming, v.notice = false, true, true, ""
 	v.app.worker(func() {
-		plan, err := niribind.Prepare(next.CaptureShortcut)
+		plan, err := niribind.PrepareShortcuts(next.CaptureShortcut, next.ScrollShortcut, next.RecordShortcut)
 		if err != nil {
 			v.later(func() { v.saving, v.confirming = false, false; v.notice = err.Error() })
 			return
@@ -335,7 +341,7 @@ func (v *settingsWindow) setupNiri() {
 		}
 		result, err := mygo.Dialog.Message(mygo.MessageOptions{
 			Parent: v.win, Type: mygo.MessageQuestion, Title: "配置 niri 截图快捷键",
-			Message: "将 " + config.DisplayShortcut(plan.Key) + " 设置为 ScreenPin 截图快捷键？",
+			Message: "将 " + config.DisplayShortcut(plan.Key) + " 设置为截图快捷键，长截图设置为 " + config.DisplayShortcut(plan.ScrollKey) + "，录屏设置为 " + config.DisplayShortcut(plan.RecordKey) + "（空白为不绑定）？",
 			Detail:  "这会在 niri 配置中添加一条 include，并创建 ScreenPin 管理的按键文件。若该组合已有操作，将由 ScreenPin 截图替换；更换按键会恢复原操作。原配置会先备份，取消不做修改。\n\n配置：" + plan.ConfigPath + "\n按键文件：" + plan.ShortcutPath + "\n执行：" + plan.Command + " --capture",
 			Buttons: []string{"取消", "配置快捷键"}, DefaultButton: 0, CancelButton: 0,
 		})
@@ -373,9 +379,19 @@ func (s *application) showKeys() {
 	s.settings.win.Invalidate()
 }
 
-func keyRow(c *ui.Context, key, action string) {
-	ui.Row(c).Gap(16).AlignItems(ui.Start).Children(func() {
-		ui.Text(c, key).Width(190).Shrink(0).Font("monospace").FontSize(12).Selectable()
-		ui.Text(c, action).Grow(1)
+func (v *settingsWindow) configureShortcuts() {
+	if v.saving || v.app.shortcutPending {
+		return
+	}
+	v.saving = true
+	v.notice = "请在系统弹窗中设置快捷键；关闭弹窗后查看上方实际按键。"
+	v.app.worker(func() {
+		err := v.app.shortcuts.Configure(v.ctx)
+		v.later(func() {
+			v.saving = false
+			if err != nil {
+				v.notice = err.Error()
+			}
+		})
 	})
 }

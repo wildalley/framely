@@ -38,6 +38,33 @@ def verify_ocr_resources(resources):
         raise ValueError("Missing segmentation dictionary license")
 
 
+def verify_media_resources(resources, goos):
+    manifest = json.loads((resources / "media-manifest.json").read_text(encoding="utf-8"))
+    if manifest.get("protocol") != 1 or manifest.get("ffmpeg") != "9.0.2":
+        raise ValueError("Missing or stale media runtime")
+    suffix = ".exe" if goos == "windows" else ""
+    for name in ("screenpin-record", "screenpin-ffmpeg"):
+        path = resources / (name + suffix)
+        if not path.is_file() or path.stat().st_size < 100_000:
+            raise ValueError(f"Missing media component: {name}")
+        # macOS bundle sealing can rewrite Mach-O signatures. Exercise those
+        # actual signed copies below; other targets must remain byte-identical.
+        if goos != "darwin" and hashlib.sha256(path.read_bytes()).hexdigest() != manifest.get("files", {}).get(name):
+            raise ValueError(f"Media component hash mismatch: {name}")
+    licenses = resources / "media-licenses"
+    for name in ("COPYING.FFmpeg.LGPLv2.1", "BUILD.json", "README.txt", "ffmpeg-9.0.2.tar.xz", "screenpin-media-source.tar.gz"):
+        if not (licenses / name).is_file():
+            raise ValueError(f"Missing media license/source: {name}")
+    build = json.loads((licenses / "BUILD.json").read_text(encoding="utf-8"))
+    if hashlib.sha256((licenses / "ffmpeg-9.0.2.tar.xz").read_bytes()).hexdigest() != build["sha256"]:
+        raise ValueError("Media source checksum mismatch")
+    if subprocess.check_output([str(resources / ("screenpin-record"+suffix)), "--protocol-version"], text=True, timeout=10).strip() != "2":
+        raise ValueError("Media capture protocol mismatch")
+    version = subprocess.check_output([str(resources / ("screenpin-ffmpeg"+suffix)), "-version"], text=True, timeout=10)
+    if "ffmpeg version 9.0.2" not in version or "--enable-gpl" in version or "--enable-nonfree" in version:
+        raise ValueError("Unexpected FFmpeg build or license configuration")
+
+
 def restore_hidden_resources(source, destination):
     # MyGo 0.7.4 skips dot directories, including PyInstaller's .dylibs.
     # Restore them before sealing the bundle and creating the release image.
@@ -93,6 +120,9 @@ def main():
                     print(f"Broken bundle link: {item.relative_to(app)} -> {item.readlink()}", flush=True)
             subprocess.run(["codesign", "--display", "--verbose=4", str(app)])
             raise
+    verify_media_resources(resources, goos)
+    media_env = dict(os.environ, SCREENPIN_COMPONENTS_DIR=str(resources), SCREENPIN_MEDIA_INTEGRATION="1")
+    subprocess.run(["go", "test", "-count=1", "-run", "TestPackagedMediaExports", "-v", "./internal/recording"], env=media_env, check=True)
     # Test the installed resource copy, including code-signing changes on Mac.
     env = dict(os.environ, SCREENPIN_COMPONENTS_DIR=str(resources), SCREENPIN_OCR_INTEGRATION="1")
     subprocess.run(["go", "test", "-count=1", "-run", "TestPackagedOfflineWorker", "-v", "./internal/ocr"], env=env, check=True)

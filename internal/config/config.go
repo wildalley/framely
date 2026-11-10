@@ -5,6 +5,7 @@ package config
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -16,10 +17,14 @@ import (
 // DefaultShortcut is the global capture shortcut until the user records
 // another: Win+Shift+S, as on Windows.
 const DefaultShortcut = "Super+Shift+S"
+const DefaultScrollShortcut = "Super+Shift+L"
+const DefaultRecordShortcut = "Super+Shift+R"
 
 // Config is the user's settings.
 type Config struct {
 	CaptureShortcut string `json:"captureShortcut"`
+	ScrollShortcut  string `json:"scrollShortcut,omitempty"`
+	RecordShortcut  string `json:"recordShortcut,omitempty"`
 	// HideAfterCopy closes an unpinned image after copying. The JSON key stays
 	// compatible with existing installations; closed images are not retained.
 	HideAfterCopy   bool `json:"hideAfterCopy"`
@@ -62,15 +67,42 @@ func Load() (c Config, repaired bool) {
 	}
 	if ValidateShortcut(c.CaptureShortcut) != nil {
 		c.CaptureShortcut = DefaultShortcut
-		return c, true
+		repaired = true
 	}
-	return c, false
+	if c.Validate() != nil {
+		c.ScrollShortcut = ""
+		c.RecordShortcut = ""
+		repaired = true
+	}
+	return c, repaired
+}
+
+func (c Config) Validate() error {
+	capture, err := shortcutkey.Parse(c.CaptureShortcut, runtime.GOOS)
+	if err != nil {
+		return err
+	}
+	seen := map[string]bool{capture.Canonical(): true}
+	for _, action := range []struct{ key, name string }{{c.ScrollShortcut, "长截图"}, {c.RecordShortcut, "录屏"}} {
+		if action.key == "" {
+			continue
+		}
+		key, err := shortcutkey.Parse(action.key, runtime.GOOS)
+		if err != nil {
+			return fmt.Errorf("%s：%w", action.name, err)
+		}
+		if seen[key.Canonical()] {
+			return errors.New("截图、长截图与录屏不能使用同一个快捷键")
+		}
+		seen[key.Canonical()] = true
+	}
+	return nil
 }
 
 // Save writes the configuration, replacing the file in one step so a crash
 // cannot leave half of it.
 func (c Config) Save() error {
-	if err := ValidateShortcut(c.CaptureShortcut); err != nil {
+	if err := c.Validate(); err != nil {
 		return err
 	}
 	path, err := Path()
@@ -110,8 +142,7 @@ func ValidateShortcut(s string) error {
 	return err
 }
 
-// DisplayShortcut is the shortcut as the user reads it: Win and Ctrl, or the
-// Mac's own names.
+// DisplayShortcut uses the platform's own modifier names in text and inputs.
 func DisplayShortcut(s string) string {
 	parts := strings.Split(s, "+")
 	for i, p := range parts {
@@ -119,7 +150,14 @@ func DisplayShortcut(s string) string {
 		case "commandorcontrol", "cmdorctrl":
 			parts[i] = map[bool]string{true: "Cmd", false: "Ctrl"}[runtime.GOOS == "darwin"]
 		case "super", "meta", "win", "cmd", "command":
-			parts[i] = map[bool]string{true: "Cmd", false: "Win"}[runtime.GOOS == "darwin"]
+			switch runtime.GOOS {
+			case "darwin":
+				parts[i] = "Cmd"
+			case "windows":
+				parts[i] = "Win"
+			default:
+				parts[i] = "Super"
+			}
 		case "control":
 			parts[i] = "Ctrl"
 		}

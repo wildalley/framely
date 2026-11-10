@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/godbus/dbus/v5"
+	"github.com/wildalley/screenpin/internal/config"
 	"github.com/wildalley/screenpin/internal/portal"
 	"github.com/wildalley/screenpin/internal/testutil"
 )
@@ -29,6 +30,7 @@ type shortcutPortal struct {
 	sessionClosed atomic.Int32
 	requestClosed atomic.Int32
 	createCode    atomic.Uint32
+	configured    chan dbus.ObjectPath
 }
 
 type portalCloseCounter struct{ count *atomic.Int32 }
@@ -37,6 +39,14 @@ func (r *portalCloseCounter) Close() *dbus.Error { r.count.Add(1); return nil }
 
 func (p *shortcutPortal) Register(id string, _ map[string]dbus.Variant) *dbus.Error {
 	p.registered <- id
+	return nil
+}
+
+func (p *shortcutPortal) Get(iface, name string) (dbus.Variant, *dbus.Error) {
+	return dbus.MakeVariant(uint32(2)), nil
+}
+func (p *shortcutPortal) ConfigureShortcuts(session dbus.ObjectPath, parent string, options map[string]dbus.Variant) *dbus.Error {
+	p.configured <- session
 	return nil
 }
 
@@ -104,8 +114,8 @@ func shortcutService(t *testing.T) (*portalProvider, *shortcutPortal, chan func(
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
-	service := &shortcutPortal{conn: conn, registered: make(chan string, 1), binds: make(chan pendingBind, 1)}
-	for _, iface := range []string{shortcutInterface, "org.freedesktop.host.portal.Registry"} {
+	service := &shortcutPortal{conn: conn, registered: make(chan string, 1), binds: make(chan pendingBind, 1), configured: make(chan dbus.ObjectPath, 1)}
+	for _, iface := range []string{shortcutInterface, "org.freedesktop.host.portal.Registry", "org.freedesktop.DBus.Properties"} {
 		if err := conn.Export(service, portal.ObjectPath, iface); err != nil {
 			t.Fatal(err)
 		}
@@ -129,6 +139,86 @@ func shortcutService(t *testing.T) (*portalProvider, *shortcutPortal, chan func(
 	provider := &portalProvider{dispatch: func(fn func()) { queue <- fn }}
 	t.Cleanup(provider.Close)
 	return provider, service, queue
+}
+
+func TestPortalUsesOneSessionAndSystemConfigurationForAllActions(t *testing.T) {
+	p, service, queue := shortcutService(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	captures, scrolls, records, updates := 0, 0, 0, 0
+	m := &Manager{provider: p, capture: func(string) { captures++ }, scroll: func(string) { scrolls++ }, record: func(string) { records++ }, changed: func() { updates++ }, save: func(config.Config) error { return nil }}
+	defer m.Close()
+	done := make(chan error, 1)
+	go func() { done <- m.Start(ctx, config.Default()) }()
+	var bind pendingBind
+	select {
+	case bind = <-service.binds:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	if len(bind.shortcuts) != 3 || bind.shortcuts[2].ID != recordID || bind.shortcuts[0].ID != captureID || bind.shortcuts[1].ID != scrollID || bind.shortcuts[1].Properties["preferred_trigger"].Value() != "LOGO+SHIFT+l" {
+		t.Fatalf("actions: %+v", bind.shortcuts)
+	}
+	if _, set := bind.shortcuts[2].Properties["preferred_trigger"]; set {
+		t.Fatal("claimed an unconfigured recording shortcut")
+	}
+	assigned := []portalShortcut{{ID: captureID, Properties: map[string]dbus.Variant{"trigger_description": dbus.MakeVariant("Press <Shift><Super>a")}}}
+	emit(t, service, bind.handle, "org.freedesktop.portal.Request.Response", uint32(0), map[string]dbus.Variant{"shortcuts": dbus.MakeVariant(assigned)})
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if !m.SystemManaged() || m.Description() != "Press <Shift><Super>a" || m.ScrollDescription() != "" {
+		t.Fatal("restored assignment was replaced by preference")
+	}
+	cfg := config.Default()
+	cfg.CaptureShortcut = "Ctrl+Alt+S"
+	if err := m.Apply(ctx, cfg); err == nil {
+		t.Fatal("pretended that saving a preference changes the system binding")
+	}
+	if len(service.binds) != 0 || service.sessionClosed.Load() != 0 {
+		t.Fatal("changing keys replaced the live session")
+	}
+	if err := m.Configure(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if session := <-service.configured; session != bind.session {
+		t.Fatal("configured another session")
+	}
+	assigned = []portalShortcut{
+		{ID: captureID, Properties: map[string]dbus.Variant{"trigger_description": dbus.MakeVariant("Super+Shift+S")}},
+		{ID: scrollID, Properties: map[string]dbus.Variant{"trigger_description": dbus.MakeVariant("Super+Shift+L")}},
+	}
+	assigned = append(assigned, portalShortcut{ID: recordID, Properties: map[string]dbus.Variant{"trigger_description": dbus.MakeVariant("Super+Shift+R")}})
+	emit(t, service, portal.ObjectPath, shortcutInterface+".ShortcutsChanged", bind.session, assigned)
+	select {
+	case fn := <-queue:
+		fn()
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	if updates != 1 || m.Description() != "Super+Shift+S" || m.ScrollDescription() != "Super+Shift+L" || m.RecordDescription() != "Super+Shift+R" {
+		t.Fatal("system assignment change was not reflected")
+	}
+	for _, id := range []string{captureID, scrollID, recordID} {
+		emit(t, service, portal.ObjectPath, shortcutInterface+".Activated", bind.session, id, uint64(1), map[string]dbus.Variant{})
+		select {
+		case fn := <-queue:
+			fn()
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
+	}
+	if captures != 1 || scrolls != 1 || records != 1 {
+		t.Fatalf("routing capture=%d scroll=%d", captures, scrolls)
+	}
+	cfg = config.Default()
+	cfg.HideAfterCopy = true
+	if err := m.Apply(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if len(service.binds) != 0 {
+		t.Fatal("ordinary save reregistered shortcuts")
+	}
 }
 
 type preparedBinding struct {

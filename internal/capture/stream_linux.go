@@ -77,7 +77,11 @@ func OpenStream(parent context.Context, options StreamOptions) (Stream, error) {
 var errRestoredOtherDisplay = errors.New("上次授权的来源位于另一显示器，请选择当前鼠标所在的显示器")
 
 func openPortalStream(parent context.Context, options StreamOptions, forceChoose bool) (Stream, error) {
-	helper, err := components.Find("screenpin-capture")
+	name := "screenpin-capture"
+	if options.Recording != nil {
+		name = "screenpin-record"
+	}
+	helper, err := components.Find(name)
 	if err != nil {
 		return nil, err
 	}
@@ -138,6 +142,9 @@ func openPortalStream(parent context.Context, options StreamOptions, forceChoose
 	sources := map[string]dbus.Variant{
 		"types": dbus.MakeVariant(uint32(3)), "multiple": dbus.MakeVariant(false), "cursor_mode": dbus.MakeVariant(uint32(1)),
 	}
+	if options.Recording != nil {
+		sources["cursor_mode"] = dbus.MakeVariant(uint32(2))
+	}
 	if persistent && !options.Automatic {
 		sources["persist_mode"] = dbus.MakeVariant(uint32(2))
 		if restore != "" {
@@ -192,6 +199,14 @@ func openPortalStream(parent context.Context, options StreamOptions, forceChoose
 		return fail(errors.New("PipeWire 连接无效"))
 	}
 	cmd := exec.CommandContext(ctx, helper, "--fd", "3", "--node", strconv.FormatUint(uint64(streams[0].Node), 10), "--protocol", "2")
+	if options.Recording != nil {
+		args, e := options.Recording.Arguments()
+		if e != nil {
+			_ = file.Close()
+			return fail(e)
+		}
+		cmd.Args = append(cmd.Args, args...)
+	}
 	cmd.ExtraFiles = []*os.File{file}
 	input, err := cmd.StdinPipe()
 	if err != nil {

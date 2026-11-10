@@ -26,7 +26,7 @@ int main(void) {
     // Exercise SPA's real negotiation rather than just inspecting a flag.
     uint8_t offers[1024],filtered[2048];
     struct spa_pod_builder offer_builder=SPA_POD_BUILDER_INIT(offers,sizeof(offers));
-    const struct spa_pod *formats[2];capture_formats(&offer_builder,formats);
+    const struct spa_pod *formats[2];capture_formats(&offer_builder,formats,0);
     struct spa_pod_builder filter_builder=SPA_POD_BUILDER_INIT(filtered,sizeof(filtered));
     struct spa_pod *negotiated=NULL;
     assert(spa_pod_filter(&filter_builder,&negotiated,formats[1],formats[0])<0);

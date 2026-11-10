@@ -66,7 +66,7 @@ jobs:
 
   components:
     needs: preflight
-    timeout-minutes: 30
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -102,16 +102,28 @@ jobs:
             workers/ocr/rapidocr.lock
       - name: Install Linux capture headers
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install --yes libpipewire-0.3-dev
+        run: sudo apt-get update && sudo apt-get install --yes libpipewire-0.3-dev libva-dev nasm pkg-config
       - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
         if: runner.os == 'Windows'
         with:
           arch: x64
-      - name: Build native capture and offline OCR workers
+      - name: Install macOS media build tools
+        if: runner.os == 'macOS'
+        run: brew install pkgconf nasm
+      - name: Install Windows media build tools
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & C:\msys64\usr\bin\bash.exe -lc 'pacman -S --needed --noconfirm make pkgconf nasm'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          'C:\msys64\usr\bin' | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Build native capture, media and offline OCR workers
         run: python scripts/build-components.py
       - name: Test Linux DMA-BUF capture buffers
         if: runner.os == 'Linux'
         run: bash scripts/test-capture.sh
+      - name: Test native 1080p60 timing and packaged GIF export
+        run: python scripts/test-media.py
       - name: Test packaged OCR runtime
         env:
           SCREENPIN_OCR_INTEGRATION: '1'
@@ -169,7 +181,7 @@ jobs:
             archlinux:latest \
             bash -euc '
               pacman -Syu --noconfirm --needed \
-                base-devel go gtk3 libayatana-appindicator xdg-desktop-portal libpipewire uv python pkgconf
+                base-devel go gtk3 libayatana-appindicator xdg-desktop-portal libpipewire libva nasm uv python pkgconf
               useradd --create-home --shell /bin/bash builder
               chown -R builder:builder /workspace
               cd packaging/arch-native

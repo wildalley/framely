@@ -3,6 +3,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <shellapi.h>
 #include <d3d11.h>
 #include <dxgi1_2.h>
 #include <windows.graphics.capture.interop.h>
@@ -24,6 +25,10 @@
 #include <thread>
 #include <vector>
 #include "frame_protocol.h"
+#ifdef SCREENPIN_RECORD
+#include "../media/recorder.h"
+static int64_t recordNow(){return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();}
+#endif
 
 using namespace winrt;
 using namespace winrt::Windows::Graphics::Capture;
@@ -52,6 +57,12 @@ static std::vector<Monitor> monitors() {
 }
 
 struct InputControl {
+#ifdef SCREENPIN_RECORD
+    std::shared_ptr<sp_recorder> recording;
+    bool recordingStarted=false;
+    int fps=60;
+    int64_t statusSent=0;
+#endif
     RECT monitor; HMONITOR handle; DWORD owner; HWND target=nullptr; POINT last{};
     std::atomic<bool> stop{false};
     struct sp_region region{}; // Read/write only while holding outputMutex.
@@ -74,6 +85,15 @@ struct InputControl {
 };
 
 int main(int argc,char** argv) {
+    // CRT narrow argv follows the system code page; FFmpeg paths are UTF-8.
+    // Keep recordings named in Chinese (and other Unicode paths) lossless.
+    int count=0;LPWSTR *wide=CommandLineToArgvW(GetCommandLineW(),&count);
+    if(!wide)return 2;
+    std::vector<std::string> utf8;utf8.reserve(count);
+    for(int i=0;i<count;i++)utf8.push_back(to_string(wide[i]));
+    LocalFree(wide);
+    std::vector<char*> arguments;for(auto& arg:utf8)arguments.push_back(arg.data());
+    arguments.push_back(nullptr);argc=count;argv=arguments.data();
     if(argc==2&&std::string(argv[1])=="--protocol-version"){std::cout<<"2\n";return 0;}
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     try {
@@ -85,7 +105,17 @@ int main(int argc,char** argv) {
             std::cout<<"]";return 0;
         }
         int selected=0,protocol=1;DWORD owner=0;
-        for(int i=1;i+1<argc;i+=2) {if(std::string(argv[i])=="--monitor")selected=std::atoi(argv[i+1]);else if(std::string(argv[i])=="--owner-pid")owner=std::strtoul(argv[i+1],nullptr,10);else if(std::string(argv[i])=="--protocol")protocol=std::atoi(argv[i+1]);else return 2;}
+#ifdef SCREENPIN_RECORD
+        sp_record_options recording{nullptr,60,1920,"auto"};
+#endif
+        for(int i=1;i+1<argc;i+=2) {if(std::string(argv[i])=="--monitor")selected=std::atoi(argv[i+1]);else if(std::string(argv[i])=="--owner-pid")owner=std::strtoul(argv[i+1],nullptr,10);else if(std::string(argv[i])=="--protocol")protocol=std::atoi(argv[i+1]);
+#ifdef SCREENPIN_RECORD
+            else if(std::string(argv[i])=="--record")recording.path=argv[i+1];
+            else if(std::string(argv[i])=="--fps")recording.fps=std::atoi(argv[i+1]);
+            else if(std::string(argv[i])=="--max-edge")recording.max_edge=std::atoi(argv[i+1]);
+            else if(std::string(argv[i])=="--codec")recording.codec=argv[i+1];
+#endif
+            else return 2;}
         if(protocol!=1&&protocol!=2)return 2;
         if(screens.empty())throw std::runtime_error("No displays are available");
         if(selected==0){for(size_t i=0;i<screens.size();i++)if(screens[i].underMouse)selected=static_cast<int>(i)+1;}
@@ -109,6 +139,12 @@ int main(int argc,char** argv) {
         try{session.IsCursorCaptureEnabled(false);}catch(hresult_error const&){}
         session.StartCapture();
         auto control=std::make_shared<InputControl>();control->monitor=monitor.info.rcMonitor;control->handle=monitor.handle;control->owner=owner;
+#ifdef SCREENPIN_RECORD
+        control->recording=std::shared_ptr<sp_recorder>(sp_record_new(recording),sp_record_free);
+        if(!control->recording)throw std::runtime_error("Invalid recording options");
+        control->fps=recording.fps;
+        try{session.IsCursorCaptureEnabled(true);}catch(hresult_error const&){}
+#endif
         control->sourceWidth=static_cast<uint32_t>(size.Width);control->sourceHeight=static_cast<uint32_t>(size.Height);
         std::thread([control,protocol] {
             char line[256];
@@ -116,11 +152,27 @@ int main(int argc,char** argv) {
                 if(protocol==2&&!strncmp(line,"crop ",5)) {
                     std::lock_guard<std::mutex> lock(outputMutex);struct sp_region next{};
                     if(sp_parse_crop(line,control->sourceWidth,control->sourceHeight,&next)<0)replyLocked(next.generation,"Invalid crop or changed source size");
+#ifdef SCREENPIN_RECORD
+                    else if(control->recordingStarted || sp_record_select(control->recording.get(),next.x,next.y,next.width,next.height,control->sourceWidth,control->sourceHeight)<0)replyLocked(next.generation,"Cannot change recording region");
+#endif
                     else {control->region=next;replyLocked(next.generation,{});}
                     continue;
                 }
                 std::istringstream input(line);std::string command;uint32_t id;int x,y;
+#ifdef SCREENPIN_RECORD
+                if(input>>command>>id) {
+                    std::lock_guard<std::mutex> lock(outputMutex);
+                    int result=-1;auto r=control->recording.get();
+                    if(command=="record"&&control->region.generation){result=sp_record_begin(r,control->region.width,control->region.height,recordNow());if(!result)control->recordingStarted=true;}
+                    else if(command=="pause")result=sp_record_pause(r,1,recordNow());
+                    else if(command=="resume")result=sp_record_pause(r,0,recordNow());
+                    else if(command=="finish")result=sp_record_finish(r,recordNow());
+                    if(!result){char status[512];sp_record_status(r,recordNow(),status,sizeof(status));uint32_t h[]={0x31525053,static_cast<uint32_t>(strlen(status)),0,0};if(!writeAll(h,sizeof(h))||!writeAll(status,strlen(status)))control->stop=true;}
+                    replyLocked(id,result<0?(*sp_record_error(r)?sp_record_error(r):"Invalid recording state"):"");
+                }
+#else
                 if(input>>command>>id>>x>>y && command=="scroll")reply(id,control->scroll(x,y));
+#endif
             }
             control->stop=true;
         }).detach();
@@ -128,9 +180,36 @@ int main(int argc,char** argv) {
         uint32_t stagingWidth=0,stagingHeight=0;
         auto last=std::chrono::steady_clock::now()-std::chrono::seconds(1);
         while(!control->stop) {
-            auto frame=pool.TryGetNextFrame();if(!frame){std::this_thread::sleep_for(std::chrono::milliseconds(20));continue;}
+#ifdef SCREENPIN_RECORD
+            {
+                std::lock_guard<std::mutex> lock(outputMutex);auto r=control->recording.get();auto stamp=recordNow();
+                if(sp_record_tick(r,stamp)<0)throw std::runtime_error(sp_record_error(r));
+                if(control->recordingStarted&&stamp-control->statusSent>=250000) {
+                    char status[512];sp_record_status(r,stamp,status,sizeof(status));control->statusSent=stamp;
+                    uint32_t header[]={0x31525053,static_cast<uint32_t>(strlen(status)),0,0};
+                    if(!writeAll(header,sizeof(header))||!writeAll(status,strlen(status)))break;
+                }
+            }
+#endif
+            auto frame=pool.TryGetNextFrame();if(!frame){
+#ifdef SCREENPIN_RECORD
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+#else
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+#endif
+                continue;
+            }
             auto content=frame.ContentSize();if(content.Width!=size.Width||content.Height!=size.Height)throw std::runtime_error("Display size changed; start capture again");
-            auto now=std::chrono::steady_clock::now();if(now-last<std::chrono::milliseconds(120)){frame.Close();continue;}last=now;
+            int interval=120000;
+#ifdef SCREENPIN_RECORD
+            {std::lock_guard<std::mutex> lock(outputMutex);if(control->recordingStarted)interval=1000000/control->fps;}
+#endif
+            auto now=std::chrono::steady_clock::now();if(now-last<std::chrono::microseconds(interval)){frame.Close();continue;}
+#ifdef SCREENPIN_RECORD
+            if(now-last<std::chrono::microseconds(interval*2))last+=std::chrono::microseconds(interval);else last=now;
+#else
+            last=now;
+#endif
             auto access=frame.Surface().as<::Windows::Graphics::DirectX::Direct3D11::IDirect3DDxgiInterfaceAccess>();com_ptr<ID3D11Texture2D> texture;
             check_hresult(access->GetInterface(__uuidof(ID3D11Texture2D),texture.put_void()));
             // Serialize crop acknowledgment with frame emission. After its
@@ -144,11 +223,20 @@ int main(int argc,char** argv) {
             context->CopySubresourceRegion(staging.get(),0,0,0,0,texture.get(),0,&box);
             D3D11_MAPPED_SUBRESOURCE map{};check_hresult(context->Map(staging.get(),0,D3D11_MAP_READ,0,&map));
             bool okay=true;
+#ifdef SCREENPIN_RECORD
+            auto pixels=static_cast<const uint8_t*>(map.pData);
+            int result=sp_record_capture(control->recording.get(),pixels,width,height,map.RowPitch,1);
+            if(result<0){context->Unmap(staging.get(),0);throw std::runtime_error(sp_record_error(control->recording.get()));}
+            if(!control->recordingStarted)
+#endif
             {uint32_t header[]={protocol==2?0x32465053u:0x31465053u,width,height,1,x,y0,static_cast<uint32_t>(size.Width),static_cast<uint32_t>(size.Height),region.generation};
                 okay=writeAll(header,protocol==2?sizeof(header):16);
                 for(uint32_t y=0;okay&&y<height;y++)okay=writeAll(static_cast<const uint8_t*>(map.pData)+static_cast<size_t>(y)*map.RowPitch,static_cast<size_t>(width)*4);}
             context->Unmap(staging.get(),0);frame.Close();if(!okay)break;
         }
+#ifdef SCREENPIN_RECORD
+        {std::lock_guard<std::mutex> lock(outputMutex);auto r=control->recording.get();if(sp_record_active(r)&&sp_record_finish(r,recordNow())<0)std::cerr<<sp_record_error(r)<<"\n";}
+#endif
         session.Close();pool.Close();return 0;
     }catch(hresult_error const& error){std::cerr<<to_string(error.message())<<" (Windows Graphics Capture requires Windows 10 1903+)\n";return 1;}
     catch(std::exception const& error){std::cerr<<error.what()<<"\n";return 1;}

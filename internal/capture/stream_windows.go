@@ -32,12 +32,24 @@ func StreamMonitors(ctx context.Context) ([]Monitor, error) {
 func AutomaticScrollAvailable(context.Context) bool { return true }
 
 func OpenStream(parent context.Context, options StreamOptions) (Stream, error) {
-	helper, err := components.Find("screenpin-capture")
+	name := "screenpin-capture"
+	if options.Recording != nil {
+		name = "screenpin-record"
+	}
+	helper, err := components.Find(name)
 	if err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(parent)
 	cmd := exec.CommandContext(ctx, helper, "--monitor", strconv.Itoa(options.Monitor), "--owner-pid", strconv.Itoa(os.Getpid()), "--protocol", "2")
+	if options.Recording != nil {
+		args, e := options.Recording.Arguments()
+		if e != nil {
+			cancel()
+			return nil, e
+		}
+		cmd.Args = append(cmd.Args, args...)
+	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	input, err := cmd.StdinPipe()
 	if err != nil {

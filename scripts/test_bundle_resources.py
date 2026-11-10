@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location("package_release", Path(__file__).with_name("package-release.py"))
 package = importlib.util.module_from_spec(spec)
@@ -55,6 +56,27 @@ class BundleResourceTests(unittest.TestCase):
         (self.worker / "licenses/LICENSE.jieba").unlink()
         with self.assertRaisesRegex(ValueError, "license"):
             self.verify()
+
+
+class MediaResourceTests(unittest.TestCase):
+    def test_media_bundle_rejects_missing_or_modified_runtime(self):
+        with tempfile.TemporaryDirectory() as directory:
+            resources=Path(directory)
+            files={}
+            for name in ("screenpin-record", "screenpin-ffmpeg"):
+                data=(name.encode()*10000)
+                (resources/name).write_bytes(data)
+                files[name]=hashlib.sha256(data).hexdigest()
+            (resources/"media-manifest.json").write_text(json.dumps({"protocol":1,"ffmpeg":"9.0.2","files":files}))
+            licenses=resources/"media-licenses";licenses.mkdir()
+            for name in ("COPYING.FFmpeg.LGPLv2.1","README.txt","screenpin-media-source.tar.gz","ffmpeg-9.0.2.tar.xz"):
+                (licenses/name).write_bytes(b"fixture")
+            (licenses/"BUILD.json").write_text(json.dumps({"sha256":hashlib.sha256(b"fixture").hexdigest()}))
+            with patch.object(package.subprocess,"check_output",side_effect=["2\n","ffmpeg version 9.0.2\n"]):
+                package.verify_media_resources(resources,"linux")
+            (resources/"screenpin-record").write_bytes(b"changed"*20000)
+            with self.assertRaisesRegex(ValueError,"hash mismatch"):
+                package.verify_media_resources(resources,"linux")
 
 
 if __name__ == "__main__":

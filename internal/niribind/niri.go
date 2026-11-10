@@ -49,6 +49,8 @@ type Plan struct {
 	ConfigPath     string
 	ShortcutPath   string
 	Key            string
+	ScrollKey      string
+	RecordKey      string
 	Command        string
 	root, shortcut snapshot
 	base, content  []byte
@@ -86,7 +88,9 @@ func activeConfigPath() (string, error) {
 }
 
 // Prepare reads and validates the proposed key and executable, without writing.
-func Prepare(key string) (*Plan, error) {
+func Prepare(key string) (*Plan, error) { return PrepareShortcuts(key, "") }
+
+func PrepareShortcuts(key, scroll string, record ...string) (*Plan, error) {
 	path, err := activeConfigPath()
 	if err != nil {
 		return nil, err
@@ -95,10 +99,18 @@ func Prepare(key string) (*Plan, error) {
 	if err != nil {
 		return nil, err
 	}
-	return prepare(path, command, key, validate)
+	return prepareShortcuts(path, command, key, scroll, validate, record...)
 }
 
 func prepare(path, command, key string, validator func(context.Context, string) error) (*Plan, error) {
+	return prepareShortcuts(path, command, key, "", validator)
+}
+
+func prepareShortcuts(path, command, key, scroll string, validator func(context.Context, string) error, recording ...string) (*Plan, error) {
+	record := ""
+	if len(recording) > 0 {
+		record = recording[0]
+	}
 	parsed, err := shortcutkey.Parse(key, "linux")
 	if err != nil {
 		return nil, err
@@ -123,29 +135,37 @@ func prepare(path, command, key string, validator func(context.Context, string) 
 	if modKey == "" {
 		modKey = "Super"
 	}
-	keyName := strings.NewReplacer("LOGO", "Super", "CTRL", "Ctrl", "ALT", "Alt", "SHIFT", "Shift").Replace(parsed.XDGTrigger())
-	parts := strings.Split(keyName, "+")
-	if len(parts[len(parts)-1]) == 1 {
-		parts[len(parts)-1] = strings.ToUpper(parts[len(parts)-1])
-		keyName = strings.Join(parts, "+")
-	}
-	bind := func(name string) string {
-		return "    " + strconv.Quote(name) + " repeat=false { spawn " + strconv.Quote(command) + " \"--capture\"; }\n"
-	}
-	content := marker + "binds {\n" + bind(keyName)
-	// Mod and Super/Alt are distinct config keys but match the same input.
-	// Override both spellings so an earlier Mod binding cannot shadow ours.
-	if (modKey == "Super" && parsed.Super) || (modKey == "Alt" && parsed.Alt) {
-		alias := strings.Split(keyName, "+")
-		for i := 0; i < len(alias)-1; i++ {
-			if alias[i] == modKey {
-				alias[i] = "Mod"
-			}
+	content := marker + "binds {\n"
+	for _, action := range []struct{ key, command string }{{key, "--capture"}, {scroll, "--scroll"}, {record, "--record"}} {
+		if action.key == "" {
+			continue
 		}
-		content += bind(strings.Join(alias, "+"))
+		parsed, err := shortcutkey.Parse(action.key, "linux")
+		if err != nil {
+			return nil, err
+		}
+		keyName := strings.NewReplacer("LOGO", "Super", "CTRL", "Ctrl", "ALT", "Alt", "SHIFT", "Shift").Replace(parsed.XDGTrigger())
+		parts := strings.Split(keyName, "+")
+		if len(parts[len(parts)-1]) == 1 {
+			parts[len(parts)-1] = strings.ToUpper(parts[len(parts)-1])
+			keyName = strings.Join(parts, "+")
+		}
+		bind := func(name string) string {
+			return "    " + strconv.Quote(name) + " repeat=false { spawn " + strconv.Quote(command) + " " + strconv.Quote(action.command) + "; }\n"
+		}
+		content += bind(keyName)
+		if (modKey == "Super" && parsed.Super) || (modKey == "Alt" && parsed.Alt) {
+			alias := strings.Split(keyName, "+")
+			for i := 0; i < len(alias)-1; i++ {
+				if alias[i] == modKey {
+					alias[i] = "Mod"
+				}
+			}
+			content += bind(strings.Join(alias, "+"))
+		}
 	}
 	content += "}\n"
-	return &Plan{ConfigPath: path, ShortcutPath: owned, Key: parsed.Canonical(), Command: command,
+	return &Plan{ConfigPath: path, ShortcutPath: owned, Key: parsed.Canonical(), ScrollKey: scroll, RecordKey: record, Command: command,
 		root: root, shortcut: old, base: base, content: []byte(content), validate: validator}, nil
 }
 
@@ -159,11 +179,13 @@ func (p *Plan) main(include string) []byte {
 
 // Matches only recognizes the exact managed configuration for this key and
 // binary. It does not claim that an arbitrary user's binding is registered.
-func Matches(key string) bool {
+func Matches(key string) bool { return MatchesShortcuts(key, "") }
+
+func MatchesShortcuts(key, scroll string, record ...string) bool {
 	if !Current() {
 		return false
 	}
-	p, err := Prepare(key)
+	p, err := PrepareShortcuts(key, scroll, record...)
 	return err == nil && p.shortcut.exists && bytes.Equal(p.shortcut.data, p.content) && bytes.Equal(p.root.data, p.main(p.ShortcutPath))
 }
 

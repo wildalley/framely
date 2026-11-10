@@ -26,27 +26,31 @@ import (
 )
 
 type application struct {
-	ctx                 context.Context
-	cancel              context.CancelFunc
-	workers             sync.WaitGroup
-	cfg                 config.Config
-	readyDone           bool
-	pendingFiles        []string
-	images              []*editor.App
-	settings            *settingsWindow
-	shortcuts           *shortcuts.Manager
-	shortcutDescription string
-	shortcutError       string
-	shortcutPending     bool
-	shortcutGeneration  int
-	tray                *mygo.Tray
-	menu                *mygo.Menu
-	captureItem         *mygo.MenuItem
-	closeAllItem        *mygo.MenuItem
-	captureBusy         bool
-	openingDialog       bool
-	scroll              *scrollWindow
-	operations          int
+	ctx                       context.Context
+	cancel                    context.CancelFunc
+	workers                   sync.WaitGroup
+	cfg                       config.Config
+	readyDone                 bool
+	pendingFiles              []string
+	images                    []*editor.App
+	settings                  *settingsWindow
+	shortcuts                 *shortcuts.Manager
+	shortcutDescription       string
+	scrollShortcutDescription string
+	recordShortcutDescription string
+	shortcutSystemManaged     bool
+	shortcutError             string
+	shortcutPending           bool
+	shortcutGeneration        int
+	tray                      *mygo.Tray
+	menu                      *mygo.Menu
+	captureItem               *mygo.MenuItem
+	closeAllItem              *mygo.MenuItem
+	captureBusy               bool
+	openingDialog             bool
+	scroll                    *scrollWindow
+	video                     *videoWindow
+	operations                int
 }
 
 func Run(launch Launch) error {
@@ -91,7 +95,20 @@ func Run(launch Launch) error {
 	// MyGo normally quits on the last window. A tray utility instead keeps
 	// running without any image or hidden home window.
 	mygo.App.OnWindowAllClosed(s.maybeQuit)
-	mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) { s.cancel() })
+	mygo.App.OnBeforeQuit(func(e *mygo.QuitEvent) {
+		if v := s.video; v != nil && (v.running || v.busy || v.exporting) {
+			e.PreventDefault()
+			v.quitAfter = true
+			if v.running {
+				v.command("finish")
+			} else {
+				v.cancel()
+				if v.exportCancel != nil {
+					v.exportCancel()
+				}
+			}
+		}
+	})
 	mygo.App.OnWillQuit(func(*mygo.QuitEvent) {
 		s.cancel()
 		// Do not wait for a manager lock on the UI thread: its worker may be
@@ -135,7 +152,7 @@ func (s *application) ready(launch Launch) {
 	s.cfg, s.readyDone = cfg, true
 	s.shortcutDescription = "注册中…"
 	s.shortcutPending = true
-	s.shortcuts = shortcuts.New(s.CaptureWithActivation)
+	s.shortcuts = shortcuts.New(s.CaptureWithActivation, s.ScrollWithActivation, s.RecordWithActivation, s.shortcutsChanged)
 	s.createTray()
 	mygo.App.OnDidBecomeActive(func() {
 		if s.ctx.Err() != nil {
@@ -188,7 +205,9 @@ func (s *application) launch(launch Launch) {
 	case launch.OCR:
 		s.CaptureText()
 	case launch.Scroll:
-		s.showScroll()
+		s.ScrollWithActivation("")
+	case launch.Record:
+		s.RecordWithActivation("")
 	case launch.Capture:
 		s.Capture()
 	case launch.File != "":
@@ -342,7 +361,37 @@ func (s *application) Paste() {
 func (s *application) Capture() { s.CaptureWithActivation("") }
 
 func (s *application) CaptureWithActivation(token string) {
+	log.Print("ScreenPin: capture action activated")
 	s.captureWithActivation(token, false)
+}
+
+func (s *application) ScrollWithActivation(token string) {
+	if s.ctx.Err() != nil || s.settings != nil && s.settings.recording {
+		return
+	}
+	log.Print("ScreenPin: scroll action activated")
+	if s.scroll != nil && s.scroll.running {
+		s.scroll.finish()
+		return
+	}
+	s.showScroll()
+}
+
+func (s *application) shortcutsChanged() {
+	if s.ctx.Err() != nil {
+		return
+	}
+	s.shortcutDescription = s.shortcuts.Description()
+	s.scrollShortcutDescription = s.shortcuts.ScrollDescription()
+	s.recordShortcutDescription = s.shortcuts.RecordDescription()
+	log.Printf("ScreenPin: actual shortcuts: capture=%q scroll=%q", s.shortcutDescription, s.scrollShortcutDescription)
+	if s.shortcutDescription == "" {
+		s.shortcutDescription = "未绑定"
+	}
+	s.refreshTray()
+	if s.settings != nil {
+		s.settings.win.Invalidate()
+	}
 }
 
 func (s *application) CaptureText() { s.captureWithActivation("", true) }
@@ -470,6 +519,21 @@ func (s *application) trayItems() []*mygo.MenuItem {
 	return []*mygo.MenuItem{
 		s.captureItem,
 		{ID: "scroll-capture", Label: "长截图…", Disabled: !capture.ScrollingSupported(), Click: func(*mygo.MenuItem, *mygo.Window) { s.showScroll() }},
+		{ID: "record-video", Label: "录屏…", Click: func(*mygo.MenuItem, *mygo.Window) { s.showVideo() }},
+		{ID: "record-pause", Label: "暂停录屏", Hidden: true, Click: func(*mygo.MenuItem, *mygo.Window) {
+			if s.video != nil {
+				if s.video.paused {
+					s.video.command("resume")
+				} else {
+					s.video.command("pause")
+				}
+			}
+		}},
+		{ID: "record-finish", Label: "结束录屏", Hidden: true, Click: func(*mygo.MenuItem, *mygo.Window) {
+			if s.video != nil {
+				s.video.command("finish")
+			}
+		}},
 		{ID: "ocr-capture", Label: "框选取字…", Click: func(*mygo.MenuItem, *mygo.Window) { s.CaptureText() }},
 		mygo.Separator(),
 		{ID: "paste", Label: "粘贴图片", Click: func(*mygo.MenuItem, *mygo.Window) { s.Paste() }},
@@ -504,9 +568,22 @@ func (s *application) refreshTray() {
 	if s.tray == nil {
 		return
 	}
+	recording := s.video != nil && s.video.running
+	for _, id := range []string{"record-pause", "record-finish"} {
+		item := s.menu.ItemByID(id)
+		item.SetVisible(recording)
+		item.SetEnabled(recording && !s.video.busy && !s.video.ending)
+	}
+	if recording {
+		label := "暂停录屏"
+		if s.video.paused {
+			label = "继续录屏"
+		}
+		s.menu.ItemByID("record-pause").SetLabel(label)
+	}
 	label := "截图"
 	if !s.shortcutPending && s.shortcutError == "" {
-		label += "（" + config.DisplayShortcut(s.cfg.CaptureShortcut) + "）"
+		label += "（" + s.shortcutDescription + "）"
 	}
 	if s.captureBusy {
 		label = "正在截图…"
@@ -530,12 +607,15 @@ func (s *application) refreshTray() {
 	scroll := s.menu.ItemByID("scroll-capture")
 	scroll.SetEnabled(capture.ScrollingSupported() && (!s.captureBusy || s.scroll != nil))
 	scroll.SetLabel("长截图…")
+	if s.scrollShortcutDescription != "" {
+		scroll.SetLabel("长截图（" + s.scrollShortcutDescription + "）")
+	}
 	if longActive {
 		scroll.SetLabel("查看长截图…")
 	}
 	tip := "ScreenPin"
 	if !s.shortcutPending && s.shortcutError == "" {
-		tip = fmt.Sprintf("ScreenPin (%s)", config.DisplayShortcut(s.cfg.CaptureShortcut))
+		tip = fmt.Sprintf("ScreenPin (%s)", s.shortcutDescription)
 	}
 	if s.captureBusy {
 		tip = "ScreenPin — 正在截图…"
@@ -558,6 +638,12 @@ func (s *application) setAutostart(want bool) {
 }
 
 func (s *application) bindingResult(description string, err error) {
+	if s.shortcuts != nil {
+		s.scrollShortcutDescription = s.shortcuts.ScrollDescription()
+		s.recordShortcutDescription = s.shortcuts.RecordDescription()
+		s.shortcutSystemManaged = s.shortcuts.SystemManaged()
+	}
+	log.Printf("ScreenPin: shortcut registration: capture=%q scroll=%q system-managed=%t", description, s.scrollShortcutDescription, s.shortcutSystemManaged)
 	s.shortcutPending = false
 	s.shortcutDescription = description
 	if description == "" {

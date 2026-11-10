@@ -11,7 +11,7 @@
     "command": "screenpin",
     "comment": "Tray screenshot utility with temporary pinned images",
     "categories": ["Graphics", "Utility"],
-    "depends": ["libayatana-appindicator3-1", "xdg-desktop-portal", "libpipewire-0.3-0"]
+    "depends": ["libayatana-appindicator3-1", "xdg-desktop-portal", "libpipewire-0.3-0", "libva2", "libva-drm2"]
   },
   "macos": {
     "minimumSystemVersion": "15.0",
