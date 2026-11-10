@@ -146,7 +146,9 @@ jobs:
           path: release-assets
           merge-multiple: true
       - name: Verify upload v7 and download v4 with every release asset
-        run: python scripts/verify-release-assets.py release-assets
+        run: |
+          version="$(python -c 'import json; print(json.load(open("mygo.json"))["version"])')"
+          RELEASE_TAG="v$version" python scripts/verify-release-assets.py release-assets
 
   arch-native:
     needs: preflight
