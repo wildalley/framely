@@ -3,7 +3,7 @@
 onnxruntime==1.24.4 ; sys_platform != 'darwin' or platform_machine != 'x86_64'
 # ONNX Runtime 1.24 dropped Intel macOS wheels.
 onnxruntime==1.23.2 ; sys_platform == 'darwin' and platform_machine == 'x86_64'
-pyinstaller==6.19.0
+pyinstaller==6.22.3
 opencv-python-headless==5.0.0.93
 numpy==2.5.4
 pyclipper==1.4.0
