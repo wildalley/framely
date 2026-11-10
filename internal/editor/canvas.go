@@ -136,7 +136,15 @@ func (a *App) canvasInput(ev ui.InputEvent, zoom float64) bool {
 		a.hoverCursor = a.cursorAt(ev.X, ev.Y, zoom)
 		return false
 	case ui.InputPointerUp:
-		if a.drag != nil {
+		if a.drag != nil && ev.Button == 0 {
+			if ev.Canceled {
+				a.history.Cancel()
+				a.drag = nil
+				if doc.IndexOf(a.history.Present(), a.selected) < 0 {
+					a.selected = ""
+				}
+				return true
+			}
 			a.dragTo(a.toImage(ev.X, ev.Y, zoom))
 			a.finishDrag()
 			return true

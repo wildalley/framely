@@ -71,7 +71,7 @@ def recognize(image, engine, progress=None):
                     raise ValueError("图片包含过多文本行，请缩小识别区域")
             if progress:
                 progress({"type": "progress", "completed": yi * len(xs) + xi + 1, "total": len(xs) * len(ys), "lines": batch})
-    return {"type": "result", "model": "RapidOCR 3.9.2 / PP-OCRv6-small (CPU)", "lines": lines}
+    return {"type": "result", "model": "RapidOCR / PP-OCRv6-small (CPU)", "lines": lines}
 
 
 def read_exact(stream, size):

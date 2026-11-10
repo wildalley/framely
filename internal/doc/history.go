@@ -151,6 +151,16 @@ func (h *History) End() {
 	}
 }
 
+// Cancel restores the open gesture without changing either undo or redo.
+func (h *History) Cancel() {
+	if !h.open {
+		return
+	}
+	h.restore(h.checkpoint)
+	h.checkpoint = historyState{}
+	h.open = false
+}
+
 // Undo goes back one step.
 func (h *History) Undo() {
 	h.End()

@@ -273,6 +273,11 @@ func (p *imagePicker) view(c *ui.Context) {
 				return true
 			case ui.InputPointerUp:
 				if p.dragging && ev.Button == 0 {
+					if ev.Canceled {
+						p.start, p.end = p.original.Min, p.original.Max
+						p.dragging, p.cursor = false, ui.CursorCrosshair
+						return true
+					}
 					p.dragTo(p.point(ev.X, ev.Y))
 					p.dragging = false
 					if p.quick && p.selection().Dx() >= p.minimum.X && p.selection().Dy() >= p.minimum.Y {

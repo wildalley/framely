@@ -329,6 +329,11 @@ func (s *pick) input(v *pickView, ev ui.InputEvent, w, h float64) bool {
 		if ev.Button != 0 {
 			return false
 		}
+		if ev.Canceled {
+			s.dragging, s.shift, s.active = false, false, nil
+			s.origin, s.corner, s.last = doc.Point{}, doc.Point{}, doc.Point{}
+			return true
+		}
 		if !s.shift {
 			s.corner = doc.Point{X: clamp(float64(ev.X), 0, w), Y: clamp(float64(ev.Y), 0, h)}
 		}

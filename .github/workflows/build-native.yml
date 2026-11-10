@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Check OCR protocol and release validation regressions
@@ -35,15 +35,16 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Check out source
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
+          cache-dependency-path: go.sum
 
       - name: Install isolated D-Bus test service
         run: sudo apt-get update && sudo apt-get install --yes dbus
@@ -84,17 +85,21 @@ jobs:
             folder: darwin-amd64
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
-      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+          cache-dependency-path: go.sum
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
           version: '0.11.28'
+          cache-dependency-glob: |
+            workers/ocr/requirements.lock
+            workers/ocr/rapidocr.lock
       - name: Install Linux capture headers
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install --yes libpipewire-0.3-dev
@@ -118,7 +123,7 @@ jobs:
         run: go tool mygo build -platform ${{ matrix.platform }} -skip-notarize -skip-dmg
       - name: Verify bundled runtimes and collect installers
         run: python scripts/package-release.py
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: screenpin-native-${{ matrix.folder }}-${{ github.sha }}
           path: build/release/*
@@ -126,13 +131,30 @@ jobs:
           retention-days: 14
           compression-level: 0
 
+  compatibility-artifacts:
+    if: startsWith(github.ref_name, 'audit/dependency-compat-')
+    needs: [components, arch-native]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: screenpin-native-*-${{ github.sha }}
+          path: release-assets
+          merge-multiple: true
+      - name: Verify upload v7 and download v4 with every release asset
+        run: python scripts/verify-release-assets.py release-assets
+
   arch-native:
     needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - name: Check out source
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -155,7 +177,7 @@ jobs:
             '
 
       - name: Upload native Arch preview package
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: screenpin-native-arch-${{ github.sha }}
           path: packaging/arch-native/*.pkg.tar.zst

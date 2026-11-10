@@ -1,3 +1,3 @@
-# Installed without dependencies: the complete runtime is locked separately,
-# using headless OpenCV in place of RapidOCR's GUI-enabled opencv-python.
-rapidocr==3.9.2
+# Lock RapidOCR and its bundled models independently of the complete runtime
+# in requirements.lock; both lockfiles are installed together.
+rapidocr==3.10.0

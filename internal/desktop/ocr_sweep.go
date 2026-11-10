@@ -11,6 +11,8 @@ type ocrSweep struct {
 	first                       int
 	shift                       bool
 	start, last                 ui.Point
+	previousAnchor              int
+	changed                     []int
 }
 
 // Capture on the list, keeping each chip's native toggle keyboard semantics.
@@ -19,6 +21,18 @@ type ocrSweep struct {
 func (v *ocrWindow) sweepInput(c *ui.Context, ev ui.InputEvent) bool {
 	if v.closed || v.tab != 0 || v.selection == nil || ev.Button != 0 {
 		return false
+	}
+	if ev.Kind == ui.InputPointerUp && ev.Canceled {
+		if !v.sweep.pressed {
+			return false
+		}
+		for _, i := range v.sweep.changed {
+			v.selection.Tokens[i].Selected = !v.sweep.selectOn
+		}
+		v.anchor = v.sweep.previousAnchor
+		v.sweep = ocrSweep{}
+		v.refreshSelection()
+		return true
 	}
 	viewport := v.list.Bounds(c)
 	p := ui.Point{X: viewport.X + ev.X, Y: viewport.Y + ev.Y}
@@ -39,24 +53,30 @@ func (v *ocrWindow) sweepInput(c *ui.Context, ev ui.InputEvent) bool {
 		if i < 0 {
 			return false
 		}
-		v.sweep = ocrSweep{pressed: true, first: i, selectOn: !v.selection.Tokens[i].Selected, shift: ev.Mods&ui.Shift != 0, start: p, last: p}
+		v.sweep = ocrSweep{pressed: true, first: i, selectOn: !v.selection.Tokens[i].Selected, shift: ev.Mods&ui.Shift != 0, start: p, last: p, previousAnchor: v.anchor}
 		return true
 	case ui.InputPointerMove, ui.InputPointerUp:
 		if !v.sweep.pressed {
 			return false
 		}
 		d := &v.sweep
+		selectWord := func(i int) {
+			if v.selection.Tokens[i].Selected != d.selectOn {
+				d.changed = append(d.changed, i)
+				v.selection.Tokens[i].Selected = d.selectOn
+			}
+		}
 		dx, dy := p.X-d.start.X, p.Y-d.start.Y
 		if !d.dragging && dx*dx+dy*dy >= 16 {
 			d.dragging = true
-			v.selection.Tokens[d.first].Selected = d.selectOn
+			selectWord(d.first)
 			v.anchor = d.first
 		}
 		if d.dragging {
 			for _, hit := range v.hits[:v.hitUsed] {
 				r := clipOCRRect(hit.handle.Bounds(c), viewport)
 				if hit.index < len(v.selection.Tokens) && segmentHitsRect(d.last, p, r) {
-					v.selection.Tokens[hit.index].Selected = d.selectOn
+					selectWord(hit.index)
 				}
 			}
 			v.refreshSelection()

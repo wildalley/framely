@@ -17,6 +17,32 @@ func wordCenter(t *testing.T, tt *ui.Tester, label string) ui.Point {
 	return ui.Point{X: r.X + r.W/2, Y: r.Y + r.H/2}
 }
 
+func TestCanceledOCRSweepRestoresPreviousSelection(t *testing.T) {
+	for _, dragging := range []bool{false, true} {
+		v := newOCRWindow()
+		v.setText("one two three four", false)
+		v.selection.Tokens[1].Selected = true
+		v.anchor = 1
+		v.refreshSelection()
+		tt := ui.NewTester(v.view, 760, 620)
+		a, b := wordCenter(t, tt, "文字块 1：one"), wordCenter(t, tt, "文字块 4：four")
+		tt.Press(a.X, a.Y)
+		if dragging {
+			tt.Move(b.X, b.Y)
+		}
+		tt.CancelPress()
+		if v.preview != "two" || v.anchor != 1 || v.sweep.pressed {
+			t.Fatalf("dragging=%v: cancelled sweep changed selection: %q", dragging, v.preview)
+		}
+		if err := tt.Click("文字块 4：four"); err != nil {
+			t.Fatal(err)
+		}
+		if v.preview != "two four" {
+			t.Fatal("cancelled capture broke subsequent clicks")
+		}
+	}
+}
+
 func TestOCRSweepSelectsFastMotionAndDoesNotRetoggle(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		v := newOCRWindow()
