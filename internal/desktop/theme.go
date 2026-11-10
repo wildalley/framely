@@ -21,11 +21,11 @@ func panelTheme(c *ui.Context) {
 
 // brandMark is the gradient tile with the product glyph.
 func brandMark(c *ui.Context, size float32) {
-	dark := c.Theme().Dark
+	// A quiet tile with the sky glyph, as the app icon.
 	ui.Box(c).Size(size, size).Radius(size*.28).Shrink(0).Center().
-		Gradient(brand.Accent(dark), brand.Violet(), 135).
+		Background(c.Theme().Surface).Border(1, c.Theme().Border).
 		Children(func() {
-			ui.Icon(c, markIcon).Size(size*.64, size*.64).TextColor(ui.Hex("#FFFFFF"))
+			ui.Icon(c, markIcon).Size(size*.62, size*.62).TextColor(brand.Accent(c.Theme().Dark))
 		})
 }
 

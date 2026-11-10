@@ -291,6 +291,11 @@ func iconToggle(c *ui.Context, key string, svg *ui.SVG, label string, on *bool, 
 	return b.Children(func() { ui.Icon(c, svg).Size(18, 18).Shrink(0) })
 }
 
+// toolSegmentWidth fits every tool, the history divider and undo/redo in the
+// rounded tool segment, so it hugs its buttons on wide windows and only
+// overflows when the window is narrower.
+var toolSegmentWidth = float32(len(toolItems)+2)*32 + float32(len(toolItems)+2)*2 + 7 + 6 + 4
+
 func toolbarDivider(c *ui.Context, key string) {
 	ui.Box(c.Key(key)).Width(1).Height(18).Margin(0, 4).Background(c.Theme().Border.Alpha(0.6)).Shrink(0)
 }
@@ -316,13 +321,16 @@ func (a *App) bar(c *ui.Context) {
 					a.setTool(it.tool)
 				}
 			}
+			ui.Box(c.Key("div-history")).Width(1).Height(16).Margin(0, 3).Background(c.Theme().Border).Shrink(0)
 			if iconButton(c, "undo", iconUndo, "撤销 ("+commandKey()+"+Z)", !a.history.CanUndo()).Clicked() {
 				a.undo()
 			}
 			if iconButton(c, "redo", iconRedo, "重做 ("+commandKey()+"+Shift+Z)", !a.history.CanRedo()).Clicked() {
 				a.redo()
 			}
-		}).Label("标注工具").Grow(1).MinWidth(0).Padding(0).Disabled(a.busy)
+		}).Label("标注工具").Width(toolSegmentWidth).Shrink(1).MinWidth(0).Height(38).Padding(3).Gap(2).
+			Radius(11).Background(c.Theme().Surface).Disabled(a.busy)
+		ui.Spacer(c).Grow(1).MinWidth(0)
 		styleOpen := a.panel == PanelStyle
 		styleAnchor = iconToggle(c, "style", iconPalette, "样式", &styleOpen, a.busy)
 		if styleAnchor.Changed() {
@@ -347,6 +355,8 @@ func (a *App) bar(c *ui.Context) {
 		if iconButton(c, "scroll", iconScroll, "长截图", a.busy || a.OnScroll == nil).Tooltip(scrollLabel).Clicked() {
 			a.OnScroll()
 		}
+		// Recording and GIF conversion sit with the other capture modes.
+		iconButton(c, "record", iconRecord, "录屏与 GIF", a.busy || a.OnRecord == nil).Menu(a.recordMenu)
 		ocrLabel := "识别文字"
 		if a.ocrRunning {
 			ocrLabel = "文字识别中…"
@@ -381,7 +391,7 @@ func (a *App) bar(c *ui.Context) {
 		ui.Row(c.Key(key)).FillWidth().Height(barHeight).Gap(4).Padding(4, 6).AlignItems(ui.Center).DragWindow().Children(content)
 	}
 	ui.Column(c.Key("bar")).FillWidth().Height(float32(toolbarHeight(width))).Background(c.Theme().Background).
-		BorderWidth(1, 0, 0, 0).BorderColor(c.Theme().Border.Alpha(0.6)).Children(func() {
+		BorderWidth(1, 0, 0, 0).BorderColor(c.Theme().Border).Children(func() {
 		if width < 760 {
 			row("annotation-row", tools)
 			a.propertyRow(c, width)
@@ -447,9 +457,21 @@ func (a *App) imageMenu(m *ui.Menu) {
 	m.Item(fmt.Sprintf("%d × %d px", a.image.Width, a.image.Height)).Disabled(true)
 }
 
+func (a *App) recordMenu(m *ui.Menu) {
+	if m.Item("录制屏幕区域…").Disabled(a.busy || a.OnRecord == nil).Chosen() {
+		a.OnRecord()
+	}
+	if m.Item("视频转 GIF…").Disabled(a.OnGIF == nil).Chosen() {
+		a.OnGIF()
+	}
+}
+
 func (a *App) contextMenu(m *ui.Menu) {
 	if m.Item("长截图…").Disabled(a.busy || a.OnScroll == nil).Chosen() {
 		a.OnScroll()
+	}
+	if m.Item("录屏…").Disabled(a.busy || a.OnRecord == nil).Chosen() {
+		a.OnRecord()
 	}
 	m.Separator()
 	if m.Item("识别图片文字").Disabled(a.ocrRunning || a.OnOCRResult == nil).Chosen() {

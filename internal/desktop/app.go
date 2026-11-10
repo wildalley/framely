@@ -248,6 +248,8 @@ func (s *application) showPicture(picture editor.Picture, target *mygo.Rectangle
 		}
 	}
 	image.OnSettings = func() { s.showSettings("") }
+	image.OnRecord = s.showVideo
+	image.OnGIF = s.showGIF
 	image.OnOCRResult = s.showOCR
 	image.OnOCRStart = s.startOCR
 	image.OnClosed = func() {
