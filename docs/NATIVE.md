@@ -1,6 +1,6 @@
 # MyGo 原生预览版
 
-`refactor/mygo-native` 使用 Go + MyGo 实现托盘截图与贴图工具。启动时只显示托盘；每张图片独立开窗，关闭就销毁图片、标注和撤销记录。没有主页、截图历史或工程保存流程。当前原生源码版本为 `0.2.1`，发行包功能以实际发布说明为准；Tauri 旧版为 `v0.1.1`。
+`refactor/mygo-native` 使用 Go + MyGo 实现托盘截图与贴图工具。启动时只显示托盘；每张图片独立开窗，关闭就销毁图片、标注和撤销记录。没有主页、截图历史或工程保存流程。当前原生源码版本为 `0.2.2`，发行包功能以实际发布说明为准；Tauri 旧版为 `v0.1.1`。
 
 ## 使用
 
@@ -137,7 +137,7 @@ SDK 默认生成的 Linux 安装入口名为 `screenpin.desktop`。ScreenPin 历
 ```bash
 cd packaging/arch-native
 makepkg --syncdeps --cleanbuild
-sudo pacman -U ./screenpin-native-0.2.1-1-x86_64.pkg.tar.zst
+sudo pacman -U ./screenpin-native-0.2.2-1-x86_64.pkg.tar.zst
 ```
 
 该配方从当前工作区构建，支持 x86_64 和 aarch64，并排除本地凭据、代理状态和编译产物。`screenpin-native` 提供 `screenpin` 命令，与稳定版包互斥。配置仍沿用 `screenpin/config.json`，安装前请从托盘退出旧实例。

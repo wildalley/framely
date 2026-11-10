@@ -2,7 +2,7 @@
   "name": "ScreenPin",
   "slug": "screenpin",
   "identifier": "io.screenpin.desktop",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "main": "./cmd/screenpin",
   "out": "build/native",
   "icon": "assets/app-icon.png",

@@ -35,21 +35,21 @@ ScreenPin 是一个面向 Linux、Windows 和 macOS 的轻量、现代的桌面�
 
 ## 下载与安装
 
-安装包请从 [Releases](https://github.com/wildalley/screenpin/releases) 获取；当前原生源码版本为 `0.2.1`，本文中的开发改动以实际发布说明为准。完整安装包均内置离线中英文 OCR 组件。
+安装包请从 [Releases](https://github.com/wildalley/screenpin/releases) 获取；当前原生源码版本为 `0.2.2`，本文中的开发改动以实际发布说明为准。完整安装包均内置离线中英文 OCR 组件。
 
 | 系统平台 | 安装方式 / 文件 |
 | :--- | :--- |
-| **Windows x64** | `screenpin-0.2.1-windows-amd64-setup.exe`；另提供免安装 `screenpin-0.2.1-windows-amd64-portable.zip` |
-| **macOS 15+ (Apple Silicon)** | `screenpin-0.2.1-darwin-arm64.dmg`（下载后将 ScreenPin 拖入 Applications） |
-| **macOS 15+ (Intel)** | `screenpin-0.2.1-darwin-amd64.dmg` |
-| **Ubuntu / Debian x64** | `sudo apt install ./screenpin-0.2.1-linux-amd64.deb` |
-| **Arch Linux x64** | `sudo pacman -U ./screenpin-native-0.2.1-1-x86_64.pkg.tar.zst` |
-| **其他 Linux x64** | 解压 `screenpin-0.2.1-linux-amd64-portable.tar.gz` 后运行 `./install.sh` 或 `./screenpin` |
+| **Windows x64** | `screenpin-0.2.2-windows-amd64-setup.exe`；另提供免安装 `screenpin-0.2.2-windows-amd64-portable.zip` |
+| **macOS 15+ (Apple Silicon)** | `screenpin-0.2.2-darwin-arm64.dmg`（下载后将 ScreenPin 拖入 Applications） |
+| **macOS 15+ (Intel)** | `screenpin-0.2.2-darwin-amd64.dmg` |
+| **Ubuntu / Debian x64** | `sudo apt install ./screenpin-0.2.2-linux-amd64.deb` |
+| **Arch Linux x64** | `sudo pacman -U ./screenpin-native-0.2.2-1-x86_64.pkg.tar.zst` |
+| **其他 Linux x64** | 解压 `screenpin-0.2.2-linux-amd64-portable.tar.gz` 后运行 `./install.sh` 或 `./screenpin` |
 
 所有安装包的 SHA-256 校验和见 Release 中的 `SHA256SUMS` 文件。
 
 > [!NOTE]
-> 平台说明与发布细节请参阅 [v0.2.1 发布说明](docs/releases/v0.2.1.md)。
+> 平台说明与发布细节请参阅 [v0.2.2 发布说明](docs/releases/v0.2.2.md)。
 
 ---
 
