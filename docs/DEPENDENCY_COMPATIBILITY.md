@@ -7,18 +7,18 @@ This branch evaluates the 12 open Dependabot PRs against the native Go/MyGo arch
 
 | PR | Upgrade | Decision and required adaptation |
 | --- | --- | --- |
-| #3 | actions/setup-go 5 → 7.0.0 | Candidate. Node 24 requires runner ≥2.327.1. Preserve the Go cache key based on `go.sum` explicitly. |
-| #4 | actions/upload-artifact 4 → 7.0.2 | Candidate. Keep default ZIP archives; test download with the release workflow's pinned download-artifact v4. |
-| #5 | astral-sh/setup-uv 6 → 10.3.3 | Candidate. Keep uv 0.11.28 pinned and make the OCR hash lockfiles explicit cache inputs. |
-| #6 | actions/checkout 4 → 7.0.1 | Candidate. Existing workflows use push/pull_request/workflow_dispatch/workflow_call, and disable persisted credentials; no unsafe fork checkout opt-in is needed. |
-| #7 | x/image 0.46.0 → 0.47.0 | Local tests and four-platform compilation passed. |
-| #8 | MyGo 0.7.4 → 0.8.1 | Requires input-cancellation adaptations; the unchanged application fails four new regressions. Candidate includes fixes and tests. |
-| #9 | purego 0.11.1 → 0.11.3 | Local tests and four-platform compilation passed. |
+| #3 | actions/setup-go 5 → 7.0.0 | CI passed. Node 24 requires runner ≥2.327.1. Preserve the Go cache key based on `go.sum` explicitly. |
+| #4 | actions/upload-artifact 4 → 7.0.2 | CI passed. Keep default ZIP archives; verified download with the release workflow's pinned download-artifact v4. |
+| #5 | astral-sh/setup-uv 6 → 10.3.3 | CI passed. Keep uv 0.11.28 pinned and make the OCR hash lockfiles explicit cache inputs. |
+| #6 | actions/checkout 4 → 7.0.1 | CI passed. Existing workflows use push/pull_request/workflow_dispatch/workflow_call, and disable persisted credentials; no unsafe fork checkout opt-in is needed. |
+| #7 | x/image 0.46.0 → 0.47.0 | Combined race tests, four-platform native builds and packaging passed. |
+| #8 | MyGo 0.7.4 → 0.8.1 | Requires input-cancellation adaptations; the unchanged application fails four new regressions. Candidate includes fixes and tests; all four native CI builds and tests passed. |
+| #9 | purego 0.11.1 → 0.11.3 | Combined race tests, four-platform native builds and packaging passed. |
 | #10 | mpmath 1.3.0 → 1.4.1 | Blocked: pinned SymPy 1.14.0 requires mpmath ≥1.1.0,<1.4. Keep 1.3.0. |
-| #11 | godbus/dbus 5.1.0 → 5.2.4 | Local D-Bus, portal, shortcut and race tests passed. Combined resolution selects x/sys 0.49.0. |
-| #12 | RapidOCR 3.9.2 → 3.10.0 | Regenerate rapidocr.lock. Packaged offline bilingual, warm-worker and tiled-image integration passed on Linux. Remove the hard-coded old version from the OCR result label. |
+| #11 | godbus/dbus 5.1.0 → 5.2.4 | D-Bus, portal, shortcut and race tests passed locally and in CI. Combined resolution selects x/sys 0.49.0. |
+| #12 | RapidOCR 3.9.2 → 3.10.0 | Regenerate rapidocr.lock. Packaged offline bilingual, warm-worker and tiled-image integration passed on Linux, Windows and both macOS architectures. Remove the hard-coded old version from the OCR result label. |
 | #13 | ONNX Runtime → 1.31.1 on every platform | Blocked as proposed: no Intel macOS wheel. Candidate upgrades Linux, Windows and ARM macOS while retaining Intel macOS 1.23.2; regenerate requirements.lock. |
-| #14 | PyInstaller 6.19.0 → 6.22.3 | Regenerate requirements.lock. Complete Linux component build and frozen OCR integration passed. |
+| #14 | PyInstaller 6.19.0 → 6.22.3 | Regenerate requirements.lock. Complete component builds and frozen OCR integration passed on all four CI platforms. |
 
 All four Python PRs modify source pins without updating the checked-in hash locks; they cannot be merged unchanged. The candidate retains mpmath 1.3.0 and the Intel macOS ONNX Runtime exception.
 
@@ -41,7 +41,21 @@ The fixes roll back the open annotation transaction while preserving undo/redo, 
 
 ## CI validation
 
-Pending four-platform native builds, packaged OCR tests, Arch packaging, and an artifact upload/download round trip on the candidate branch. The round-trip job validates all seven expected release assets without publishing a release.
+First run `42766426201` at `af9ff70`: preflight, full Go checks, Linux/Windows/macOS ARM64/macOS Intel native component builds and packaged OCR tests, and Arch packaging all passed. upload-artifact v7 produced five artifact groups; download-artifact v4 downloaded all five and verified every SHA-256 digest. The final seven-file validation failed because the new audit job omitted `RELEASE_TAG`, not because of an artifact format mismatch. Commit `553a247` derives that parameter from `mygo.json`; the corrected complete run `42767660498` at `553a247139de19445a114779e31d1c9a45d9490d` passed every job:
+
+- preflight;
+- full Go race/static/memory checks and cross-compilation;
+- Windows amd64 native components, packaged OCR, platform tests and installers;
+- Ubuntu 22.04 amd64 native components, capture tests, OCR and Debian/portable packages;
+- macOS 15 ARM64 and macOS 15 Intel native components, OCR, platform tests and DMGs;
+- Arch native package;
+- upload-artifact v7 → download-artifact v4 round trip and validation of all seven expected release files.
+
+Run: https://github.com/wildalley/screenpin/actions/runs/42767660498
+
+The candidate is suitable for a grouped upgrade after the documented adaptations. Do not merge the original mpmath or all-platform ONNX Runtime PR unchanged. No changes have been merged into main or installed over the user's v0.2.2 installation during this audit.
+
+Local Arch packaging validation reached the expected bundle validation but could not invoke `dpkg-deb` because the host does not have that command. The native Ubuntu CI packaging job passed, including Debian packaging. No additional system package was installed for this audit.
 
 Native desktop GPU behavior, actual screen-capture permissions, and interaction with physical multi-monitor setups still require manual platform testing; headless tests and cross-compilation do not establish those properties.
 
