@@ -2,7 +2,6 @@
 from pathlib import Path
 import importlib.util
 import json
-import os
 import subprocess
 import sys
 
@@ -10,12 +9,12 @@ ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("build_media", ROOT / "scripts/build-media.py")
 media = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(media)
-env = os.environ.copy()
+env = media.build_env()
 env["PKG_CONFIG_PATH"] = (media.PREFIX / "lib/pkgconfig").as_posix()
 binary = media.WORK / ("recorder-test.exe" if media.SYSTEM == "Windows" else "recorder-test")
 if media.SYSTEM == "Windows":
     import shlex
-    libs = shlex.split(subprocess.check_output(["pkg-config", "--msvc-syntax", "--static", "--libs", "libavformat", "libavcodec", "libavutil", "libswscale"], env=env, text=True))
+    libs = shlex.split(subprocess.check_output([media.tool("pkg-config", env), "--msvc-syntax", "--static", "--libs", "libavformat", "libavcodec", "libavutil", "libswscale"], env=env, text=True))
     media.run(["cl", "/nologo", "/O2", "/MT", "/std:c11", "/I"+str(media.PREFIX / "include"), "/Fo"+str(media.WORK)+"\\", "/Fe"+str(binary), ROOT / "workers/media/recorder_test.c", ROOT / "workers/media/recorder.c", "/link", *libs])
 else:
     import shlex
