@@ -24,7 +24,9 @@ func (a *App) snapshot() func() ([]byte, error) {
 	px, mosaic, list := a.pixels, a.mosaicPx, annotationSnapshot(a.history.Present())
 	ratio := a.history.ImageCornerRatio()
 	ctx := a.ctx
+	lease := a.lease.Retain()
 	return func() ([]byte, error) {
+		defer lease.Release()
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -61,7 +63,12 @@ func (a *App) Export() {
 			}
 			px, mosaic, list := a.pixels, a.mosaicPx, annotationSnapshot(a.history.Present())
 			ratio := a.history.ImageCornerRatio()
+			lease := a.lease.Retain()
 			go func() {
+				defer lease.Release()
+				if ctx.Err() != nil {
+					return
+				}
 				img, err := render.FlattenWithCorners(px, mosaic, list, ratio)
 				var data []byte
 				if err == nil {

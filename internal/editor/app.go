@@ -11,6 +11,7 @@ import (
 	"github.com/egoist/mygo/ui"
 	"github.com/wildalley/screenpin/internal/config"
 	"github.com/wildalley/screenpin/internal/doc"
+	"github.com/wildalley/screenpin/internal/imagelimit"
 	"github.com/wildalley/screenpin/internal/ocr"
 	"github.com/wildalley/screenpin/internal/render"
 )
@@ -50,6 +51,7 @@ type App struct {
 	mosaic   *ui.Bitmap
 	title    string
 	history  doc.History
+	lease    *imagelimit.Lease
 
 	tool            doc.Tool
 	selected        string
@@ -130,6 +132,8 @@ func (a *App) Open(parent context.Context, picture Picture, target *mygo.Rectang
 }
 
 func (a *App) loadPicture(picture Picture, target *mygo.Rectangle) {
+	a.lease.Release()
+	a.lease = picture.lease.Retain()
 	im := picture.image
 	a.image, a.pixels, a.mosaicPx = &im, picture.pixels, picture.mosaic
 	a.title, a.target = picture.title, target
@@ -155,6 +159,8 @@ func (a *App) release() {
 	a.OnCapture, a.OnScroll, a.OnSettings = nil, nil, nil
 	a.image, a.pixels, a.mosaicPx = nil, nil, nil
 	a.bitmap, a.mosaic = nil, nil
+	a.lease.Release()
+	a.lease = nil
 	a.history = doc.History{}
 	a.drag, a.styles, a.toasts = nil, nil, nil
 	a.selected, a.editingID, a.editingText, a.slidingKey, a.title = "", "", "", "", ""

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wildalley/screenpin/internal/imagelimit"
 	_ "golang.org/x/image/webp" // decode WebP projects written by the web editor
 )
 
@@ -28,8 +29,8 @@ type Image struct {
 
 // Limits a project must keep, as the web editor checked them.
 const (
-	maxSide        = 32768
-	maxPixels      = 100_000_000
+	maxSide        = imagelimit.MaxSide
+	maxPixels      = imagelimit.MaxPixels
 	maxAnnotations = 10_000
 	maxPoints      = 500_000
 	maxDataURL     = 150_000_000
@@ -41,9 +42,9 @@ var ErrNotImage = errors.New("不支持的图片格式")
 // DecodeImage reads the size and format of encoded image data without
 // decoding its pixels.
 func DecodeImage(data []byte, name string) (Image, error) {
-	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
+	cfg, format, err := imagelimit.Config(data)
 	if err != nil {
-		return Image{}, ErrNotImage
+		return Image{}, fmt.Errorf("%w: %w", ErrNotImage, err)
 	}
 	mime := map[string]string{"png": "image/png", "jpeg": "image/jpeg", "webp": "image/webp"}[format]
 	if mime == "" {

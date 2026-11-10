@@ -4,6 +4,8 @@ import (
 	"runtime"
 	"testing"
 	"weak"
+
+	"github.com/wildalley/screenpin/internal/imagelimit"
 )
 
 func abandonedStrokeHistory() (*History, weak.Pointer[Point]) {
@@ -17,6 +19,41 @@ func abandonedStrokeHistory() (*History, weak.Pointer[Point]) {
 	// A new branch discards redo; the large stroke must now be collectible.
 	h.Commit([]Annotation{{ID: "new-branch", Type: ToolRectangle}})
 	return h, pointer
+}
+
+func TestHistoryPrunesBytesAndPreservesCurrentDocument(t *testing.T) {
+	var h History
+	// Shared stroke buffers still consume a conservative per-snapshot budget.
+	points := make([]Point, 1<<20)
+	for _, id := range []string{"first", "second", "third", "current"} {
+		h.Commit([]Annotation{{ID: id, Type: ToolPen, Points: points}})
+	}
+	if h.retainedBytes() > imagelimit.HistoryBytes || len(h.past) != 1 || h.present[0].ID != "current" {
+		t.Fatalf("unbounded history or lost current: %d, %d", h.retainedBytes(), len(h.past))
+	}
+	h.Undo()
+	if h.present[0].ID != "third" || !h.CanRedo() {
+		t.Fatal("nearest undo lost")
+	}
+	h.Redo()
+	if h.present[0].ID != "current" || h.retainedBytes() > imagelimit.HistoryBytes {
+		t.Fatal("redo broke budget/current")
+	}
+	h.Begin()
+	h.SetTransient([]Annotation{{ID: "transaction", Type: ToolPen, Points: points}})
+	h.End()
+	if h.retainedBytes() > imagelimit.HistoryBytes {
+		t.Fatal("transaction bypassed byte budget")
+	}
+}
+
+func TestOversizedUndoSnapshotDoesNotRetainAbandonedPixels(t *testing.T) {
+	var h History
+	h.Commit([]Annotation{{ID: "huge", Points: make([]Point, 3<<20)}})
+	h.Commit([]Annotation{{ID: "small"}})
+	if h.CanUndo() || h.retainedBytes() != 0 || h.Present()[0].ID != "small" {
+		t.Fatal("oversized snapshot retained")
+	}
 }
 
 func TestDiscardedUndoBranchDoesNotRetainStrokePoints(t *testing.T) {

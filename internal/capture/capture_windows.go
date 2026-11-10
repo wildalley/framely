@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"syscall"
 	"unsafe"
+
+	"github.com/wildalley/screenpin/internal/imagelimit"
 )
 
 var (
@@ -65,7 +67,7 @@ func DesktopPixels(ctx context.Context) (*image.RGBA, error) {
 	}
 	metric := func(id uintptr) int { v, _, _ := getSystemMetrics.Call(id); return int(int32(v)) }
 	x, y, w, h := metric(76), metric(77), metric(78), metric(79)
-	if w <= 0 || h <= 0 || int64(w)*int64(h) > 64_000_000 {
+	if imagelimit.Dimensions(w, h) != nil {
 		return nil, errors.New("桌面尺寸超出截图支持范围")
 	}
 	dc, _, _ := getDC.Call(0)

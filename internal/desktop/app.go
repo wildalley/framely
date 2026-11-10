@@ -203,6 +203,7 @@ func (s *application) maybeQuit() {
 }
 
 func (s *application) showPicture(picture editor.Picture, target *mygo.Rectangle, token string) {
+	defer picture.Close()
 	if s.scroll != nil && s.scroll.running {
 		s.scroll.show()
 	}
@@ -245,6 +246,7 @@ func (s *application) beginImage(load func(context.Context) (editor.Picture, *my
 	s.operations++
 	s.worker(func() {
 		picture, target, token, err := load(s.ctx)
+		defer picture.Close() // also releases an abandoned UI dispatch on shutdown
 		s.dispatch(func() {
 			s.operations--
 			if done != nil {
@@ -277,6 +279,7 @@ func (s *application) OpenPath(path string) {
 			err = ctx.Err()
 		}
 		if err != nil {
+			picture.Close()
 			return editor.Picture{}, nil, "", fmt.Errorf("打开图片失败: %w", err)
 		}
 		return picture, nil, "", nil

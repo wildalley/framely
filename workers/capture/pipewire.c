@@ -16,6 +16,8 @@
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <linux/dma-buf.h>
+#include <fcntl.h>
+#include "frame_protocol.h"
 
 struct capture {
     struct pw_main_loop *loop;
@@ -27,12 +29,45 @@ struct capture {
     uint64_t sent;
     int failed;
     unsigned received;
+    unsigned protocol;
+    struct sp_region region;
+    struct spa_source *input;
+    char command[256];
+    size_t command_used;
 };
 
 static int write_all(const void *data, size_t size) {
     const uint8_t *p=data;
     while(size) { ssize_t n=write(STDOUT_FILENO,p,size); if(n<0&&errno==EINTR)continue; if(n<=0)return -1; p+=n;size-=n; }
     return 0;
+}
+
+static void command_received(struct capture *c,const char *line) {
+    struct sp_region next;
+    const char *error="";
+    if(sp_parse_crop(line,c->format.size.width,c->format.size.height,&next)<0)error="Invalid crop or changed source size";
+    else c->region=next;
+    uint32_t header[4]={0x31435053,(uint32_t)strlen(error),*error?1u:0u,next.generation};
+    if(write_all(header,sizeof(header))<0||write_all(error,strlen(error))<0)pw_main_loop_quit(c->loop);
+}
+
+static void input_ready(void *userdata,int fd,uint32_t mask) {
+    struct capture *c=userdata;
+    if(mask&SPA_IO_IN) {
+        char bytes[256];ssize_t count;
+        while((count=read(fd,bytes,sizeof(bytes)))>0) {
+            for(ssize_t i=0;i<count;i++) {
+                if(bytes[i]=='\n') {
+                    c->command[c->command_used]='\0';
+                    command_received(c,c->command);c->command_used=0;
+                } else if(bytes[i]=='\0'||c->command_used>=sizeof(c->command)-1) {
+                    c->failed=1;pw_main_loop_quit(c->loop);return;
+                } else c->command[c->command_used++]=bytes[i];
+            }
+        }
+        if(count==0||(count<0&&errno!=EAGAIN&&errno!=EWOULDBLOCK&&errno!=EINTR))pw_main_loop_quit(c->loop);
+    }
+    if(mask&(SPA_IO_HUP|SPA_IO_ERR))pw_main_loop_quit(c->loop);
 }
 
 static void state_changed(void *userdata, enum pw_stream_state old, enum pw_stream_state state, const char *error) {
@@ -57,7 +92,7 @@ static void param_changed(void *userdata,uint32_t id,const struct spa_pod *param
     // Older SPA headers expose modifier presence through the format pod only.
     c->has_modifier=spa_pod_find_prop(param,NULL,SPA_FORMAT_VIDEO_modifier)!=NULL;
     fprintf(stderr,"PipeWire format: %ux%u format=%u modifier_present=%d modifier=%llu\n",c->format.size.width,c->format.size.height,c->format.format,c->has_modifier,(unsigned long long)c->format.modifier);
-    if(c->format.size.width==0||c->format.size.height==0||(uint64_t)c->format.size.width*c->format.size.height>32000000) {
+    if(c->format.size.width==0||c->format.size.height==0||c->format.size.width>16384||c->format.size.height>16384||(uint64_t)c->format.size.width*c->format.size.height>32000000) {
         fprintf(stderr,"PipeWire image exceeds capture limits\n");c->failed=1;pw_main_loop_quit(c->loop);return;
     }
     if(c->has_modifier&&c->format.modifier!=0) {
@@ -84,6 +119,12 @@ static void emit_buffer(struct capture *c,struct pw_buffer *pw) {
     if(c->received++<2)fprintf(stderr,"PipeWire buffer: type=%u maxsize=%u mapoffset=%u offset=%u size=%u stride=%d mapped=%d\n",data->type,data->maxsize,data->mapoffset,chunk->offset,chunk->size,chunk->stride,data->data!=NULL);
     uint32_t width=c->format.size.width,height=c->format.size.height;
     if(!width||!height)goto done;
+    struct sp_region region=c->region;
+    if(region.generation && (region.source_width!=width||region.source_height!=height)) {
+        fprintf(stderr,"Capture source dimensions changed after crop\n");c->failed=1;pw_main_loop_quit(c->loop);goto done;
+    }
+    uint32_t x=region.generation?region.x:0,y0=region.generation?region.y:0;
+    uint32_t out_width=region.generation?region.width:width,out_height=region.generation?region.height:height;
     uint32_t stride=chunk->stride>0?(uint32_t)chunk->stride:width*4;
     uint64_t bytes=(uint64_t)(height-1)*stride+width*4;
     if(stride<width*4)goto done;
@@ -118,13 +159,13 @@ static void emit_buffer(struct capture *c,struct pw_buffer *pw) {
         case SPA_VIDEO_FORMAT_RGBx:pixel_format=4;break;
         default:goto done;
     }
-    uint32_t header[4]={0x31465053,width,height,pixel_format};
-    if(write_all(header,sizeof(header))<0) {pw_main_loop_quit(c->loop);goto done;}
-    pixels+=chunk->offset;
-    if(stride==width*4) {
-        if(write_all(pixels,(size_t)width*height*4)<0) {pw_main_loop_quit(c->loop);goto done;}
+    uint32_t header[9]={c->protocol==2?0x32465053u:0x31465053u,out_width,out_height,pixel_format,x,y0,width,height,region.generation};
+    if(write_all(header,c->protocol==2?sizeof(header):16)<0) {pw_main_loop_quit(c->loop);goto done;}
+    pixels+=chunk->offset+(size_t)y0*stride+(size_t)x*4;
+    if(stride==out_width*4) {
+        if(write_all(pixels,(size_t)out_width*out_height*4)<0) {pw_main_loop_quit(c->loop);goto done;}
     } else {
-        for(uint32_t y=0;y<height;y++) if(write_all(pixels+y*stride,width*4)<0) {pw_main_loop_quit(c->loop);goto done;}
+        for(uint32_t y=0;y<out_height;y++) if(write_all(pixels+(size_t)y*stride,out_width*4)<0) {pw_main_loop_quit(c->loop);goto done;}
     }
     c->sent=now;
 done:
@@ -186,14 +227,22 @@ static void capture_formats(struct spa_pod_builder *builder,const struct spa_pod
 }
 
 int main(int argc,char **argv) {
-    int fd=-1;uint32_t node=PW_ID_ANY;
-    for(int i=1;i+1<argc;i+=2) {if(!strcmp(argv[i],"--fd"))fd=atoi(argv[i+1]);else if(!strcmp(argv[i],"--node"))node=(uint32_t)strtoul(argv[i+1],NULL,10);else return 2;}
+    if(argc==2&&!strcmp(argv[1],"--protocol-version")){puts("2");return 0;}
+    int fd=-1;uint32_t node=PW_ID_ANY;unsigned protocol=1;
+    for(int i=1;i+1<argc;i+=2) {if(!strcmp(argv[i],"--fd"))fd=atoi(argv[i+1]);else if(!strcmp(argv[i],"--node"))node=(uint32_t)strtoul(argv[i+1],NULL,10);else if(!strcmp(argv[i],"--protocol"))protocol=(unsigned)atoi(argv[i+1]);else return 2;}
+    if(protocol!=1&&protocol!=2)return 2;
     if(fd<0||node==PW_ID_ANY) {fprintf(stderr,"Expected an authorized PipeWire fd and node\n");return 2;}
     signal(SIGPIPE,SIG_IGN);pw_init(NULL,NULL);
-    struct capture c={0};c.loop=pw_main_loop_new(NULL);
+    struct capture c={0};c.protocol=protocol;c.loop=pw_main_loop_new(NULL);
     if(!c.loop)return 1;
     c.timer=pw_loop_add_timer(pw_main_loop_get_loop(c.loop),flush_pending,&c);
     if(!c.timer)return 1;
+    if(protocol==2) {
+        int flags=fcntl(STDIN_FILENO,F_GETFL);
+        if(flags<0||fcntl(STDIN_FILENO,F_SETFL,flags|O_NONBLOCK)<0)return 1;
+        c.input=pw_loop_add_io(pw_main_loop_get_loop(c.loop),STDIN_FILENO,SPA_IO_IN|SPA_IO_HUP|SPA_IO_ERR,false,input_ready,&c);
+        if(!c.input)return 1;
+    }
     struct pw_context *context=pw_context_new(pw_main_loop_get_loop(c.loop),NULL,0);
     struct pw_core *core=context?pw_context_connect_fd(context,fd,NULL,0):NULL;
     if(!core){fprintf(stderr,"Cannot connect to authorized PipeWire remote\n");return 1;}
@@ -209,6 +258,7 @@ int main(int argc,char **argv) {
     // The portal returns a node ID, not an object.serial for target.object.
     if(pw_stream_connect(c.stream,PW_DIRECTION_INPUT,node,PW_STREAM_FLAG_AUTOCONNECT|PW_STREAM_FLAG_MAP_BUFFERS,params,2)<0){fprintf(stderr,"Cannot start PipeWire stream\n");return 1;}
     pw_main_loop_run(c.loop);
+    if(c.input)pw_loop_destroy_source(pw_main_loop_get_loop(c.loop),c.input);
     pw_loop_destroy_source(pw_main_loop_get_loop(c.loop),c.timer);
     pw_stream_destroy(c.stream);pw_core_disconnect(core);pw_context_destroy(context);pw_main_loop_destroy(c.loop);pw_deinit();
     return c.failed?1:0;

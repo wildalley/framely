@@ -5,14 +5,11 @@ package capture
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"image"
 	"os"
 	"os/exec"
 	"strconv"
-	"sync"
 	"syscall"
-	"time"
 
 	"github.com/wildalley/screenpin/internal/components"
 )
@@ -40,7 +37,7 @@ func OpenStream(parent context.Context, options StreamOptions) (Stream, error) {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(parent)
-	cmd := exec.CommandContext(ctx, helper, "--monitor", strconv.Itoa(options.Monitor), "--owner-pid", strconv.Itoa(os.Getpid()))
+	cmd := exec.CommandContext(ctx, helper, "--monitor", strconv.Itoa(options.Monitor), "--owner-pid", strconv.Itoa(os.Getpid()), "--protocol", "2")
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	input, err := cmd.StdinPipe()
 	if err != nil {
@@ -51,30 +48,13 @@ func OpenStream(parent context.Context, options StreamOptions) (Stream, error) {
 	if err != nil {
 		return nil, err
 	}
-	var mu sync.Mutex
-	var id uint32
+	s.input = input
 	if options.Automatic {
 		s.scroll = func(ctx context.Context, p image.Point) error {
-			mu.Lock()
-			defer mu.Unlock()
-			id++
-			ctx, done := context.WithTimeout(ctx, 2*time.Second)
-			defer done()
-			if _, err := fmt.Fprintf(input, "scroll %d %d %d\n", id, p.X, p.Y); err != nil {
-				return err
-			}
-			for {
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case <-s.done:
-					return s.err
-				case reply := <-s.control:
-					if reply.id == id {
-						return reply.err
-					}
-				}
-			}
+			s.commandMu.Lock()
+			defer s.commandMu.Unlock()
+			_, err := s.sendCommand(ctx, "scroll", p.X, p.Y)
+			return err
 		}
 	}
 	return s, nil

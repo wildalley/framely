@@ -55,12 +55,45 @@ int main(void) {
     assert(fread(pixels,1,sizeof(pixels),output)==sizeof(pixels));
     assert(!memcmp(pixels,row,16)&&!memcmp(pixels+16,row,16));
     assert(fgetc(output)==EOF);
+    // Cropping must honor the original row stride and retain source metadata.
+    assert(ftruncate(fileno(output),0)==0);rewind(output);
+    capture.protocol=2;
+    assert(sp_parse_crop("crop 7 1 1 2 1 4 2",4,2,&capture.region)==0);
+    emit_buffer(&capture,&pw);
+    rewind(output);uint32_t cropped_header[9];uint8_t cropped[8];
+    assert(fread(cropped_header,1,sizeof(cropped_header),output)==sizeof(cropped_header));
+    const uint32_t expected[]={0x32465053,2,1,3,1,1,4,2,7};
+    assert(!memcmp(cropped_header,expected,sizeof(expected)));
+    assert(fread(cropped,1,sizeof(cropped),output)==sizeof(cropped));
+    assert(!memcmp(cropped,row+4,8)&&fgetc(output)==EOF);
+    struct sp_region rejected;
+    const char *bad[]={"crop 1 -1 0 1 1 4 2","crop 1 3 0 2 1 4 2","crop 1 0 0 0 1 4 2","crop 1 0 0 1 1 5 2","crop 1 0 0 4294967297 1 4 2","crop 1 0 0 1 1 4 2 extra"};
+    for(unsigned i=0;i<sizeof(bad)/sizeof(bad[0]);i++)assert(sp_parse_crop(bad[i],4,2,&rejected)<0);
+    // A CPU buffer can start at a nonzero chunk offset. The selected last
+    // row must stop at the last pixel, without requiring stride padding.
+    assert(ftruncate(fileno(output),0)==0);rewind(output);
+    uint8_t cpu[43];memset(cpu,0xEE,sizeof(cpu));memcpy(cpu+7,row,20);memcpy(cpu+27,row,16);
+    struct spa_chunk cpu_chunk={.offset=7,.size=36,.stride=20};
+    struct spa_data cpu_data={.type=SPA_DATA_MemPtr,.data=cpu,.maxsize=sizeof(cpu),.chunk=&cpu_chunk};
+    buffer.datas=&cpu_data;
+    command_received(&capture,"crop 8 3 1 1 1 4 2");
+    emit_buffer(&capture,&pw);
+    rewind(output);uint32_t reply_header[4];
+    assert(fread(reply_header,1,sizeof(reply_header),output)==sizeof(reply_header));
+    assert(reply_header[0]==0x31435053&&reply_header[1]==0&&reply_header[2]==0&&reply_header[3]==8);
+    assert(fread(cropped_header,1,sizeof(cropped_header),output)==sizeof(cropped_header));
+    assert(cropped_header[1]==1&&cropped_header[2]==1&&cropped_header[4]==3&&cropped_header[5]==1&&cropped_header[8]==8);
+    assert(fread(cropped,1,4,output)==4&&!memcmp(cropped,row+12,4)&&fgetc(output)==EOF);
+    // A truncated CPU buffer emits no packet and cannot read out of bounds.
+    assert(ftruncate(fileno(output),0)==0);rewind(output);cpu_data.maxsize--;
+    emit_buffer(&capture,&pw);rewind(output);assert(fgetc(output)==EOF);
+    buffer.datas=&data;
     // A truncated backing fd must stop capture, never read beyond its storage.
     assert(ftruncate(fileno(backing),8)==0);
     emit_buffer(&capture,&pw);
-    assert(capture.failed&&quit_calls==1&&queued==2&&sync_calls==4);
+    assert(capture.failed&&quit_calls==1&&queued==5&&sync_calls==6);
     assert(dup2(saved_stdout,STDOUT_FILENO)>=0);close(saved_stdout);
     fclose(output);fclose(backing);
-    puts("PipeWire linear DMA-BUF sentinel, stride, output and bounds checks passed");
+    puts("PipeWire DMA-BUF/CPU crop, acknowledgment, stride and bounds checks passed");
     return 0;
 }

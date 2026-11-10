@@ -25,6 +25,7 @@ func TestFileLaunchLoadsOnlyImages(t *testing.T) {
 		t.Fatal(err)
 	}
 	l, err := ReadPicture(path)
+	defer l.Close()
 	if err != nil || l.title != "图片" || l.image.Width != 16 || l.pixels == nil || l.mosaic == nil || l.image.Data != nil {
 		t.Fatalf("loaded=%+v, err=%v", l, err)
 	}

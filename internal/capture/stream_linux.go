@@ -191,14 +191,20 @@ func openPortalStream(parent context.Context, options StreamOptions, forceChoose
 	if file == nil {
 		return fail(errors.New("PipeWire 连接无效"))
 	}
-	cmd := exec.CommandContext(ctx, helper, "--fd", "3", "--node", strconv.FormatUint(uint64(streams[0].Node), 10))
+	cmd := exec.CommandContext(ctx, helper, "--fd", "3", "--node", strconv.FormatUint(uint64(streams[0].Node), 10), "--protocol", "2")
 	cmd.ExtraFiles = []*os.File{file}
-	s, err := startStream(ctx, cmd, cancel, cleanup)
+	input, err := cmd.StdinPipe()
+	if err != nil {
+		_ = file.Close()
+		return fail(err)
+	}
+	s, err := startStream(ctx, cmd, cancel, func() { _ = input.Close(); cleanup() })
 	_ = file.Close()
 	if err != nil {
 		return nil, err
 	}
 	s.displayBounds = portalDisplayBounds(streams[0].Properties)
+	s.input = input
 	s.sourceType, _ = streams[0].Properties["source_type"].Value().(uint32)
 	if options.Automatic {
 		logicalW, logicalH := streamSize(streams[0].Properties["logical_size"])

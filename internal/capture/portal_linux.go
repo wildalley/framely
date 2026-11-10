@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/godbus/dbus/v5"
+	"github.com/wildalley/screenpin/internal/imagelimit"
 	"github.com/wildalley/screenpin/internal/portal"
 )
 
@@ -66,7 +67,7 @@ func ScreenshotContext(parent context.Context, interactive bool) ([]byte, error)
 	if err != nil || u.Scheme != "file" || (u.Host != "" && u.Host != "localhost") || u.Path == "" {
 		return nil, errors.New("截图门户返回的不是本地文件")
 	}
-	data, err := os.ReadFile(u.Path)
+	data, err := imagelimit.ReadFile(u.Path)
 	// The portal creates a temporary file for this request.
 	_ = os.Remove(u.Path)
 	if err != nil {

@@ -35,6 +35,7 @@ func TestFreshScreenshotSelectionCanStartScrollWithoutReselecting(t *testing.T) 
 			t.Fatal("screenshot selection moved when reused", reused, err)
 		}
 		picture, err := PictureFromPixels(image.NewRGBA(image.Rect(0, 0, 500, 550)), "截图")
+		defer picture.Close()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -59,6 +60,7 @@ func TestFreshScreenshotSelectionCanStartScrollWithoutReselecting(t *testing.T) 
 
 func TestImportedImageAndInvalidSelectionDoNotReuseDesktopCoordinates(t *testing.T) {
 	picture, err := PictureFromPixels(image.NewRGBA(image.Rect(0, 0, 500, 550)), "打开的图片")
+	defer picture.Close()
 	if err != nil {
 		t.Fatal(err)
 	}

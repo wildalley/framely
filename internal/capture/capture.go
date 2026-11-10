@@ -10,6 +10,7 @@ import (
 	"image/draw"
 	"image/png"
 
+	"github.com/wildalley/screenpin/internal/imagelimit"
 	"github.com/wildalley/screenpin/internal/portal"
 	"github.com/wildalley/screenpin/internal/render"
 )
@@ -49,9 +50,16 @@ func Crop(img *image.RGBA, r image.Rectangle) ([]byte, error) {
 
 // Decode decodes a screenshot to RGBA pixels.
 func Decode(data []byte) (*image.RGBA, error) {
+	cfg, _, err := imagelimit.Config(data)
+	if err != nil {
+		return nil, err
+	}
 	img, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
 		return nil, errors.New("无法读取截图: " + err.Error())
+	}
+	if img.Bounds().Dx() != cfg.Width || img.Bounds().Dy() != cfg.Height {
+		return nil, errors.New("图片尺寸不一致")
 	}
 	return render.ToRGBA(img), nil
 }

@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -132,6 +133,12 @@ func (s *finalScrollStream) Scroll(context.Context, image.Point) error { s.scrol
 func (*finalScrollStream) Close()                                      {}
 
 func TestFinishKeepsLastSettledScrollAndStopsAutomaticInput(t *testing.T) {
+	for _, origin := range []image.Point{{}, {X: 930, Y: 500}} {
+		t.Run(origin.String(), func(t *testing.T) { testFinishCroppedScroll(t, origin) })
+	}
+}
+
+func testFinishCroppedScroll(t *testing.T, origin image.Point) {
 	page := image.NewRGBA(image.Rect(0, 0, 160, 400))
 	seed := uint32(1234)
 	for i := 0; i < len(page.Pix); i += 4 {
@@ -147,13 +154,30 @@ func TestFinishKeepsLastSettledScrollAndStopsAutomaticInput(t *testing.T) {
 	for y := 0; y < 240; y++ {
 		copy(frame.Pix[y*frame.Stride:(y+1)*frame.Stride], page.Pix[(y+45)*page.Stride:(y+46)*page.Stride])
 	}
+	frame.Rect = frame.Rect.Add(origin)
+	region = region.Add(origin)
 	source := &finalScrollStream{frame: frame}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	v := &scrollWindow{ctx: ctx, commands: make(chan scrollCommand, 1)}
 	v.commands <- scrollCommand{kind: "finish"}
-	if !v.run(source, region, region.Size(), c) || c.Stitch.Height() != 285 || source.scrolled {
+	if !v.run(source, region, image.Pt(1920, 1080), c) || c.Stitch.Height() != 285 || source.scrolled {
 		t.Fatalf("height=%d scrolled=%v", c.Stitch.Height(), source.scrolled)
+	}
+}
+
+func TestScrollViewportRejectsChangedSourceAndWrongCrop(t *testing.T) {
+	region, size := image.Rect(30, 40, 130, 240), image.Pt(1920, 1080)
+	for _, bounds := range []image.Rectangle{region, image.Rectangle{Max: size}} {
+		got, err := scrollViewport(image.NewRGBA(bounds), region, size)
+		if err != nil || got.Rect != region {
+			t.Fatalf("valid frame: %v, %v", got, err)
+		}
+	}
+	for _, bounds := range []image.Rectangle{region.Add(image.Pt(1, 0)), image.Rect(0, 0, 100, 200), image.Rect(0, 0, 1920, 1200)} {
+		if _, err := scrollViewport(image.NewRGBA(bounds), region, size); !errors.Is(err, scrollshot.ErrSize) {
+			t.Fatalf("accepted wrong source: %v", err)
+		}
 	}
 }
 

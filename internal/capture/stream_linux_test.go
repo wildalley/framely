@@ -3,6 +3,7 @@
 package capture
 
 import (
+	"bufio"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -28,9 +29,21 @@ func TestMain(m *testing.M) {
 		if _, err := io.ReadFull(fd, token[:]); err != nil || string(token[:]) != "OK" {
 			os.Exit(2)
 		}
-		_ = binary.Write(os.Stdout, binary.LittleEndian, [4]uint32{0x31465053, 2, 1, 1})
+		_ = binary.Write(os.Stdout, binary.LittleEndian, [9]uint32{0x32465053, 2, 1, 1, 0, 0, 2, 1, 0})
 		_, _ = os.Stdout.Write([]byte{3, 2, 1, 255, 6, 5, 4, 255})
-		time.Sleep(time.Minute)
+		scanner := bufio.NewScanner(os.Stdin)
+		for scanner.Scan() {
+			var id, x, y, w, h, sw, sh uint32
+			if n, err := fmt.Sscanf(scanner.Text(), "crop %d %d %d %d %d %d %d", &id, &x, &y, &w, &h, &sw, &sh); err != nil || n != 7 {
+				os.Exit(3)
+			}
+			if x != 1 || y != 0 || w != 1 || h != 1 || sw != 2 || sh != 1 {
+				os.Exit(4)
+			}
+			_ = binary.Write(os.Stdout, binary.LittleEndian, [4]uint32{0x31435053, 0, 0, id})
+			_ = binary.Write(os.Stdout, binary.LittleEndian, [9]uint32{0x32465053, w, h, 1, x, y, sw, sh, id})
+			_, _ = os.Stdout.Write([]byte{6, 5, 4, 255})
+		}
 		os.Exit(0)
 	}
 	os.Exit(m.Run())
@@ -201,6 +214,13 @@ func TestPortalStreamFDCoordinatesAndCleanup(t *testing.T) {
 			frame, err := s.Next(ctx)
 			if err != nil || frame.RGBAAt(0, 0).R != 1 {
 				t.Fatalf("inherited FD/frame: %v %v", frame, err)
+			}
+			if err := SetStreamRegion(ctx, s, image.Rect(1, 0, 2, 1), image.Pt(2, 1)); err != nil {
+				t.Fatal(err)
+			}
+			cropped, err := s.Next(ctx)
+			if err != nil || cropped.Rect != image.Rect(1, 0, 2, 1) || cropped.RGBAAt(1, 0).R != 4 {
+				t.Fatalf("crop: %v, %v", cropped, err)
 			}
 			err = s.Scroll(ctx, image.Pt(1, 0))
 			if automatic && err != nil || !automatic && !errors.Is(err, ErrAutomaticUnavailable) {

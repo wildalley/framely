@@ -385,13 +385,16 @@ func match(a, b features, cols []int, top, bottom int) alignment {
 	if len(rows) < 6 {
 		return alignment{}
 	}
+	// Scores are evaluated serially and only the average escapes. Reuse the
+	// small scratch buffer across shifts instead of allocating for each one.
+	var scratch [28]float64
 	score := func(d int) float64 {
 		count := sort.SearchInts(rows, end-d)
 		if count < 6 {
 			return math.Inf(1)
 		}
 		n := min(28, count)
-		values := make([]float64, n)
+		values := scratch[:n]
 		for i := range n {
 			y := rows[i*(count-1)/max(1, n-1)]
 			values[i] = rowError(a, b, y+d, y, cols)
@@ -409,7 +412,7 @@ func match(a, b features, cols []int, top, bottom int) alignment {
 		return alignment{}
 	}
 	best := alignment{score: math.Inf(1)}
-	coarse := make([]alignment, 0, maxShift/2+1)
+	coarse := make([]alignment, 0, maxShift)
 	for d := 1; d <= maxShift; d++ {
 		v := score(d)
 		coarse = append(coarse, alignment{shift: d, score: v})

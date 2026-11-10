@@ -22,7 +22,9 @@ func (a *App) recognize(region bool) {
 	px, mosaic, list := a.pixels, a.mosaicPx, annotationSnapshot(a.history.Present())
 	ratio := a.history.ImageCornerRatio()
 	a.toast("正在离线识别文字，关闭图片会取消。")
+	lease := a.lease.Retain()
 	go func() {
+		defer lease.Release()
 		defer cancel()
 		img, err := render.FlattenWithCorners(px, mosaic, list, ratio)
 		if err == nil && region {

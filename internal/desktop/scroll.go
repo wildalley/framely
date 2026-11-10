@@ -637,11 +637,21 @@ func (v *scrollWindow) start() {
 			return
 		}
 		defer controller.Stitch.Release()
+		slot, err := editor.ReservePicture(controller.Stitch.MaxPixels)
+		if err != nil {
+			v.startFailed(err)
+			return
+		}
+		defer slot.Close()
 		if fallback {
 			controller.Notice = "已切换手动模式，请缓慢向下滚动，按截图快捷键完成。"
 		}
 		sourceSize := first.Bounds().Size()
 		first = nil
+		if err := capture.SetStreamRegion(v.ctx, source, region, sourceSize); err != nil {
+			v.startFailed(err)
+			return
+		}
 		// Install the controls synchronously before publishing stitch updates.
 		controlsNotice := ""
 		mygo.RunOnMain(func() {
@@ -682,11 +692,14 @@ func (v *scrollWindow) start() {
 		log.Printf("ScreenPin: long screenshot completed: %dx%d", pixels.Rect.Dx(), pixels.Rect.Dy())
 		// Image preparation runs off the UI thread; portal/helper teardown
 		// is deferred until after the editor handoff has been queued.
-		picture, err := editor.PictureFromPixels(pixels, "长截图 "+time.Now().Format("15-04-05"))
+		picture, err := slot.FromPixels(pixels, "长截图 "+time.Now().Format("15-04-05"))
+		defer picture.Close()
 		v.later(func() {
 			if err != nil {
-				v.notice = err.Error()
-				v.ending = false
+				// The capture loop has finished; do not leave controls sending
+				// commands to a worker that is about to exit.
+				v.app.notify("长截图生成失败：" + err.Error())
+				v.win.Destroy()
 				return
 			}
 			v.app.operations++ // keep no-tray mode alive during window handoff
@@ -790,10 +803,11 @@ func (v *scrollWindow) run(source capture.Stream, region image.Rectangle, source
 				break
 			}
 			if frame != nil {
-				if frame.Bounds().Size() != sourceSize || !region.In(frame.Bounds()) {
+				viewport, err := scrollViewport(frame, region, sourceSize)
+				if err != nil {
 					break
 				}
-				c.Feed(frame.SubImage(region).(*image.RGBA), time.Now())
+				c.Feed(viewport, time.Now())
 			}
 			changed, _ := c.Tick(time.Now())
 			if changed || c.Paused || c.Settled(time.Now()) {
@@ -830,14 +844,15 @@ func (v *scrollWindow) run(source capture.Stream, region image.Rectangle, source
 		frameCtx, done := context.WithTimeout(v.ctx, 100*time.Millisecond)
 		frame, err := source.Next(frameCtx)
 		done()
+		viewport, frameErr := scrollViewport(frame, region, sourceSize)
+		if frameErr != nil {
+			err = frameErr
+		}
 		if processCommands() {
-			if frame != nil && frame.Bounds().Size() == sourceSize && region.In(frame.Bounds()) {
-				c.Feed(frame.SubImage(region).(*image.RGBA), time.Now())
+			if viewport != nil && frameErr == nil {
+				c.Feed(viewport, time.Now())
 			}
 			return finishCapture()
-		}
-		if frame != nil && frame.Bounds().Size() != sourceSize {
-			err = scrollshot.ErrSize
 		}
 		if err != nil && !errors.Is(err, context.DeadlineExceeded) {
 			if v.ctx.Err() != nil {
@@ -863,13 +878,8 @@ func (v *scrollWindow) run(source capture.Stream, region image.Rectangle, source
 				}
 			}
 		}
-		if frame != nil {
-			if !region.In(frame.Bounds()) {
-				c.Pause(scrollshot.ErrSize.Error())
-				v.publish(c, true)
-				continue
-			}
-			c.Feed(frame.SubImage(region).(*image.RGBA), time.Now())
+		if viewport != nil {
+			c.Feed(viewport, time.Now())
 		}
 		changed, scroll := c.Tick(time.Now())
 		if scroll {
@@ -884,4 +894,19 @@ func (v *scrollWindow) run(source capture.Stream, region image.Rectangle, source
 		}
 	}
 	return false
+}
+
+// SPF2 frames retain source coordinates while owning only cropped pixels.
+// Legacy/in-memory sources may still return the full source rectangle.
+func scrollViewport(frame *image.RGBA, region image.Rectangle, sourceSize image.Point) (*image.RGBA, error) {
+	if frame == nil {
+		return nil, nil
+	}
+	if frame.Bounds() == region {
+		return frame, nil
+	}
+	if frame.Bounds() != (image.Rectangle{Max: sourceSize}) || !region.In(frame.Bounds()) {
+		return nil, scrollshot.ErrSize
+	}
+	return frame.SubImage(region).(*image.RGBA), nil
 }

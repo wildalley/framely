@@ -1,6 +1,11 @@
 package doc
 
-import "slices"
+import (
+	"slices"
+	"unsafe"
+
+	"github.com/wildalley/screenpin/internal/imagelimit"
+)
 
 // historyLimit is how many steps undo goes back.
 const historyLimit = 80
@@ -23,9 +28,59 @@ type History struct {
 type historyState struct {
 	annotations []Annotation
 	cornerRatio float64
+	bytes       int64
 }
 
-func (h *History) state() historyState { return historyState{h.present, h.imageCornerRatio} }
+func (h *History) state() historyState {
+	return historyState{h.present, h.imageCornerRatio, annotationBytes(h.present)}
+}
+
+// Count shared payloads conservatively per snapshot; keeping them shared must
+// never bypass the byte budget. The current document itself is not undo data.
+func annotationBytes(list []Annotation) int64 {
+	n := int64(cap(list)) * int64(unsafe.Sizeof(Annotation{}))
+	for _, a := range list {
+		n += int64(cap(a.Points))*int64(unsafe.Sizeof(Point{})) + int64(len(a.ID)+len(a.Type)+len(a.Color)+len(a.Fill))
+		if a.Text != nil {
+			n += int64(len(*a.Text)) + int64(unsafe.Sizeof(*a.Text))
+		}
+		if a.EndX != nil {
+			n += 8
+		}
+		if a.EndY != nil {
+			n += 8
+		}
+		if a.CornerRatio != nil {
+			n += 8
+		}
+	}
+	return n
+}
+
+func (h *History) retainedBytes() int64 {
+	var n int64
+	for _, s := range h.past {
+		n += s.bytes
+	}
+	for _, s := range h.future {
+		n += s.bytes
+	}
+	return n
+}
+
+func (h *History) trim() {
+	n := h.retainedBytes()
+	for len(h.past) > 0 && (len(h.past) > historyLimit || n > imagelimit.HistoryBytes) {
+		n -= h.past[0].bytes
+		h.past = slices.Delete(h.past, 0, 1)
+	}
+	for len(h.future) > 0 && (len(h.future) > historyLimit || n > imagelimit.HistoryBytes) {
+		last := len(h.future) - 1
+		n -= h.future[last].bytes
+		h.future[last] = historyState{}
+		h.future = h.future[:last]
+	}
+}
 func (h *History) restore(s historyState) {
 	h.present, h.imageCornerRatio = s.annotations, s.cornerRatio
 }
@@ -52,10 +107,8 @@ func (h *History) CanRedo() bool { return len(h.future) > 0 }
 
 func (h *History) push(list historyState) {
 	h.past = append(h.past, list)
-	if len(h.past) > historyLimit {
-		h.past = slices.Delete(h.past, 0, len(h.past)-historyLimit)
-	}
 	h.future = nil
+	h.trim()
 }
 
 // Commit makes next the present as one undoable step.
@@ -113,6 +166,7 @@ func (h *History) Undo() {
 	h.restore(h.past[last])
 	h.past[last] = historyState{}
 	h.past = h.past[:last]
+	h.trim()
 }
 
 // Redo goes forward one step.
@@ -125,6 +179,7 @@ func (h *History) Redo() {
 	h.restore(h.future[0])
 	h.future[0] = historyState{}
 	h.future = h.future[1:]
+	h.trim()
 }
 
 // Reset starts the history anew with list.

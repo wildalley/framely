@@ -24,6 +24,7 @@ func TestSoftwareImageLifecycleMemoryStress(t *testing.T) {
 		pixels := image.NewRGBA(image.Rect(0, 0, 1920, 1080))
 		pointer := weak.Make(&pixels.Pix[0])
 		picture, err := PictureFromPixels(pixels, "memory audit")
+		defer picture.Close()
 		if err != nil {
 			t.Fatal(err)
 		}

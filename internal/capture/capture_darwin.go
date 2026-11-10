@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"time"
+
+	"github.com/wildalley/screenpin/internal/imagelimit"
 )
 
 // System runs macOS's own region selector and returns its PNG.
@@ -27,7 +29,10 @@ func SystemContext(ctx context.Context, _ func() []byte) ([]byte, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
-	data, readErr := os.ReadFile(path)
+	data, readErr := imagelimit.ReadFile(path)
+	if errors.Is(readErr, imagelimit.ErrEncodedSize) {
+		return nil, readErr
+	}
 	if err != nil || readErr != nil || len(data) == 0 {
 		var exit *exec.ExitError
 		if err != nil && !errors.As(err, &exit) {
