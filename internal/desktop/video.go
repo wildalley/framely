@@ -29,13 +29,23 @@ type videoWindow struct {
 	cancel                                           context.CancelFunc
 	closed, busy, running, paused, ending, exporting bool
 	quitAfter                                        bool
+	tab                                              int
 	fps, quality                                     string
 	notice, path                                     string
 	status                                           capture.RecordingStatus
 	commands                                         chan string
 	gifFPS, gifWidth, gifStart, gifDuration          string
+	gifSource, gifResult                             string
+	gifLength, gifProgress                           float64
+	choosing                                         bool
 	exportCancel                                     context.CancelFunc
+	traySecond                                       int64
 }
+
+const (
+	videoTabRecord = 0
+	videoTabGIF    = 1
+)
 
 func (s *application) RecordWithActivation(string) {
 	if s.ctx.Err() != nil || s.settings != nil && s.settings.recording {
@@ -47,19 +57,83 @@ func (s *application) RecordWithActivation(string) {
 	}
 	s.showVideo()
 }
-func (s *application) showVideo() {
+
+// recordDir is where recordings and GIFs go without a dialog.
+func (s *application) recordDir() string { return s.recordDirFor(s.cfg.RecordDir) }
+
+func (s *application) recordDirFor(configured string) string {
+	if configured != "" {
+		return configured
+	}
+	if videos, err := mygo.App.Path(mygo.PathVideos); err == nil && videos != "" {
+		return filepath.Join(videos, "ScreenPin")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, "Videos", "ScreenPin")
+}
+
+// chooseRecordDir asks for a folder and saves it as the default at once, so
+// the recording window and the settings window agree.
+func (s *application) chooseRecordDir(parent *mygo.Window, done func(string)) {
+	current := s.recordDir()
+	s.worker(func() {
+		paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{Parent: parent, Title: "选择录屏保存位置", DefaultPath: current, Directory: true, CreateDirectories: true})
+		s.dispatch(func() {
+			if err != nil || len(paths) == 0 {
+				if err != nil {
+					s.notify("选择文件夹失败：" + err.Error())
+				}
+				return
+			}
+			next := s.cfg
+			next.RecordDir = paths[0]
+			if err := next.Save(); err != nil {
+				s.notify(err.Error())
+				return
+			}
+			s.cfg.RecordDir = paths[0]
+			if s.settings != nil {
+				s.settings.draft.RecordDir = paths[0]
+				s.settings.win.Invalidate()
+			}
+			if s.video != nil {
+				s.video.win.Invalidate()
+			}
+			if done != nil {
+				done(paths[0])
+			}
+		})
+	})
+}
+
+func (s *application) showVideo() { s.openVideo(videoTabRecord) }
+
+// showGIF opens the GIF tab, asking for a video when none is loaded yet.
+func (s *application) showGIF() {
+	s.openVideo(videoTabGIF)
+	if v := s.video; v != nil && !v.running && !v.busy && !v.exporting && v.gifSource == "" {
+		v.chooseVideo()
+	}
+}
+
+func (s *application) openVideo(tab int) {
 	if s.video != nil {
+		if !s.video.running && !s.video.busy {
+			s.video.tab = tab
+		}
 		s.video.win.Show()
 		s.video.win.Focus()
+		s.video.win.Invalidate()
 		return
 	}
-	if s.captureBusy {
+	if tab == videoTabRecord && s.captureBusy {
 		s.notify("请先完成当前截图或长截图。")
 		return
 	}
 	ctx, cancel := context.WithCancel(s.ctx)
-	v := &videoWindow{app: s, ctx: ctx, cancel: cancel, fps: "60", quality: "1080p", gifFPS: "15", gifWidth: "960", gifStart: "0", gifDuration: "10", commands: make(chan string, 4)}
-	v.win = mygo.NewWindow(mygo.WindowOptions{Title: "ScreenPin 录屏", Width: 480, Height: 460, MinWidth: 400, MinHeight: 340, UseContentSize: true, AlwaysOnTop: true, Content: ui.View(v.view)})
+	v := newVideoWindow(s, ctx, cancel)
+	v.tab = tab
+	v.win = mygo.NewWindow(mygo.WindowOptions{Title: "ScreenPin 录屏", Width: 480, Height: 500, MinWidth: 400, MinHeight: 360, UseContentSize: true, AlwaysOnTop: true, Content: ui.View(v.view)})
 	capture.ExcludeWindow(v.win.NativeHandle())
 	s.video = v
 	s.operations++
@@ -84,9 +158,15 @@ func (s *application) showVideo() {
 			s.video = nil
 		}
 		s.operations--
+		s.refreshTray()
 		s.maybeQuit()
 	})
 }
+
+func newVideoWindow(s *application, ctx context.Context, cancel context.CancelFunc) *videoWindow {
+	return &videoWindow{app: s, ctx: ctx, cancel: cancel, fps: "60", quality: "1080p", gifFPS: "15", gifWidth: "960", gifStart: "0", gifDuration: "10", commands: make(chan string, 4), traySecond: -1}
+}
+
 func (v *videoWindow) later(fn func()) {
 	v.app.dispatch(func() {
 		if !v.closed {
@@ -95,101 +175,83 @@ func (v *videoWindow) later(fn func()) {
 		}
 	})
 }
+
+func clock(ms int64) string {
+	seconds := ms / 1000
+	if seconds >= 3600 {
+		return fmt.Sprintf("%d:%02d:%02d", seconds/3600, seconds/60%60, seconds%60)
+	}
+	return fmt.Sprintf("%02d:%02d", seconds/60, seconds%60)
+}
+
+// trayStatus describes the recording or export under way for the tray, or
+// "" when there is none.
+func (v *videoWindow) trayStatus() string {
+	switch {
+	case v == nil || v.closed:
+		return ""
+	case v.running && v.ending:
+		return "正在保存录屏…"
+	case v.running && v.paused:
+		return "录屏已暂停 · " + clock(v.status.ElapsedMS)
+	case v.running:
+		return "● 正在录屏 · " + clock(v.status.ElapsedMS)
+	case v.busy:
+		return "正在准备录屏：框选区域…"
+	case v.exporting:
+		return fmt.Sprintf("正在导出 GIF · %d%%", int(v.gifProgress*100))
+	}
+	return ""
+}
+
 func (v *videoWindow) view(c *ui.Context) {
 	panelTheme(c)
 	if c.Shortcut(0, ui.KeyEscape) && !v.running && !v.busy && !v.exporting {
 		v.win.Close()
 		return
 	}
+	locked := v.running || v.busy
 	ui.Column(c).Fill().Padding(20).Gap(12).Children(func() {
-		ui.Row(c).AlignItems(ui.Center).Children(func() {
+		ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
 			ui.Text(c, "屏幕录制").FontSize(20).FontWeight(600).Grow(1)
-			state := "无声视频"
-			if v.running {
-				state = "录制中"
-			}
-			if v.paused {
+			state := "无声 MP4"
+			switch {
+			case v.ending:
+				state = "正在保存…"
+			case v.paused:
 				state = "已暂停"
+			case v.running:
+				state = "● 录制中"
+			case v.busy:
+				state = "准备中"
+			case v.exporting:
+				state = "导出 GIF 中"
 			}
-			if v.ending {
-				state = "正在完成…"
+			badge := ui.Badge(c, state)
+			if v.running && !v.paused {
+				badge.Background(c.Theme().Danger).TextColor(c.Theme().AccentText)
 			}
-			ui.Text(c, state).FontSize(12).TextColor(c.Theme().TextMuted)
 		})
+		if !locked {
+			previous := v.tab
+			ui.Tabs(c, &v.tab, "录制", "转 GIF")
+			if previous != v.tab && v.tab == videoTabGIF && v.gifSource == "" && v.path != "" {
+				v.useGIFSource(v.path, float64(v.status.ElapsedMS)/1000)
+			}
+		}
 		ui.Scroll(c.Key("video-content")).Grow(1).MinHeight(0).Gap(12).Children(func() {
-			if !v.running && !v.busy {
-				ui.Row(c).Gap(12).Children(func() {
-					ui.Column(c).Grow(1).Gap(5).Children(func() {
-						ui.Text(c, "帧率").FontSize(12)
-						ui.Select(c, &v.fps, []string{"30", "60"}).Label("录屏帧率").FillWidth().Disabled(v.exporting)
-					})
-					ui.Column(c).Grow(1).Gap(5).Children(func() {
-						ui.Text(c, "最大分辨率").FontSize(12)
-						ui.Select(c, &v.quality, []string{"720p", "1080p", "1440p", "4K"}).Label("录屏分辨率").FillWidth().Disabled(v.exporting)
-					})
-				})
-				ui.Text(c, "框选区域后开始，优先使用硬件编码。实际流畅度取决于设备和共享来源。").FontSize(12).TextColor(c.Theme().TextMuted)
-				ui.Text(c, "可从托盘暂停、继续或结束录屏。").FontSize(12).TextColor(c.Theme().TextMuted)
-			}
-			if v.running || v.status.Finished {
-				seconds := v.status.ElapsedMS / 1000
-				ui.Text(c, fmt.Sprintf("%02d:%02d", seconds/60, seconds%60)).FontSize(32).Font("monospace")
-				encoder := v.status.Encoder
-				if encoder == "mpeg4" {
-					encoder = "MPEG-4 软件编码"
-				} else if encoder == "libx264" {
-					encoder = "H.264 软件编码"
-				} else if encoder != "" {
-					encoder = "H.264 硬件编码 · " + encoder
-				}
-				ui.Text(c, encoder).FontSize(12)
-				ui.Text(c, fmt.Sprintf("收到画面 %d 帧 · 复用静止画面 %d 帧", v.status.Captured, v.status.Repeated)).FontSize(12).TextColor(c.Theme().TextMuted)
-				average := float64(0)
-				if v.status.ElapsedMS > 0 {
-					average = float64(v.status.Frames) * 1000 / float64(v.status.ElapsedMS)
-				}
-				ui.Text(c, fmt.Sprintf("%d × %d · 目标 %d fps · 编码平均 %.1f fps", v.status.Width, v.status.Height, v.status.FPS, average)).FontSize(12).TextColor(c.Theme().TextMuted)
-				ui.Text(c, fmt.Sprintf("已编码 %d 帧 · 延迟丢帧 %d", v.status.Frames, v.status.Missed)).FontSize(12).TextColor(c.Theme().TextMuted)
-			}
-			if v.path != "" && !v.running && !v.busy {
-				ui.Text(c, "视频已保存").FontWeight(600)
-				if v.preview != nil {
-					ui.Image(c, v.preview).Fit(ui.Contain).FillWidth().Height(140).Label("视频首帧预览")
-				}
-				ui.Text(c, v.path).FontSize(12).Selectable()
-				ui.Row(c).Gap(8).Children(func() {
-					if ui.Button(c, "播放视频").Clicked() {
-						_ = mygo.Shell.OpenPath(v.path)
-					}
-					if ui.Button(c, "打开文件夹").Clicked() {
-						_ = mygo.Shell.OpenPath(filepath.Dir(v.path))
-					}
-				})
-				ui.Text(c, "导出 GIF").FontWeight(600)
-				ui.Row(c).Gap(8).Children(func() {
-					ui.TextInput(c, &v.gifStart).Label("GIF 开始秒数").Placeholder("开始秒数").Grow(1).MinWidth(0).Disabled(v.exporting)
-					ui.TextInput(c, &v.gifDuration).Label("GIF 时长秒数").Placeholder("时长秒数").Grow(1).MinWidth(0).Disabled(v.exporting)
-				})
-				ui.Text(c, "起点 / 时长（秒），单次最多 60 秒。").FontSize(12).TextColor(c.Theme().TextMuted)
-				ui.Row(c).Gap(8).Children(func() {
-					ui.Select(c, &v.gifFPS, []string{"10", "15", "20", "30"}).Label("GIF 帧率").Grow(1).Disabled(v.exporting)
-					ui.Select(c, &v.gifWidth, []string{"640", "960", "1280", "1920"}).Label("GIF 宽度").Grow(1).Disabled(v.exporting)
-				})
-				ui.Text(c, "GIF 帧率 / 最大宽度，较低设置更适合分享。").FontSize(12).TextColor(c.Theme().TextMuted)
-				if v.exporting {
-					if ui.Button(c, "取消导出").Clicked() && v.exportCancel != nil {
-						v.exportCancel()
-					}
-				} else if ui.Button(c, "导出 GIF…").Clicked() {
-					v.exportGIF()
-				}
+			if locked || v.tab == videoTabRecord {
+				v.recordView(c)
+			} else {
+				v.gifView(c)
 			}
 			if v.notice != "" {
 				ui.Text(c, v.notice).FontSize(12).Selectable()
 			}
 		})
 		ui.Row(c).Gap(8).Justify(ui.End).Children(func() {
-			if v.running {
+			switch {
+			case v.running:
 				label := "暂停"
 				if v.paused {
 					label = "继续"
@@ -204,11 +266,22 @@ func (v *videoWindow) view(c *ui.Context) {
 				if ui.PrimaryButton(c, "结束并保存").Disabled(v.busy || v.ending).Clicked() {
 					v.command("finish")
 				}
-			} else if v.busy {
+			case v.busy:
 				if ui.Button(c, "取消").Clicked() {
 					v.cancel()
 				}
-			} else {
+			case v.tab == videoTabGIF:
+				if ui.Button(c, "关闭").Disabled(v.exporting).Clicked() {
+					v.win.Close()
+				}
+				if v.exporting {
+					if ui.Button(c, "取消导出").Clicked() && v.exportCancel != nil {
+						v.exportCancel()
+					}
+				} else if ui.PrimaryButton(c, "导出 GIF").Disabled(v.gifSource == "" || v.choosing).Clicked() {
+					v.exportGIF()
+				}
+			default:
 				if ui.Button(c, "关闭").Disabled(v.exporting).Clicked() {
 					v.win.Close()
 				}
@@ -219,6 +292,189 @@ func (v *videoWindow) view(c *ui.Context) {
 		})
 	})
 }
+
+func (v *videoWindow) recordView(c *ui.Context) {
+	muted := c.Theme().TextMuted
+	if !v.running && !v.busy {
+		ui.Row(c).Gap(12).Children(func() {
+			ui.Column(c).Grow(1).Gap(5).Children(func() {
+				ui.Text(c, "帧率").FontSize(12)
+				ui.Select(c, &v.fps, []string{"30", "60"}).Label("录屏帧率").FillWidth().Disabled(v.exporting)
+			})
+			ui.Column(c).Grow(1).Gap(5).Children(func() {
+				ui.Text(c, "最大分辨率").FontSize(12)
+				ui.Select(c, &v.quality, []string{"720p", "1080p", "1440p", "4K"}).Label("录屏分辨率").FillWidth().Disabled(v.exporting)
+			})
+		})
+		ui.Column(c).Gap(5).Children(func() {
+			ui.Text(c, "保存位置").FontSize(12)
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				where := v.app.recordDir()
+				if v.app.cfg.AskRecordPath {
+					where = "每次询问（默认 " + where + "）"
+				}
+				ui.Text(c, where).FontSize(12).MaxLines(2).Grow(1).MinWidth(0).Tooltip(where).Selectable()
+				if ui.Button(c.Key("record-dir"), "更改…").Disabled(v.exporting).Clicked() {
+					v.app.chooseRecordDir(v.win, nil)
+				}
+			})
+		})
+		ui.Text(c, "框选区域后立即开始，结束后自动保存。录制中可从托盘查看时长、暂停或结束。").FontSize(12).TextColor(muted)
+	}
+	if v.running || v.status.Finished {
+		ui.Text(c, clock(v.status.ElapsedMS)).FontSize(32).Font("monospace")
+		encoder := v.status.Encoder
+		if encoder == "mpeg4" {
+			encoder = "MPEG-4 软件编码"
+		} else if encoder == "libx264" {
+			encoder = "H.264 软件编码"
+		} else if encoder != "" {
+			encoder = "H.264 硬件编码 · " + encoder
+		}
+		ui.Text(c, encoder).FontSize(12)
+		average := float64(0)
+		if v.status.ElapsedMS > 0 {
+			average = float64(v.status.Frames) * 1000 / float64(v.status.ElapsedMS)
+		}
+		ui.Text(c, fmt.Sprintf("%d × %d · 目标 %d fps · 编码平均 %.1f fps", v.status.Width, v.status.Height, v.status.FPS, average)).FontSize(12).TextColor(muted)
+		ui.Text(c, fmt.Sprintf("已编码 %d 帧 · 复用静止画面 %d 帧 · 延迟丢帧 %d", v.status.Frames, v.status.Repeated, v.status.Missed)).FontSize(12).TextColor(muted)
+	}
+	if v.path != "" && !v.running && !v.busy {
+		ui.Text(c, "视频已保存").FontWeight(600)
+		if v.preview != nil {
+			ui.Image(c, v.preview).Fit(ui.Contain).FillWidth().Height(140).Label("视频首帧预览")
+		}
+		ui.Text(c, v.path).FontSize(12).Selectable()
+		ui.Row(c).Wrap().Gap(8).Children(func() {
+			if ui.Button(c, "播放视频").Clicked() {
+				_ = mygo.Shell.OpenPath(v.path)
+			}
+			if ui.Button(c, "打开文件夹").Clicked() {
+				_ = mygo.Shell.OpenPath(filepath.Dir(v.path))
+			}
+			if ui.PrimaryButton(c.Key("to-gif"), "转为 GIF…").Disabled(v.exporting).Clicked() {
+				v.useGIFSource(v.path, float64(v.status.ElapsedMS)/1000)
+				v.tab = videoTabGIF
+			}
+		})
+	}
+}
+
+func (v *videoWindow) gifView(c *ui.Context) {
+	muted := c.Theme().TextMuted
+	ui.Column(c).Gap(5).Children(func() {
+		ui.Text(c, "视频").FontSize(12)
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			name := "尚未选择视频"
+			if v.gifSource != "" {
+				name = filepath.Base(v.gifSource)
+				if v.gifLength > 0 {
+					name += " · " + clock(int64(v.gifLength*1000))
+				}
+			}
+			ui.Text(c, name).MaxLines(2).Grow(1).MinWidth(0).Tooltip(v.gifSource)
+			label := "选择视频…"
+			if v.choosing {
+				label = "正在打开…"
+			}
+			if ui.Button(c.Key("gif-source"), label).Disabled(v.exporting || v.choosing).Clicked() {
+				v.chooseVideo()
+			}
+		})
+	})
+	if v.gifSource == "" {
+		ui.Text(c, "选择一段 MP4 视频，或先在「录制」页录一段。").FontSize(12).TextColor(muted)
+		return
+	}
+	ui.Row(c).Gap(8).Children(func() {
+		ui.Column(c).Grow(1).MinWidth(0).Gap(5).Children(func() {
+			ui.Text(c, "开始（秒）").FontSize(12)
+			ui.TextInput(c, &v.gifStart).Label("GIF 开始秒数").Placeholder("0").FillWidth().Disabled(v.exporting)
+		})
+		ui.Column(c).Grow(1).MinWidth(0).Gap(5).Children(func() {
+			ui.Text(c, "时长（秒，最多 60）").FontSize(12)
+			ui.TextInput(c, &v.gifDuration).Label("GIF 时长秒数").Placeholder("10").FillWidth().Disabled(v.exporting)
+		})
+	})
+	ui.Row(c).Gap(8).Children(func() {
+		ui.Column(c).Grow(1).MinWidth(0).Gap(5).Children(func() {
+			ui.Text(c, "帧率").FontSize(12)
+			ui.Select(c, &v.gifFPS, []string{"10", "15", "20", "30"}).Label("GIF 帧率").FillWidth().Disabled(v.exporting)
+		})
+		ui.Column(c).Grow(1).MinWidth(0).Gap(5).Children(func() {
+			ui.Text(c, "最大宽度").FontSize(12)
+			ui.Select(c, &v.gifWidth, []string{"640", "960", "1280", "1920"}).Label("GIF 宽度").FillWidth().Disabled(v.exporting)
+		})
+	})
+	where := "保存在视频旁边"
+	if v.app.cfg.AskRecordPath {
+		where = "导出时选择保存位置"
+	}
+	ui.Text(c, where+"。较低的帧率和宽度文件更小，更适合分享。").FontSize(12).TextColor(muted)
+	if v.exporting {
+		ui.Progress(c, v.gifProgress).FillWidth().Label("GIF 导出进度")
+		ui.Text(c, fmt.Sprintf("正在导出 %d%%", int(v.gifProgress*100))).FontSize(12).TextColor(muted)
+	}
+	if v.gifResult != "" && !v.exporting {
+		ui.Text(c, "GIF 已保存").FontWeight(600)
+		ui.Text(c, v.gifResult).FontSize(12).Selectable()
+		ui.Row(c).Gap(8).Children(func() {
+			if ui.Button(c.Key("open-gif"), "打开 GIF").Clicked() {
+				_ = mygo.Shell.OpenPath(v.gifResult)
+			}
+			if ui.Button(c.Key("open-gif-folder"), "打开文件夹").Clicked() {
+				_ = mygo.Shell.OpenPath(filepath.Dir(v.gifResult))
+			}
+		})
+	}
+}
+
+// useGIFSource loads a video into the GIF tab; length 0 means unknown.
+func (v *videoWindow) useGIFSource(path string, length float64) {
+	v.gifSource, v.gifLength, v.gifResult = path, length, ""
+	v.gifStart = "0"
+	duration := 10.0
+	if length > 0 {
+		duration = min(10, length)
+	}
+	v.gifDuration = strconv.FormatFloat(duration, 'f', -1, 64)
+	if length > 0 && duration != float64(int(duration)) {
+		v.gifDuration = strconv.FormatFloat(duration, 'f', 2, 64)
+	}
+}
+
+func (v *videoWindow) chooseVideo() {
+	if v.choosing || v.exporting {
+		return
+	}
+	v.choosing = true
+	dir := v.app.recordDir()
+	if v.gifSource != "" {
+		dir = filepath.Dir(v.gifSource)
+	}
+	v.app.worker(func() {
+		paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{Parent: v.win, Title: "选择要转为 GIF 的视频", DefaultPath: dir, Filters: []mygo.FileFilter{{Name: "MP4 视频", Extensions: []string{"mp4", "m4v", "mov"}}}})
+		var length float64
+		if err == nil && len(paths) > 0 {
+			length, _ = recording.Duration(paths[0])
+		}
+		v.later(func() {
+			v.choosing = false
+			if err != nil {
+				v.notice = "打开视频失败：" + err.Error()
+				return
+			}
+			if len(paths) > 0 {
+				v.useGIFSource(paths[0], length)
+				v.notice = ""
+				if length == 0 {
+					v.notice = "无法读取视频时长，请确认起点不超过视频长度。"
+				}
+			}
+		})
+	})
+}
+
 func (v *videoWindow) command(command string) {
 	if !v.running || v.ending || (v.busy && command != "finish") {
 		return
@@ -249,7 +505,8 @@ func (v *videoWindow) start() {
 	fps, _ := strconv.Atoi(v.fps)
 	edge := map[string]int{"720p": 1280, "1080p": 1920, "1440p": 2560, "4K": 3840}[v.quality]
 	v.busy = true
-	v.notice = "先选择视频保存位置，再框选录制区域。"
+	v.notice = "框选要录制的区域，松开即开始。"
+	ask, dir := v.app.cfg.AskRecordPath, v.app.recordDir()
 	v.app.captureBusy = true
 	v.app.refreshTray()
 	displays := mygo.Screen.Displays()
@@ -275,15 +532,22 @@ func (v *videoWindow) start() {
 				v.win.Invalidate()
 			}
 		})
-		path, err := mygo.Dialog.Save(mygo.SaveDialogOptions{Parent: v.win, Title: "保存录屏视频", DefaultPath: "录屏 " + time.Now().Format("2006-01-02 15-04-05") + ".mp4", Filters: []mygo.FileFilter{{Name: "MP4 视频", Extensions: []string{"mp4"}}}})
-		if err != nil || path == "" {
-			if err != nil {
-				v.report(err)
+		path, err := recording.NextPath(dir, "录屏", ".mp4", time.Now())
+		if ask {
+			if err == nil {
+				path, err = mygo.Dialog.Save(mygo.SaveDialogOptions{Parent: v.win, Title: "保存录屏视频", DefaultPath: path, Filters: []mygo.FileFilter{{Name: "MP4 视频", Extensions: []string{"mp4"}}}})
 			}
-			return
+			if err == nil && path == "" {
+				v.later(func() { v.notice = "" })
+				return
+			}
+			if err == nil && !strings.EqualFold(filepath.Ext(path), ".mp4") {
+				path += ".mp4"
+			}
 		}
-		if !strings.EqualFold(filepath.Ext(path), ".mp4") {
-			path += ".mp4"
+		if err != nil {
+			v.report(err)
+			return
 		}
 		staged, err := recording.Stage(path)
 		if err != nil {
@@ -379,7 +643,7 @@ func (v *videoWindow) start() {
 			v.path = ""
 			v.preview = nil
 			v.status = capture.RecordingStatus{}
-			v.notice = "录制已开始，控制窗口已隐藏。通过托盘暂停、继续或结束录屏。"
+			v.notice = "录制已开始，控制窗口已隐藏。托盘显示录制时长，可暂停、继续或结束。"
 			v.app.refreshTray()
 			if v.app.tray == nil {
 				v.win.Show()
@@ -420,9 +684,8 @@ func (v *videoWindow) start() {
 						}
 						v.status = status
 						v.path = path
-						v.notice = "视频已保存。可播放查看，或导出 GIF。"
-						seconds := float64(status.ElapsedMS) / 1000
-						v.gifDuration = strconv.FormatFloat(min(10, seconds), 'f', 2, 64)
+						v.notice = "视频已保存。可播放查看，或点击「转为 GIF…」。"
+						v.useGIFSource(path, float64(status.ElapsedMS)/1000)
 					})
 					return
 				}
@@ -434,58 +697,87 @@ func (v *videoWindow) start() {
 					v.report(fmt.Errorf("采集已结束，视频片段保留于 %s\n%w", staged, e))
 					return
 				}
-				v.later(func() { v.status = status })
+				v.later(func() {
+					v.status = status
+					// The tray shows elapsed seconds; rebuild its menu only when they change.
+					if second := status.ElapsedMS / 1000; second != v.traySecond {
+						v.traySecond = second
+						v.app.refreshTray()
+					}
+				})
 			}
 		}
 	})
 }
 func (v *videoWindow) exportGIF() {
-	start, e1 := strconv.ParseFloat(v.gifStart, 64)
-	duration, e2 := strconv.ParseFloat(v.gifDuration, 64)
+	if v.exporting || v.gifSource == "" {
+		return
+	}
+	start, e1 := strconv.ParseFloat(strings.TrimSpace(v.gifStart), 64)
+	duration, e2 := strconv.ParseFloat(strings.TrimSpace(v.gifDuration), 64)
 	fps, _ := strconv.Atoi(v.gifFPS)
 	width, _ := strconv.Atoi(v.gifWidth)
-	o := recording.GIFOptions{Start: start, Duration: duration, FPS: fps, Width: width}
 	if e1 != nil || e2 != nil {
 		v.notice = "请输入有效的开始秒数和时长。"
 		return
 	}
+	if v.gifLength > 0 {
+		if start >= v.gifLength {
+			v.notice = fmt.Sprintf("开始时间超出视频长度（%.1f 秒）。", v.gifLength)
+			return
+		}
+		duration = min(duration, v.gifLength-start)
+	}
+	o := recording.GIFOptions{Start: start, Duration: duration, FPS: fps, Width: width}
 	if err := o.Validate(); err != nil {
 		v.notice = err.Error()
 		return
 	}
-	if start >= float64(v.status.ElapsedMS)/1000 {
-		v.notice = "开始时间超出视频长度。"
-		return
-	}
 	ctx, cancel := context.WithCancel(v.ctx)
 	v.exportCancel = cancel
-	v.exporting = true
-	source := v.path
+	v.exporting, v.gifProgress, v.gifResult = true, 0, ""
+	v.notice = ""
+	v.app.refreshTray()
+	source, ask := v.gifSource, v.app.cfg.AskRecordPath
+	shown := -1
+	o.Progress = func(done float64) {
+		// Called on the export goroutine; forward whole percents only.
+		if percent := int(done * 100); percent != shown {
+			shown = percent
+			v.later(func() {
+				v.gifProgress = done
+				v.app.refreshTray()
+			})
+		}
+	}
 	v.app.worker(func() {
 		defer cancel()
-		path, err := mygo.Dialog.Save(mygo.SaveDialogOptions{Parent: v.win, Title: "导出 GIF", DefaultPath: strings.TrimSuffix(filepath.Base(source), filepath.Ext(source)) + ".gif", Filters: []mygo.FileFilter{{Name: "GIF 动图", Extensions: []string{"gif"}}}})
-		if err == nil && path != "" {
-			if !strings.EqualFold(filepath.Ext(path), ".gif") {
+		path := recording.SiblingPath(source, ".gif")
+		var err error
+		if ask {
+			path, err = mygo.Dialog.Save(mygo.SaveDialogOptions{Parent: v.win, Title: "导出 GIF", DefaultPath: path, Filters: []mygo.FileFilter{{Name: "GIF 动图", Extensions: []string{"gif"}}}})
+			if err == nil && path != "" && !strings.EqualFold(filepath.Ext(path), ".gif") {
 				path += ".gif"
 			}
-			v.later(func() { v.notice = "正在生成调色板并导出 GIF…" })
+		}
+		if err == nil && path != "" {
 			err = recording.ExportGIF(ctx, source, path, o)
 		}
 		v.later(func() {
 			v.exporting = false
 			v.exportCancel = nil
+			v.app.refreshTray()
 			if v.quitAfter {
 				mygo.App.Quit()
 				return
 			}
-			if err != nil {
-				if ctx.Err() != nil {
-					v.notice = "已取消导出，原视频保留。"
-				} else {
-					v.notice = err.Error()
-				}
-			} else if path != "" {
-				v.notice = "GIF 已保存：" + path
+			switch {
+			case err != nil && ctx.Err() != nil:
+				v.notice = "已取消导出，原视频保留。"
+			case err != nil:
+				v.notice = err.Error()
+			case path != "":
+				v.gifResult = path
 			}
 		})
 	})

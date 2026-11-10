@@ -517,6 +517,7 @@ func (s *application) trayItems() []*mygo.MenuItem {
 		Click: func(*mygo.MenuItem, *mygo.Window) { s.closeAllImages() },
 	}
 	return []*mygo.MenuItem{
+		{ID: "record-status", Label: "", Hidden: true, Disabled: true},
 		s.captureItem,
 		{ID: "scroll-capture", Label: "长截图…", Disabled: !capture.ScrollingSupported(), Click: func(*mygo.MenuItem, *mygo.Window) { s.showScroll() }},
 		{ID: "record-video", Label: "录屏…", Click: func(*mygo.MenuItem, *mygo.Window) { s.showVideo() }},
@@ -534,6 +535,7 @@ func (s *application) trayItems() []*mygo.MenuItem {
 				s.video.command("finish")
 			}
 		}},
+		{ID: "video-gif", Label: "视频转 GIF…", Click: func(*mygo.MenuItem, *mygo.Window) { s.showGIF() }},
 		{ID: "ocr-capture", Label: "框选取字…", Click: func(*mygo.MenuItem, *mygo.Window) { s.CaptureText() }},
 		mygo.Separator(),
 		{ID: "paste", Label: "粘贴图片", Click: func(*mygo.MenuItem, *mygo.Window) { s.Paste() }},
@@ -569,6 +571,20 @@ func (s *application) refreshTray() {
 		return
 	}
 	recording := s.video != nil && s.video.running
+	videoStatus := s.video.trayStatus()
+	status := s.menu.ItemByID("record-status")
+	status.SetVisible(videoStatus != "")
+	status.SetLabel(videoStatus)
+	videoActive := s.video != nil && (s.video.running || s.video.busy)
+	record := s.menu.ItemByID("record-video")
+	record.SetLabel("录屏…")
+	if s.recordShortcutDescription != "" {
+		record.SetLabel("录屏（" + s.recordShortcutDescription + "）")
+	}
+	if videoActive {
+		record.SetLabel("显示录屏窗口")
+	}
+	record.SetEnabled(videoActive || !s.captureBusy)
 	for _, id := range []string{"record-pause", "record-finish"} {
 		item := s.menu.ItemByID(id)
 		item.SetVisible(recording)
@@ -587,6 +603,9 @@ func (s *application) refreshTray() {
 	}
 	if s.captureBusy {
 		label = "正在截图…"
+	}
+	if videoActive {
+		label = "截图（录屏中不可用）"
 	}
 	if s.scroll != nil && s.scroll.running {
 		label = "完成长截图"
@@ -617,7 +636,9 @@ func (s *application) refreshTray() {
 	if !s.shortcutPending && s.shortcutError == "" {
 		tip = fmt.Sprintf("ScreenPin (%s)", s.shortcutDescription)
 	}
-	if s.captureBusy {
+	if videoStatus != "" {
+		tip = "ScreenPin — " + videoStatus
+	} else if s.captureBusy {
 		tip = "ScreenPin — 正在截图…"
 	} else if s.scroll != nil && s.scroll.running {
 		tip = "ScreenPin — 正在进行长截图"

@@ -97,7 +97,7 @@ func (v *settingsWindow) view(c *ui.Context) {
 	ui.Column(c).Fill().Padding(20).Gap(16).Children(func() {
 		ui.Text(c, "设置与快捷键").FontSize(20).FontWeight(600)
 		previousTab := v.tab
-		ui.Tabs(c, &v.tab, "快捷键", "常规", "权限与长截图")
+		ui.Tabs(c, &v.tab, "快捷键", "常规", "录屏", "权限与长截图")
 		if previousTab != v.tab {
 			v.stopRecording()
 		}
@@ -176,12 +176,35 @@ func (v *settingsWindow) view(c *ui.Context) {
 					ui.Text(c, "置顶图片继续保留。关闭会清空该图片及其标注。").FontSize(12).TextColor(c.Theme().TextMuted)
 				})
 				ui.Text(c, "ScreenPin "+Version+" · MyGo").FontSize(12).TextColor(c.Theme().TextMuted)
-			} else {
+			} else if v.tab == 2 {
 				ui.Text(c, "录屏").FontWeight(600)
-				ui.Text(c, "区域录制为无声 MP4，支持 30/60 fps；录完可导出 GIF。").FontSize(12).TextColor(c.Theme().TextMuted)
-				if ui.Button(c, "打开录屏").Disabled(s.captureBusy).Clicked() {
-					s.showVideo()
-				}
+				ui.Text(c, "区域录制为无声 MP4，支持 30/60 fps；录完可在录屏窗口或托盘「视频转 GIF…」导出。").FontSize(12).TextColor(c.Theme().TextMuted)
+				ui.Column(c).Gap(6).Children(func() {
+					ui.Text(c, "保存位置").FontSize(12)
+					ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+						dir := v.draft.RecordDir
+						if dir == "" {
+							dir = s.recordDirFor("") + "（默认）"
+						}
+						ui.Text(c, dir).FontSize(12).MaxLines(2).Grow(1).MinWidth(0).Tooltip(dir).Selectable()
+						if ui.Button(c.Key("record-dir"), "更改…").Disabled(v.saving).Clicked() {
+							v.chooseRecordDir()
+						}
+						if v.draft.RecordDir != "" && ui.Button(c.Key("record-dir-default"), "恢复默认").Disabled(v.saving).Clicked() {
+							v.draft.RecordDir = ""
+						}
+					})
+					ui.Checkbox(c.Key("ask-record-path"), &v.draft.AskRecordPath, "每次录屏和导出 GIF 时询问保存位置").Disabled(v.saving)
+				})
+				ui.Row(c).Gap(8).Children(func() {
+					if ui.Button(c, "打开录屏").Disabled(s.captureBusy).Clicked() {
+						s.showVideo()
+					}
+					if ui.Button(c, "视频转 GIF…").Clicked() {
+						s.showGIF()
+					}
+				})
+			} else {
 				ui.Text(c, "长截图").FontWeight(600)
 				ui.Checkbox(c.Key("automatic-scroll"), &v.draft.AutomaticScroll, "长截图自动向下滚动").Disabled(v.saving || !capture.ScrollingSupported())
 				ui.Text(c, "长截图需要持续共享所选窗口或显示器；截图快捷键授权与屏幕共享是两个独立权限。").TextColor(c.Theme().TextMuted)
@@ -391,6 +414,22 @@ func (v *settingsWindow) configureShortcuts() {
 			v.saving = false
 			if err != nil {
 				v.notice = err.Error()
+			}
+		})
+	})
+}
+
+// chooseRecordDir only changes the draft; "保存设置" applies it.
+func (v *settingsWindow) chooseRecordDir() {
+	current := v.app.recordDirFor(v.draft.RecordDir)
+	v.app.worker(func() {
+		paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{Parent: v.win, Title: "选择录屏保存位置", DefaultPath: current, Directory: true, CreateDirectories: true})
+		v.later(func() {
+			if err != nil {
+				v.notice = "选择文件夹失败：" + err.Error()
+			} else if len(paths) > 0 {
+				v.draft.RecordDir = paths[0]
+				v.notice = "点击“保存设置”后生效。"
 			}
 		})
 	})

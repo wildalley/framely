@@ -97,8 +97,20 @@ func TestPackagedMediaExports(t *testing.T) {
 		t.Fatalf("generate fixture: %v\n%s", err, out)
 	}
 	dest := filepath.Join(dir, "export.gif")
-	if err := ExportGIF(ctx, source, dest, GIFOptions{Start: .5, Duration: 1, FPS: 15, Width: 160}); err != nil {
+	var progress []float64
+	if length, err := Duration(source); err != nil || length < 1.9 || length > 2.1 {
+		t.Fatalf("fixture duration %v %v", length, err)
+	}
+	if err := ExportGIF(ctx, source, dest, GIFOptions{Start: .5, Duration: 1, FPS: 15, Width: 160, Progress: func(p float64) { progress = append(progress, p) }}); err != nil {
 		t.Fatal(err)
+	}
+	if len(progress) < 2 || progress[0] != 0 || progress[len(progress)-1] != 1 {
+		t.Fatalf("progress: %v", progress)
+	}
+	for i := 1; i < len(progress); i++ {
+		if progress[i] < progress[i-1] {
+			t.Fatalf("progress went backwards: %v", progress)
+		}
 	}
 	f, err := os.Open(dest)
 	if err != nil {

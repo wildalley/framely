@@ -29,6 +29,11 @@ type Config struct {
 	// compatible with existing installations; closed images are not retained.
 	HideAfterCopy   bool `json:"hideAfterCopy"`
 	AutomaticScroll bool `json:"automaticScroll"`
+	// RecordDir is where recordings and their GIFs are saved without asking;
+	// empty means the system Videos folder's ScreenPin subfolder.
+	RecordDir string `json:"recordDir,omitempty"`
+	// AskRecordPath shows a save dialog for every recording and GIF instead.
+	AskRecordPath bool `json:"askRecordPath,omitempty"`
 }
 
 // Default is the configuration of a first launch.
@@ -69,6 +74,10 @@ func Load() (c Config, repaired bool) {
 		c.CaptureShortcut = DefaultShortcut
 		repaired = true
 	}
+	if c.RecordDir != "" && !filepath.IsAbs(c.RecordDir) {
+		c.RecordDir = ""
+		repaired = true
+	}
 	if c.Validate() != nil {
 		c.ScrollShortcut = ""
 		c.RecordShortcut = ""
@@ -81,6 +90,9 @@ func (c Config) Validate() error {
 	capture, err := shortcutkey.Parse(c.CaptureShortcut, runtime.GOOS)
 	if err != nil {
 		return err
+	}
+	if c.RecordDir != "" && !filepath.IsAbs(c.RecordDir) {
+		return errors.New("录屏保存位置必须是完整路径")
 	}
 	seen := map[string]bool{capture.Canonical(): true}
 	for _, action := range []struct{ key, name string }{{c.ScrollShortcut, "长截图"}, {c.RecordShortcut, "录屏"}} {
