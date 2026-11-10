@@ -17,18 +17,18 @@
 
 ## 下载与安装
 
-当前源码版本为 **0.2.2**，可下载版本以 [Release 页面](https://github.com/wildalley/screenpin/releases) 为准。完整包包含主程序、采集组件和离线 OCR 运行时，升级时请退出旧实例并完整替换配套文件。
+当前源码版本为 **0.2.3**，可下载版本以 [Release 页面](https://github.com/wildalley/screenpin/releases) 为准。完整包包含主程序、采集组件和离线 OCR 运行时，升级时请退出旧实例并完整替换配套文件。
 
 | 平台 | 安装包或便携包 |
 | --- | --- |
-| Windows x64 | `screenpin-0.2.2-windows-amd64-setup.exe` 或 `screenpin-0.2.2-windows-amd64-portable.zip` |
-| macOS 15+ Apple Silicon | `screenpin-0.2.2-darwin-arm64.dmg` |
-| macOS 15+ Intel | `screenpin-0.2.2-darwin-amd64.dmg` |
-| Ubuntu/Debian x64 | `screenpin-0.2.2-linux-amd64.deb` |
-| Arch Linux x64 | `screenpin-native-0.2.2-1-x86_64.pkg.tar.zst` |
-| 其他 Linux x64 | `screenpin-0.2.2-linux-amd64-portable.tar.gz` |
+| Windows x64 | `screenpin-0.2.3-windows-amd64-setup.exe` 或 `screenpin-0.2.3-windows-amd64-portable.zip` |
+| macOS 15+ Apple Silicon | `screenpin-0.2.3-darwin-arm64.dmg` |
+| macOS 15+ Intel | `screenpin-0.2.3-darwin-amd64.dmg` |
+| Ubuntu/Debian x64 | `screenpin-0.2.3-linux-amd64.deb` |
+| Arch Linux x64 | `screenpin-native-0.2.3-1-x86_64.pkg.tar.zst` |
+| 其他 Linux x64 | `screenpin-0.2.3-linux-amd64-portable.tar.gz` |
 
-Ubuntu/Debian 使用 `sudo apt install ./screenpin-0.2.2-linux-amd64.deb`；Arch 使用 `sudo pacman -U ./screenpin-native-0.2.2-1-x86_64.pkg.tar.zst`。Linux 便携包解压后运行 `./screenpin`，或执行 `./install.sh` 安装到当前用户目录。Release 中的 `SHA256SUMS` 可用于校验下载文件。
+Ubuntu/Debian 使用 `sudo apt install ./screenpin-0.2.3-linux-amd64.deb`；Arch 使用 `sudo pacman -U ./screenpin-native-0.2.3-1-x86_64.pkg.tar.zst`。Linux 便携包解压后运行 `./screenpin`，或执行 `./install.sh` 安装到当前用户目录。Release 中的 `SHA256SUMS` 可用于校验下载文件。
 
 | 平台 | 使用条件 |
 | --- | --- |
@@ -36,7 +36,7 @@ Ubuntu/Debian 使用 `sudo apt install ./screenpin-0.2.2-linux-amd64.deb`；Arch
 | Windows | 长截图使用 Windows Graphics Capture，要求 Windows 10 1903+；浮动控制窗口排除采集需要 Windows 10 2004+。 |
 | macOS | 支持截图、标注、贴图和 OCR，暂不支持长截图。 |
 
-Windows/macOS 包暂未配置正式开发者签名与公证。更多平台限制见 [v0.2.2 发布说明](docs/releases/v0.2.2.md)。
+Windows/macOS 包暂未配置正式开发者签名与公证。更多平台限制见 [v0.2.3 发布说明](docs/releases/v0.2.3.md)。
 
 ## 快速使用
 

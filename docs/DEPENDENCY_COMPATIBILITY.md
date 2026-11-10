@@ -1,6 +1,6 @@
 # Dependency compatibility review — 2026-11-10
 
-Baseline: `v0.2.2` / `69e3eca`. Candidate branch: `audit/dependency-compat-20261110`.
+Baseline: `v0.2.2` / `69e3eca`. Validation branch: `audit/dependency-compat-20261110`. The validated changes are integrated into main for v0.2.3.
 This branch evaluates the 12 open Dependabot PRs against the native Go/MyGo architecture.
 
 ## Decisions
@@ -53,7 +53,7 @@ First run `42766426201` at `af9ff70`: preflight, full Go checks, Linux/Windows/m
 
 Run: https://github.com/wildalley/screenpin/actions/runs/42767660498
 
-The candidate is suitable for a grouped upgrade after the documented adaptations. Do not merge the original mpmath or all-platform ONNX Runtime PR unchanged. No changes have been merged into main or installed over the user's v0.2.2 installation during this audit.
+The validated combination is included in v0.2.3 with the documented adaptations. Do not merge the original mpmath or all-platform ONNX Runtime PR unchanged. The compatibility audit itself did not replace the user's installed v0.2.2.
 
 Local Arch packaging validation reached the expected bundle validation but could not invoke `dpkg-deb` because the host does not have that command. The native Ubuntu CI packaging job passed, including Debian packaging. No additional system package was installed for this audit.
 

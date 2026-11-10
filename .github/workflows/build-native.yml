@@ -131,8 +131,9 @@ jobs:
           retention-days: 14
           compression-level: 0
 
-  compatibility-artifacts:
-    if: startsWith(github.ref_name, 'audit/dependency-compat-')
+  verify-artifacts:
+    # Tagged releases validate the same assets in the publish job.
+    if: github.ref_type != 'tag'
     needs: [components, arch-native]
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -145,7 +146,7 @@ jobs:
           pattern: screenpin-native-*-${{ github.sha }}
           path: release-assets
           merge-multiple: true
-      - name: Verify upload v7 and download v4 with every release asset
+      - name: Verify every release asset after upload and download
         run: |
           version="$(python -c 'import json; print(json.load(open("mygo.json"))["version"])')"
           RELEASE_TAG="v$version" python scripts/verify-release-assets.py release-assets
