@@ -4,18 +4,14 @@ package ocr
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"image"
-	"image/png"
 	"math"
-	"os/exec"
 	"sort"
 	"strings"
 	"time"
 
-	"github.com/wildalley/screenpin/internal/components"
+	"github.com/wildalley/screenpin/internal/imagelimit"
 )
 
 type Point struct {
@@ -26,6 +22,7 @@ type Line struct {
 	Text       string   `json:"text"`
 	Confidence float64  `json:"confidence"`
 	Box        [4]Point `json:"box"`
+	Tile       int      `json:"tile,omitempty"`
 }
 type Result struct {
 	Lines []Line `json:"lines"`
@@ -47,18 +44,29 @@ func (r Result) Text() string {
 }
 
 func Recognize(ctx context.Context, img *image.RGBA) (Result, error) {
+	return RecognizePrepared(ctx, func(context.Context) (*image.RGBA, error) { return img, nil }, nil)
+}
+
+// Progress contains only newly recognized lines, never image pixels. Callbacks
+// run on the requesting goroutine; UI clients must dispatch to their UI thread.
+type Progress struct {
+	Stage     string `json:"stage,omitempty"`
+	Completed int    `json:"completed,omitempty"`
+	Total     int    `json:"total,omitempty"`
+	Lines     []Line `json:"lines,omitempty"`
+}
+
+// RecognizePrepared acquires the global slot before allocating a composite.
+// A cancelled queued request never calls prepare or starts another worker.
+func RecognizePrepared(ctx context.Context, prepare func(context.Context) (*image.RGBA, error), progress func(Progress)) (Result, error) {
 	if err := ctx.Err(); err != nil {
-		return Result{}, err
-	}
-	if img == nil || img.Bounds().Empty() || int64(img.Bounds().Dx())*int64(img.Bounds().Dy()) > 32_000_000 {
-		return Result{}, errors.New("识别图片尺寸超出范围")
-	}
-	worker, err := components.Find("screenpin-ocr")
-	if err != nil {
 		return Result{}, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
+	if progress != nil {
+		progress(Progress{Stage: "queued"})
+	}
 	select {
 	case workerSlots <- struct{}{}:
 		defer func() { <-workerSlots }()
@@ -68,51 +76,36 @@ func Recognize(ctx context.Context, img *image.RGBA) (Result, error) {
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
-	cmd := exec.CommandContext(ctx, worker)
-	configureProcess(cmd)
-	in, err := cmd.StdinPipe()
+	if progress != nil {
+		progress(Progress{Stage: "preparing"})
+	}
+	img, err := prepare(ctx)
+	prepare = nil
 	if err != nil {
 		return Result{}, err
 	}
-	var out limitedBuffer
-	out.limit = 16 << 20
-	var log limitedBuffer
-	log.limit = 16 << 10
-	cmd.Stdout, cmd.Stderr = &out, &log
-	if err = cmd.Start(); err != nil {
-		return Result{}, fmt.Errorf("启动 OCR 失败: %w", err)
+	if img == nil || imagelimit.Dimensions(img.Rect.Dx(), img.Rect.Dy()) != nil {
+		return Result{}, errors.New("识别图片尺寸超出范围")
 	}
-	writeErr := png.Encode(in, img)
-	closeErr := in.Close()
-	err = cmd.Wait()
-	if ctx.Err() != nil {
-		return Result{}, ctx.Err()
+	if err = ctx.Err(); err != nil {
+		return Result{}, err
 	}
-	if writeErr != nil {
-		return Result{}, fmt.Errorf("发送 OCR 图片失败: %w", writeErr)
-	}
-	if closeErr != nil {
-		return Result{}, closeErr
-	}
+	result, err := sharedWorker.recognize(ctx, img, progress)
 	if err != nil {
-		return Result{}, fmt.Errorf("OCR 组件失败: %w\n%s", err, log.String())
-	}
-	if out.overflow {
-		return Result{}, errors.New("OCR 结果超过支持范围")
-	}
-	var result Result
-	if err = json.Unmarshal(out.Bytes(), &result); err != nil {
-		return Result{}, fmt.Errorf("OCR 结果格式无效: %w", err)
-	}
-	if result.Error != "" {
-		return Result{}, errors.New(result.Error)
+		return Result{}, err
 	}
 	if err = validate(&result, img.Bounds().Dx(), img.Bounds().Dy()); err != nil {
 		return Result{}, err
 	}
-	result.Lines = mergeRows(result.Lines)
+	result.Lines = MergeLines(result.Lines)
 	return result, nil
 }
+
+// MergeLines preserves independent table cells. Only overlapping fragments
+// from different horizontal tiles may be joined; legacy (tile=0) output uses
+// the same overlap requirement. Input is copied because partial UI results
+// can still be in use by the caller.
+func MergeLines(lines []Line) []Line { return mergeRows(append([]Line(nil), lines...)) }
 
 func bounds(l Line) image.Rectangle {
 	minX, minY, maxX, maxY := l.Box[0].X, l.Box[0].Y, l.Box[0].X, l.Box[0].Y
@@ -129,10 +122,12 @@ func validate(r *Result, w, h int) error {
 	if len(r.Lines) > 20000 {
 		return errors.New("OCR 返回的文本行过多")
 	}
+	textBytes := 0
 	for i := range r.Lines {
 		l := &r.Lines[i]
 		l.Text = strings.TrimSpace(l.Text)
-		if len(l.Text) > 100000 || math.IsNaN(l.Confidence) || math.IsInf(l.Confidence, 0) || l.Confidence < 0 || l.Confidence > 1 {
+		textBytes += len(l.Text)
+		if textBytes > 2<<20 || len(l.Text) > 100000 || math.IsNaN(l.Confidence) || math.IsInf(l.Confidence, 0) || l.Confidence < 0 || l.Confidence > 1 {
 			return errors.New("OCR 返回了无效文本或置信度")
 		}
 		for _, p := range l.Box {
@@ -173,17 +168,19 @@ func mergeRows(lines []Line) []Line {
 		if len(rows) > 0 {
 			last := &rows[len(rows)-1]
 			a, b := bounds(*last), bounds(line)
-			if abs((a.Min.Y+a.Max.Y)-(b.Min.Y+b.Max.Y)) <= max(4, min(a.Dy(), b.Dy())/2) && b.Min.X >= a.Min.X {
+			crossTile := last.Tile != line.Tile || last.Tile == 0
+			if crossTile && abs((a.Min.Y+a.Max.Y)-(b.Min.Y+b.Max.Y)) <= max(4, min(a.Dy(), b.Dy())/2) && b.Min.X >= a.Min.X && b.Min.X < a.Max.X {
 				text := line.Text
-				if b.Min.X < a.Max.X {
-					text = trimOverlap(last.Text, text)
-				} else {
-					last.Text += " "
+				text = trimOverlap(last.Text, text)
+				if text == line.Text {
+					rows = append(rows, line)
+					continue
 				}
 				last.Text += text
 				last.Confidence = math.Min(last.Confidence, line.Confidence)
 				u := a.Union(b)
 				last.Box = [4]Point{{float64(u.Min.X), float64(u.Min.Y)}, {float64(u.Max.X), float64(u.Min.Y)}, {float64(u.Max.X), float64(u.Max.Y)}, {float64(u.Min.X), float64(u.Max.Y)}}
+				last.Tile = line.Tile
 				continue
 			}
 		}
@@ -194,10 +191,32 @@ func mergeRows(lines []Line) []Line {
 
 func trimOverlap(left, right string) string {
 	a, b := []rune(left), []rune(right)
-	for n := min(len(a), len(b)); n >= 2; n-- {
-		if string(a[len(a)-n:]) == string(b[:n]) {
-			return string(b[n:])
+	if len(b) < 2 {
+		return right
+	}
+	// Prefix matching is linear even for long repeated text. Comparing every
+	// suffix separately lets a malformed component stall result processing.
+	prefix := make([]int, len(b))
+	for i, n := 1, 0; i < len(b); i++ {
+		for n > 0 && b[i] != b[n] {
+			n = prefix[n-1]
 		}
+		if b[i] == b[n] {
+			n++
+		}
+		prefix[i] = n
+	}
+	n := 0
+	for _, r := range a {
+		for n > 0 && (n == len(b) || r != b[n]) {
+			n = prefix[n-1]
+		}
+		if r == b[n] {
+			n++
+		}
+	}
+	if n >= 2 {
+		return string(b[n:])
 	}
 	return right
 }

@@ -17,6 +17,8 @@ func TestLaunchArguments(t *testing.T) {
 		{"hidden", []string{"--hidden"}, Launch{Hidden: true}},
 		{"capture", []string{"--capture"}, Launch{Capture: true}},
 		{"scroll", []string{"--scroll"}, Launch{Scroll: true}},
+		{"ocr", []string{"--ocr"}, Launch{OCR: true}},
+		{"ocr-from-hidden", []string{"--hidden", "--ocr"}, Launch{Hidden: true, OCR: true}},
 		{"capture-from-hidden", []string{"--hidden", "--capture"}, Launch{Hidden: true, Capture: true}},
 		{"file", []string{"--hidden", "my image.png"}, Launch{Hidden: true, File: "my image.png"}},
 		{"version", []string{"--version"}, Launch{Version: true}},
@@ -28,7 +30,7 @@ func TestLaunchArguments(t *testing.T) {
 			}
 		})
 	}
-	for _, args := range [][]string{{"--unknown"}, {"a.png", "b.png"}, {"--capture", "a.png"}, {"--scroll", "a.png"}, {"--capture", "--scroll"}} {
+	for _, args := range [][]string{{"--unknown"}, {"a.png", "b.png"}, {"--capture", "a.png"}, {"--scroll", "a.png"}, {"--capture", "--scroll"}, {"--ocr", "--capture"}, {"--ocr", "--scroll"}, {"--ocr", "a.png"}} {
 		if _, err := ParseArgs(args); err == nil {
 			t.Errorf("accepted %v", args)
 		}

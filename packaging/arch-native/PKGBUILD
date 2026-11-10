@@ -72,6 +72,7 @@ package() {
     install -Dm644 "$_build_root/src-tauri/icons/$_icon" "$pkgdir/usr/share/icons/hicolor/${_size}x${_size}/apps/screenpin.png"
   done
   install -Dm644 "$_build_root/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 "$_build_root/internal/ocrtext/LICENSE.jieba" "$pkgdir/usr/share/licenses/$pkgname/LICENSE.jieba"
   install -Dm644 "$_build_root/README.md" "$pkgdir/usr/share/doc/$pkgname/README.md"
   install -Dm644 "$_build_root/docs/NATIVE.md" "$pkgdir/usr/share/doc/$pkgname/NATIVE.md"
 }

@@ -94,6 +94,7 @@ type App struct {
 	OnScroll    func()
 	OnSettings  func()
 	OnOCRResult func(ocr.Result)
+	OnOCRStart  func(context.CancelFunc) (func(ocr.Progress), func(ocr.Result, error))
 }
 
 func New(cfg config.Config) *App {
@@ -156,6 +157,7 @@ func (a *App) release() {
 	a.cancel()
 	a.ocrRunning, a.ocrCancel = false, nil
 	a.OnOCRResult = nil
+	a.OnOCRStart = nil
 	a.OnCapture, a.OnScroll, a.OnSettings = nil, nil, nil
 	a.image, a.pixels, a.mosaicPx = nil, nil, nil
 	a.bitmap, a.mosaic = nil, nil

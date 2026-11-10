@@ -12,7 +12,7 @@ import (
 )
 
 func (a *App) recognize(region bool) {
-	if a.closed || a.busy || a.ocrRunning || a.image == nil || a.OnOCRResult == nil {
+	if a.closed || a.busy || a.ocrRunning || a.image == nil || (a.OnOCRResult == nil && a.OnOCRStart == nil) {
 		return
 	}
 	a.finishEditing()
@@ -21,27 +21,45 @@ func (a *App) recognize(region bool) {
 	a.ocrRunning = true
 	px, mosaic, list := a.pixels, a.mosaicPx, annotationSnapshot(a.history.Present())
 	ratio := a.history.ImageCornerRatio()
-	a.toast("正在离线识别文字，关闭图片会取消。")
 	lease := a.lease.Retain()
 	go func() {
 		defer lease.Release()
 		defer cancel()
-		img, err := render.FlattenWithCorners(px, mosaic, list, ratio)
-		if err == nil && region {
-			var choiceErr error
-			r, choiceErr := SelectImageRegion(ctx, img, "框选识别区域")
-			err = choiceErr
+		r := px.Bounds()
+		var err error
+		if region {
+			r, err = SelectOCRRegion(ctx, px, mosaic, list, ratio)
 			if err == nil {
-				img = img.SubImage(r.Add(img.Rect.Min)).(*image.RGBA)
+				r = r.Add(px.Rect.Min)
 			}
+		}
+		var progress func(ocr.Progress)
+		var complete func(ocr.Result, error)
+		if err == nil {
+			a.later(func() {
+				if a.OnOCRStart != nil {
+					progress, complete = a.OnOCRStart(cancel)
+				}
+			})
 		}
 		var result ocr.Result
 		if err == nil {
-			result, err = ocr.Recognize(ctx, img)
+			result, err = ocr.RecognizePrepared(ctx, func(ctx context.Context) (*image.RGBA, error) {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+				return render.FlattenRegion(px, mosaic, list, ratio, r)
+			}, progress)
+		}
+		if complete != nil {
+			complete(result, err)
 		}
 		a.later(func() {
 			a.ocrRunning = false
 			a.ocrCancel = nil
+			if complete != nil {
+				return // The result window owns progress and error feedback.
+			}
 			if err != nil {
 				if !errors.Is(err, context.Canceled) && !errors.Is(err, capture.ErrCancelled) {
 					a.toast("识别失败：" + err.Error())
@@ -52,7 +70,9 @@ func (a *App) recognize(region bool) {
 				a.toast("没有识别到文字，请尝试框选或放大原图。 ")
 				return
 			}
-			a.OnOCRResult(result)
+			if complete == nil && a.OnOCRResult != nil {
+				a.OnOCRResult(result)
+			}
 		})
 	}()
 }

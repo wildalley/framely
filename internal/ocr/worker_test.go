@@ -2,6 +2,7 @@ package ocr
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"image"
@@ -19,11 +20,19 @@ import (
 
 func TestMain(m *testing.M) {
 	if os.Getenv("SCREENPIN_OCR_HELPER_TEST") == "blocked" {
-		_, _ = png.Decode(os.Stdin)
+		var header [16]byte
+		_, _ = io.ReadFull(os.Stdin, header[:])
+		_, _ = io.CopyN(io.Discard, os.Stdin, int64(binary.LittleEndian.Uint32(header[12:])))
 		time.Sleep(time.Minute)
 		os.Exit(1)
 	}
-	os.Exit(m.Run())
+	if os.Getenv("SCREENPIN_OCR_HELPER_TEST") == "server" {
+		serveTestWorker()
+		os.Exit(0)
+	}
+	code := m.Run()
+	Close()
+	os.Exit(code)
 }
 
 func TestWorkerCancellationStopsChild(t *testing.T) {
@@ -89,6 +98,15 @@ func TestPackagedOfflineWorker(t *testing.T) {
 	if os.Getenv("SCREENPIN_OCR_INTEGRATION") != "1" {
 		t.Skip("build components and set SCREENPIN_OCR_INTEGRATION=1")
 	}
+	Close()
+	t.Cleanup(Close)
+	if os.Getenv("SCREENPIN_COMPONENTS_DIR") == "" {
+		root, err := filepath.Abs(filepath.Join("..", "..", "resources", runtime.GOOS+"-"+runtime.GOARCH, "workers"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("SCREENPIN_COMPONENTS_DIR", root)
+	}
 	f, err := os.Open("testdata/bilingual.png")
 	if err != nil {
 		t.Fatal(err)
@@ -113,11 +131,17 @@ func TestPackagedOfflineWorker(t *testing.T) {
 	for _, test := range []struct {
 		name string
 		img  *image.RGBA
-	}{{"bilingual", img}, {"tiled-long-image", tall}} {
+	}{{"bilingual", img}, {"bilingual-warm", img}, {"tiled-long-image", tall}} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 			defer cancel()
-			r, err := Recognize(ctx, test.img)
+			start := time.Now()
+			batches := 0
+			r, err := RecognizePrepared(ctx, func(context.Context) (*image.RGBA, error) { return test.img, nil }, func(p Progress) {
+				if p.Completed > 0 {
+					batches++
+				}
+			})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -126,7 +150,10 @@ func TestPackagedOfflineWorker(t *testing.T) {
 					t.Fatalf("missing %q from %s", text, r.Text())
 				}
 			}
-			t.Logf("recognized %d rows", len(r.Lines))
+			if batches == 0 {
+				t.Fatal("no streamed progress")
+			}
+			t.Logf("recognized %d rows in %v, %d progress batches", len(r.Lines), time.Since(start), batches)
 			if test.name == "bilingual" {
 				fmt.Println(r.Text())
 			}

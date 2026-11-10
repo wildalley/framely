@@ -65,7 +65,17 @@ func Flatten(src, mosaic *image.RGBA, list []doc.Annotation) (*image.RGBA, error
 // FlattenWithCorners clips both pixels and annotations, preserving alpha for
 // PNG/WebP. JPEG encoding composites those transparent corners on white.
 func FlattenWithCorners(src, mosaic *image.RGBA, list []doc.Annotation, ratio float64) (*image.RGBA, error) {
+	return FlattenRegion(src, mosaic, list, ratio, src.Bounds())
+}
+
+// FlattenRegion renders only the requested pixels while retaining the full
+// scene's annotation and corner coordinates, including privacy masks.
+func FlattenRegion(src, mosaic *image.RGBA, list []doc.Annotation, ratio float64, region image.Rectangle) (*image.RGBA, error) {
 	b := src.Bounds()
+	region = region.Intersect(b)
+	if region.Empty() {
+		return nil, errors.New("识别选区为空")
+	}
 	for i := range list {
 		if list[i].Type == doc.ToolMosaic && mosaic == nil {
 			return nil, ErrMosaicUnavailable
@@ -73,7 +83,12 @@ func FlattenWithCorners(src, mosaic *image.RGBA, list []doc.Annotation, ratio fl
 	}
 	ratio = doc.ClampCornerRatio(ratio)
 	if len(list) == 0 && ratio == 0 {
-		return src, nil
+		if region == b {
+			return src, nil
+		}
+		out := image.NewRGBA(image.Rect(0, 0, region.Dx(), region.Dy()))
+		draw.Draw(out, out.Bounds(), src, region.Min, draw.Src)
+		return out, nil
 	}
 	s := &Scene{Image: ui.NewBitmap(src), Width: b.Dx(), Height: b.Dy(), Annotations: list, CornerRatio: ratio}
 	if mosaic != nil {
@@ -81,11 +96,11 @@ func FlattenWithCorners(src, mosaic *image.RGBA, list []doc.Annotation, ratio fl
 	}
 	out := ui.Render(func(c *ui.Context) {
 		c.Root().Background(ui.Transparent)
-		ui.Box(c).Size(float32(b.Dx()), float32(b.Dy())).Draw(func(p *ui.Painter, r ui.Rect) {
-			p.Transform(ui.Translation(r.X, r.Y), 0, 0, func() { Draw(p, s) })
+		ui.Box(c).Size(float32(region.Dx()), float32(region.Dy())).Draw(func(p *ui.Painter, r ui.Rect) {
+			p.Transform(ui.Translation(r.X-float32(region.Min.X-b.Min.X), r.Y-float32(region.Min.Y-b.Min.Y)), 0, 0, func() { Draw(p, s) })
 		})
-	}, b.Dx(), b.Dy(), 1)
-	if out == nil || out.Bounds().Dx() != b.Dx() || out.Bounds().Dy() != b.Dy() {
+	}, region.Dx(), region.Dy(), 1)
+	if out == nil || out.Bounds().Dx() != region.Dx() || out.Bounds().Dy() != region.Dy() {
 		return nil, errors.New("无法渲染导出图片")
 	}
 	return out, nil

@@ -33,6 +33,7 @@ type imagePicker struct {
 	cursor         ui.Cursor
 	quick          bool
 	minimum        image.Point
+	scene          *render.Scene
 }
 
 // SelectImageRegion chooses pixel coordinates from an immutable frame. The
@@ -41,24 +42,48 @@ func SelectImageRegion(ctx context.Context, img *image.RGBA, title string) (imag
 	return selectImageRegion(ctx, img, title, false, image.Pt(1, 1))
 }
 
+// SelectOCRRegion displays existing immutable pixels and annotations without
+// allocating a full export image before the user has chosen a region.
+func SelectOCRRegion(ctx context.Context, img, mosaic *image.RGBA, list []doc.Annotation, ratio float64) (image.Rectangle, error) {
+	if img == nil || img.Bounds().Empty() {
+		return image.Rectangle{}, errors.New("无法选择空图片")
+	}
+	for _, a := range list {
+		if a.Type == doc.ToolMosaic && mosaic == nil {
+			return image.Rectangle{}, render.ErrMosaicUnavailable
+		}
+	}
+	return selectRegion(ctx, img, "框选识别区域", false, image.Pt(1, 1), &render.Scene{Width: img.Rect.Dx(), Height: img.Rect.Dy(), Annotations: list, CornerRatio: ratio}, mosaic)
+}
+
 // SelectScrollRegion confirms on release; OCR keeps its adjustable picker.
 func SelectScrollRegion(ctx context.Context, img *image.RGBA) (image.Rectangle, error) {
 	return selectImageRegion(ctx, img, "框选滚动内容，松开开始长截图", true, image.Pt(80, 160))
 }
 
 func selectImageRegion(ctx context.Context, img *image.RGBA, title string, quick bool, minimum image.Point) (image.Rectangle, error) {
+	return selectRegion(ctx, img, title, quick, minimum, nil, nil)
+}
+
+func selectRegion(ctx context.Context, img *image.RGBA, title string, quick bool, minimum image.Point, scene *render.Scene, mosaic *image.RGBA) (image.Rectangle, error) {
 	if err := ctx.Err(); err != nil {
 		return image.Rectangle{}, err
 	}
 	if img == nil || img.Bounds().Empty() {
 		return image.Rectangle{}, errors.New("无法选择空图片")
 	}
-	p := &imagePicker{bounds: image.Rect(0, 0, img.Rect.Dx(), img.Rect.Dy()), result: make(chan regionChoice, 1), title: title, quick: quick, minimum: minimum}
+	p := &imagePicker{bounds: image.Rect(0, 0, img.Rect.Dx(), img.Rect.Dy()), result: make(chan regionChoice, 1), title: title, quick: quick, minimum: minimum, scene: scene}
 	mygo.RunOnMain(func() {
 		if ctx.Err() != nil {
 			return
 		}
 		p.bitmap = ui.NewBitmap(render.Preview(img, 4096))
+		if p.scene != nil {
+			p.scene.Image = p.bitmap
+			if mosaic != nil {
+				p.scene.Mosaic = ui.NewBitmap(mosaic).Pixelated()
+			}
+		}
 		display := mygo.Screen.DisplayNearestPoint(mygo.Screen.CursorScreenPoint())
 		w, h := min(1100, max(480, img.Rect.Dx())), min(800, max(320, img.Rect.Dy()+100))
 		w, h = min(w, max(320, display.WorkArea.Width-40)), min(h, max(240, display.WorkArea.Height-60))
@@ -88,6 +113,7 @@ func (p *imagePicker) finish(rect image.Rectangle) {
 	}
 	p.done = true
 	p.bitmap = nil
+	p.scene = nil
 	if p.win != nil && !p.win.IsDestroyed() {
 		p.win.Destroy()
 	}
@@ -263,7 +289,13 @@ func (p *imagePicker) view(c *ui.Context) {
 			at := p.imageRect
 			at.X += r.X
 			at.Y += r.Y
-			painter.Image(p.bitmap, at, ui.FillBox)
+			if p.scene == nil {
+				painter.Image(p.bitmap, at, ui.FillBox)
+			} else {
+				painter.Transform(ui.Translation(at.X, at.Y), 0, 0, func() {
+					painter.Transform(ui.Scaling(float32(scale), float32(scale)), 0, 0, func() { render.Draw(painter, p.scene) })
+				})
+			}
 			if sel := p.selection(); !sel.Empty() {
 				painter.Stroke(ui.Rect{X: at.X + float32(float64(sel.Min.X)*scale), Y: at.Y + float32(float64(sel.Min.Y)*scale), W: float32(float64(sel.Dx()) * scale), H: float32(float64(sel.Dy()) * scale)}, c.Theme().Accent, 0, 2)
 				for _, v := range p.handles() {

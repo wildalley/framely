@@ -20,6 +20,7 @@ import (
 	"github.com/wildalley/screenpin/internal/config"
 	"github.com/wildalley/screenpin/internal/editor"
 	"github.com/wildalley/screenpin/internal/niribind"
+	"github.com/wildalley/screenpin/internal/ocr"
 	"github.com/wildalley/screenpin/internal/portal"
 	"github.com/wildalley/screenpin/internal/shortcuts"
 )
@@ -107,6 +108,7 @@ func Run(launch Launch) error {
 		s.shortcuts.Close()
 	}
 	s.workers.Wait()
+	ocr.Close()
 	capture.Close()
 	return err
 }
@@ -183,6 +185,8 @@ func (s *application) launch(launch Launch) {
 		return
 	}
 	switch {
+	case launch.OCR:
+		s.CaptureText()
 	case launch.Scroll:
 		s.showScroll()
 	case launch.Capture:
@@ -224,6 +228,7 @@ func (s *application) showPicture(picture editor.Picture, target *mygo.Rectangle
 	}
 	image.OnSettings = func() { s.showSettings("") }
 	image.OnOCRResult = s.showOCR
+	image.OnOCRStart = s.startOCR
 	image.OnClosed = func() {
 		if i := slices.Index(s.images, image); i >= 0 {
 			s.images = slices.Delete(s.images, i, i+1)
@@ -240,6 +245,10 @@ func (s *application) showPicture(picture editor.Picture, target *mygo.Rectangle
 // beginImage loads in the background and creates a new window only on success.
 // All existing image windows keep their own pixels, annotations and history.
 func (s *application) beginImage(load func(context.Context) (editor.Picture, *mygo.Rectangle, string, error), done func()) {
+	s.beginPicture(load, done, s.showPicture)
+}
+
+func (s *application) beginPicture(load func(context.Context) (editor.Picture, *mygo.Rectangle, string, error), done func(), present func(editor.Picture, *mygo.Rectangle, string)) {
 	if s.ctx.Err() != nil {
 		return
 	}
@@ -253,7 +262,7 @@ func (s *application) beginImage(load func(context.Context) (editor.Picture, *my
 				done()
 			}
 			if err == nil {
-				s.showPicture(picture, target, token)
+				present(picture, target, token)
 			} else if !cancelled(err) {
 				s.notify(err.Error())
 			}
@@ -333,6 +342,12 @@ func (s *application) Paste() {
 func (s *application) Capture() { s.CaptureWithActivation("") }
 
 func (s *application) CaptureWithActivation(token string) {
+	s.captureWithActivation(token, false)
+}
+
+func (s *application) CaptureText() { s.captureWithActivation("", true) }
+
+func (s *application) captureWithActivation(token string, textOnly bool) {
 	if s.ctx.Err() != nil {
 		return
 	}
@@ -340,7 +355,11 @@ func (s *application) CaptureWithActivation(token string) {
 		return
 	}
 	if s.scroll != nil && s.scroll.running {
-		s.scroll.finish()
+		if textOnly {
+			s.scroll.show()
+		} else {
+			s.scroll.finish()
+		}
 		return
 	}
 	if s.captureBusy {
@@ -363,7 +382,11 @@ func (s *application) CaptureWithActivation(token string) {
 			win.Hide()
 		}
 	}
-	s.beginImage(func(ctx context.Context) (editor.Picture, *mygo.Rectangle, string, error) {
+	present := s.showPicture
+	if textOnly {
+		present = func(p editor.Picture, _ *mygo.Rectangle, _ string) { s.recognizePicture(p) }
+	}
+	s.beginPicture(func(ctx context.Context) (editor.Picture, *mygo.Rectangle, string, error) {
 		if len(hidden) > 0 {
 			timer := time.NewTimer(180 * time.Millisecond)
 			defer timer.Stop()
@@ -409,7 +432,7 @@ func (s *application) CaptureWithActivation(token string) {
 		}
 		s.captureBusy = false
 		s.refreshTray()
-	})
+	}, present)
 }
 
 // First-use capture uses the system selector without opening a fake editor
@@ -447,6 +470,7 @@ func (s *application) trayItems() []*mygo.MenuItem {
 	return []*mygo.MenuItem{
 		s.captureItem,
 		{ID: "scroll-capture", Label: "长截图…", Disabled: !capture.ScrollingSupported(), Click: func(*mygo.MenuItem, *mygo.Window) { s.showScroll() }},
+		{ID: "ocr-capture", Label: "框选取字…", Click: func(*mygo.MenuItem, *mygo.Window) { s.CaptureText() }},
 		mygo.Separator(),
 		{ID: "paste", Label: "粘贴图片", Click: func(*mygo.MenuItem, *mygo.Window) { s.Paste() }},
 		{ID: "open-image", Label: "打开图片…", Click: func(*mygo.MenuItem, *mygo.Window) { s.OpenImage() }},

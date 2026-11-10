@@ -49,7 +49,7 @@ def main():
     actual = subprocess.check_output([str(binary), "--version"], text=True).strip()
     assert actual == f"ScreenPin {version} (mygo)", actual
     manifest = json.loads((resources / "screenpin-ocr/manifest.json").read_text())
-    assert manifest["offline"] and manifest["protocol"] == 1
+    assert manifest["offline"] and manifest["protocol"] == 2
     if goos != "darwin":
         capture = resources / ("screenpin-capture.exe" if goos == "windows" else "screenpin-capture")
         assert capture.is_file(), "Missing native capture worker"

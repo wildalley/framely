@@ -20,13 +20,14 @@ subprocess.run([
     "--specpath", str(root / "build"), str(root / "workers" / "ocr" / "worker.py"),
 ], check=True)
 (destination / "screenpin-ocr" / "manifest.json").write_text(json.dumps({
-    "protocol": 1, "rapidocr": importlib.metadata.version("rapidocr"),
+    "protocol": 2, "rapidocr": importlib.metadata.version("rapidocr"),
     "onnxruntime": importlib.metadata.version("onnxruntime"), "models": "PP-OCRv6-small",
     "offline": True,
     "worker_sha256": hashlib.sha256((root / "workers/ocr/worker.py").read_bytes()).hexdigest(),
 }, indent=2), encoding="utf-8")
 notices = destination / "screenpin-ocr" / "licenses"
 notices.mkdir(exist_ok=True)
+(notices / "LICENSE.jieba").write_bytes((root / "internal/ocrtext/LICENSE.jieba").read_bytes())
 for distribution in importlib.metadata.distributions():
     name = distribution.metadata["Name"]
     for item in distribution.files or []:
