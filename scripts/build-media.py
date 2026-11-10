@@ -46,8 +46,9 @@ def tool(name, env):
 
 
 # FFmpeg's pkg-config files omit the Media Foundation GUID libraries that the
-# static h264_mf encoder needs (IID_ICodecAPI, IID_IMFTransform, ...).
-WINDOWS_MEDIA_LIBS = ["mfplat.lib", "mfuuid.lib", "strmiids.lib", "ole32.lib"]
+# static h264_mf encoder needs (IID_ICodecAPI, IID_IMFTransform, ...) and
+# bcrypt for av_random_bytes.
+WINDOWS_MEDIA_LIBS = ["mfplat.lib", "mfuuid.lib", "strmiids.lib", "ole32.lib", "bcrypt.lib"]
 
 
 def build_env():
