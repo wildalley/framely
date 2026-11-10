@@ -107,7 +107,7 @@ def main():
         env["PKG_CONFIG_PATH"] = pkg_config_path()
         options += ["--enable-ffnvcodec", "--enable-nvenc", "--enable-encoder=h264_nvenc"]
     configure = WORK / "configure-options.json"
-    if not (PREFIX / "bin" / ("ffmpeg.exe" if SYSTEM == "Windows" else "ffmpeg")).exists() or not configure.exists() or json.loads(configure.read_text()) != options:
+    if not (PREFIX / "bin" / ("ffmpeg.exe" if SYSTEM == "Windows" else "ffmpeg")).exists() or not configure.exists() or json.loads(configure.read_text(encoding="utf-8")) != options:
         run([tool("bash", env), "configure", *options], cwd=ffmpeg, env=env)
         run([tool("make", env), f"-j{min(os.cpu_count() or 2, 8)}"], cwd=ffmpeg, env=env)
         run([tool("make", env), "install"], cwd=ffmpeg, env=env)
