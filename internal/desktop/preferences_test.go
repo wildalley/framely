@@ -103,3 +103,25 @@ func TestSettingsTabsShareDraftAndKeepSaveVisibleAtMinimumSize(t *testing.T) {
 		}
 	}
 }
+
+func TestRecordingSettingsTabEditsSaveLocation(t *testing.T) {
+	v := &settingsWindow{app: &application{ctx: context.Background()}, ctx: context.Background(), draft: config.Default()}
+	v.draft.RecordDir = "/data/录屏"
+	tt := ui.NewTester(v.view, 420, 380)
+	if err := tt.Click("录屏"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := tt.Find("/data/录屏"); !ok {
+		t.Fatal("configured location hidden")
+	}
+	if err := tt.Click("每次录屏和导出 GIF 时询问保存位置"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("恢复默认"); err != nil {
+		t.Fatal(err)
+	}
+	if !v.draft.AskRecordPath || v.draft.RecordDir != "" {
+		t.Fatalf("draft: %+v", v.draft)
+	}
+	saveShortcutPreview(t, tt, "settings-recording")
+}

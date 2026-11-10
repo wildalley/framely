@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"context"
+	"github.com/wildalley/screenpin/internal/brand"
 	"runtime"
 
 	"github.com/egoist/mygo"
@@ -51,7 +52,7 @@ func (s *application) showSettings(notice string) {
 	v := &settingsWindow{app: s, ctx: ctx, cancel: cancel, draft: s.cfg, autostart: mygo.App.OpenAtLogin(),
 		access: capture.AccessUnsupported, notice: notice}
 	v.win = mygo.NewWindow(mygo.WindowOptions{
-		Title: "ScreenPin 设置与快捷键", Width: 660, Height: 640, MinWidth: 420, MinHeight: 380,
+		Title: brand.Title("设置"), Width: 660, Height: 640, MinWidth: 420, MinHeight: 380,
 		UseContentSize: true, DisableMaximize: true, DisableFullScreen: true, Content: ui.View(v.view),
 	})
 	s.settings = v
@@ -95,9 +96,9 @@ func (v *settingsWindow) view(c *ui.Context) {
 	}
 	s := v.app
 	ui.Column(c).Fill().Padding(20).Gap(16).Children(func() {
-		ui.Text(c, "设置与快捷键").FontSize(20).FontWeight(600)
+		panelHeader(c, "设置", brand.Name+" "+brand.ChineseName+" "+Version, nil)
 		previousTab := v.tab
-		ui.Tabs(c, &v.tab, "快捷键", "常规", "权限与长截图")
+		ui.Tabs(c, &v.tab, "快捷键", "常规", "录屏", "权限与长截图")
 		if previousTab != v.tab {
 			v.stopRecording()
 		}
@@ -175,13 +176,36 @@ func (v *settingsWindow) view(c *ui.Context) {
 					})
 					ui.Text(c, "置顶图片继续保留。关闭会清空该图片及其标注。").FontSize(12).TextColor(c.Theme().TextMuted)
 				})
-				ui.Text(c, "ScreenPin "+Version+" · MyGo").FontSize(12).TextColor(c.Theme().TextMuted)
-			} else {
+				ui.Text(c, brand.Name+" "+brand.ChineseName+" "+Version+" · MyGo").FontSize(12).TextColor(c.Theme().TextMuted)
+			} else if v.tab == 2 {
 				ui.Text(c, "录屏").FontWeight(600)
-				ui.Text(c, "区域录制为无声 MP4，支持 30/60 fps；录完可导出 GIF。").FontSize(12).TextColor(c.Theme().TextMuted)
-				if ui.Button(c, "打开录屏").Disabled(s.captureBusy).Clicked() {
-					s.showVideo()
-				}
+				ui.Text(c, "区域录制为无声 MP4，支持 30/60 fps；录完可在录屏窗口或托盘「视频转 GIF…」导出。").FontSize(12).TextColor(c.Theme().TextMuted)
+				ui.Column(c).Gap(6).Children(func() {
+					ui.Text(c, "保存位置").FontSize(12)
+					ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+						dir := v.draft.RecordDir
+						if dir == "" {
+							dir = s.recordDirFor("") + "（默认）"
+						}
+						ui.Text(c, dir).FontSize(12).MaxLines(2).Grow(1).MinWidth(0).Tooltip(dir).Selectable()
+						if ui.Button(c.Key("record-dir"), "更改…").Disabled(v.saving).Clicked() {
+							v.chooseRecordDir()
+						}
+						if v.draft.RecordDir != "" && ui.Button(c.Key("record-dir-default"), "恢复默认").Disabled(v.saving).Clicked() {
+							v.draft.RecordDir = ""
+						}
+					})
+					ui.Checkbox(c.Key("ask-record-path"), &v.draft.AskRecordPath, "每次录屏和导出 GIF 时询问保存位置").Disabled(v.saving)
+				})
+				ui.Row(c).Gap(8).Children(func() {
+					if ui.Button(c, "打开录屏").Disabled(s.captureBusy).Clicked() {
+						s.showVideo()
+					}
+					if ui.Button(c, "视频转 GIF…").Clicked() {
+						s.showGIF()
+					}
+				})
+			} else {
 				ui.Text(c, "长截图").FontWeight(600)
 				ui.Checkbox(c.Key("automatic-scroll"), &v.draft.AutomaticScroll, "长截图自动向下滚动").Disabled(v.saving || !capture.ScrollingSupported())
 				ui.Text(c, "长截图需要持续共享所选窗口或显示器；截图快捷键授权与屏幕共享是两个独立权限。").TextColor(c.Theme().TextMuted)
@@ -230,7 +254,7 @@ func (v *settingsWindow) view(c *ui.Context) {
 							case capture.AccessUnknown:
 								hint = "尚未授权，截图使用系统选区。"
 							case capture.AccessDenied:
-								hint = "已拒绝，可在系统的应用设置中允许 ScreenPin 截图。"
+								hint = "已拒绝，可在系统的应用设置中允许 " + brand.Name + " 截图。"
 							}
 							ui.Text(c, hint).FontSize(12).TextColor(c.Theme().TextMuted)
 							if v.access == capture.AccessUnknown {
@@ -342,7 +366,7 @@ func (v *settingsWindow) setupNiri() {
 		result, err := mygo.Dialog.Message(mygo.MessageOptions{
 			Parent: v.win, Type: mygo.MessageQuestion, Title: "配置 niri 截图快捷键",
 			Message: "将 " + config.DisplayShortcut(plan.Key) + " 设置为截图快捷键，长截图设置为 " + config.DisplayShortcut(plan.ScrollKey) + "，录屏设置为 " + config.DisplayShortcut(plan.RecordKey) + "（空白为不绑定）？",
-			Detail:  "这会在 niri 配置中添加一条 include，并创建 ScreenPin 管理的按键文件。若该组合已有操作，将由 ScreenPin 截图替换；更换按键会恢复原操作。原配置会先备份，取消不做修改。\n\n配置：" + plan.ConfigPath + "\n按键文件：" + plan.ShortcutPath + "\n执行：" + plan.Command + " --capture",
+			Detail:  "这会在 niri 配置中添加一条 include，并创建 " + brand.Name + " 管理的按键文件。若该组合已有操作，将由 " + brand.Name + " 截图替换；更换按键会恢复原操作。原配置会先备份，取消不做修改。\n\n配置：" + plan.ConfigPath + "\n按键文件：" + plan.ShortcutPath + "\n执行：" + plan.Command + " --capture",
 			Buttons: []string{"取消", "配置快捷键"}, DefaultButton: 0, CancelButton: 0,
 		})
 		v.later(func() {
@@ -391,6 +415,22 @@ func (v *settingsWindow) configureShortcuts() {
 			v.saving = false
 			if err != nil {
 				v.notice = err.Error()
+			}
+		})
+	})
+}
+
+// chooseRecordDir only changes the draft; "保存设置" applies it.
+func (v *settingsWindow) chooseRecordDir() {
+	current := v.app.recordDirFor(v.draft.RecordDir)
+	v.app.worker(func() {
+		paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{Parent: v.win, Title: "选择录屏保存位置", DefaultPath: current, Directory: true, CreateDirectories: true})
+		v.later(func() {
+			if err != nil {
+				v.notice = "选择文件夹失败：" + err.Error()
+			} else if len(paths) > 0 {
+				v.draft.RecordDir = paths[0]
+				v.notice = "点击“保存设置”后生效。"
 			}
 		})
 	})

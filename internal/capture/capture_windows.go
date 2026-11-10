@@ -5,6 +5,7 @@ package capture
 import (
 	"context"
 	"errors"
+	"github.com/wildalley/screenpin/internal/brand"
 	"image"
 	"runtime"
 	"syscall"
@@ -47,7 +48,7 @@ func SystemContext(ctx context.Context, _ func() []byte) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return nil, errors.New("Windows 截图使用 ScreenPin 自有选区")
+	return nil, errors.New("Windows 截图使用 " + brand.Name + " 自有选区")
 }
 
 // DesktopPixels captures the virtual desktop into memory. Bounds retain

@@ -24,6 +24,10 @@ import (
 
 func TestMain(m *testing.M) {
 	if os.Getenv("SCREENPIN_CAPTURE_TEST_WORKER") == "1" {
+		if len(os.Args) == 2 && os.Args[1] == "--protocol-version" {
+			fmt.Println("2")
+			os.Exit(0)
+		}
 		fd := os.NewFile(3, "inherited-pipewire")
 		var token [2]byte
 		if _, err := io.ReadFull(fd, token[:]); err != nil || string(token[:]) != "OK" {

@@ -88,16 +88,16 @@ def main():
     parser.add_argument("--verify-only", action="store_true")
     args = parser.parse_args()
     os.chdir(ROOT)
-    config = json.loads((ROOT / "mygo.json").read_text())
+    config = json.loads((ROOT / "mygo.json").read_text(encoding="utf-8"))
     version = config["version"]
     goos = {"Linux": "linux", "Windows": "windows", "Darwin": "darwin"}[platform.system()]
     arch = {"AMD64": "amd64", "x86_64": "amd64", "arm64": "arm64", "aarch64": "arm64"}[platform.machine()]
     bundle = ROOT / "build" / "native" / f"{goos}-{arch}"
-    app = bundle / "ScreenPin.app"
-    binary = app / "Contents/MacOS/ScreenPin" if goos == "darwin" else bundle / ("ScreenPin.exe" if goos == "windows" else "screenpin")
+    app = bundle / "Framely.app"
+    binary = app / "Contents/MacOS/Framely" if goos == "darwin" else bundle / ("Framely.exe" if goos == "windows" else "screenpin")
     resources = app / "Contents/Resources/workers" if goos == "darwin" else bundle / "workers"
     actual = subprocess.check_output([str(binary), "--version"], text=True).strip()
-    if actual != f"ScreenPin {version} (mygo)":
+    if actual != f"Framely {version} (mygo)":
         raise ValueError(f"Unexpected application version: {actual}")
     verify_ocr_resources(resources)
     if goos != "darwin":
@@ -130,7 +130,7 @@ def main():
         return
     out = ROOT / "build/release"
     out.mkdir(parents=True, exist_ok=True)
-    prefix = f"screenpin-{version}-{goos}-{arch}"
+    prefix = f"framely-{version}-{goos}-{arch}"
     if goos == "darwin":
         # Build from the repaired and verified bundle, never the SDK's earlier copy.
         with tempfile.TemporaryDirectory(prefix="dmg-", dir=ROOT / "build") as tmp:
@@ -139,12 +139,12 @@ def main():
             subprocess.run(["ditto", "--noclone", str(app), str(image_root / app.name)], check=True)
             (image_root / "Applications").symlink_to("/Applications")
             dmg = out / f"{prefix}.dmg"
-            subprocess.run(["hdiutil", "create", "-ov", "-volname", "ScreenPin", "-srcfolder", str(image_root), "-format", "UDZO", str(dmg)], check=True)
+            subprocess.run(["hdiutil", "create", "-ov", "-volname", "Framely", "-srcfolder", str(image_root), "-format", "UDZO", str(dmg)], check=True)
             subprocess.run(["hdiutil", "verify", str(dmg)], check=True)
     elif goos == "windows":
         shutil.copy2(bundle / f"screenpin-setup-{version}-{arch}.exe", out / f"{prefix}-setup.exe")
         with zipfile.ZipFile(out / f"{prefix}-portable.zip", "w", zipfile.ZIP_DEFLATED) as archive:
-            for item in [bundle / "ScreenPin.exe", *resources.rglob("*")]:
+            for item in [bundle / "Framely.exe", *resources.rglob("*")]:
                 if item.is_file():
                     archive.write(item, item.relative_to(bundle))
             archive.write(ROOT / "LICENSE", "LICENSE")
@@ -158,11 +158,11 @@ def main():
                 shutil.copy2(bundle / name, portable / name)
             shutil.copytree(resources, portable / "workers", symlinks=True)
             shutil.copy2(bundle / "screenpin.desktop", portable / DESKTOP_ID)
-            installer = (bundle / "install.sh").read_text().replace("$name.desktop", DESKTOP_ID).replace("${name}.desktop", DESKTOP_ID)
-            (portable / "install.sh").write_text(installer)
+            installer = (bundle / "install.sh").read_text(encoding="utf-8").replace("$name.desktop", DESKTOP_ID).replace("${name}.desktop", DESKTOP_ID)
+            (portable / "install.sh").write_text(installer, encoding="utf-8")
             (portable / "install.sh").chmod(0o755)
             shutil.copy2(ROOT / "LICENSE", portable / "LICENSE")
-            (portable / "README.txt").write_text("ScreenPin " + version + "\nRun ./screenpin, or ./install.sh to install for the current user.\nKeep the workers directory with the executable.\n")
+            (portable / "README.txt").write_text("Framely (formerly ScreenPin) " + version + "\nRun ./screenpin, or ./install.sh to install for the current user.\nKeep the workers directory with the executable.\n")
             with tarfile.open(out / f"{prefix}-portable.tar.gz", "w:gz") as archive:
                 for item in sorted(portable.iterdir()):
                     archive.add(item, arcname=item.name)
@@ -171,7 +171,7 @@ def main():
             desktop = deb / "usr/share/applications/screenpin.desktop"
             desktop.rename(desktop.with_name(DESKTOP_ID))
             sums = deb / "DEBIAN/md5sums"
-            sums.write_text(sums.read_text().replace("usr/share/applications/screenpin.desktop", "usr/share/applications/" + DESKTOP_ID))
+            sums.write_text(sums.read_text(encoding="utf-8").replace("usr/share/applications/screenpin.desktop", "usr/share/applications/" + DESKTOP_ID), encoding="utf-8")
             subprocess.run(["dpkg-deb", "--build", "--root-owner-group", str(deb), str(out / f"{prefix}.deb")], check=True)
     for item in sorted(out.iterdir()):
         if item.is_file():

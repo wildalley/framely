@@ -22,6 +22,7 @@ func icon(name string) *ui.SVG {
 
 var (
 	iconSelect      = icon("mouse-pointer-2")
+	iconRecord      = icon("screen-record")
 	iconRect        = icon("square")
 	iconEllipse     = icon("circle")
 	iconArrow       = icon("move-up-right")

@@ -3,6 +3,7 @@ package editor
 
 import (
 	"context"
+	"github.com/wildalley/screenpin/internal/brand"
 	"image"
 	"math"
 	"strings"
@@ -92,6 +93,8 @@ type App struct {
 	OnPaste     func()
 	OnCapture   func()
 	OnScroll    func()
+	OnRecord    func()
+	OnGIF       func()
 	OnSettings  func()
 	OnOCRResult func(ocr.Result)
 	OnOCRStart  func(context.CancelFunc) (func(ocr.Progress), func(ocr.Result, error))
@@ -120,7 +123,7 @@ func (a *App) Open(parent context.Context, picture Picture, target *mygo.Rectang
 	a.ctx, a.cancel = context.WithCancel(parent)
 	a.loadPicture(picture, target)
 	a.win = mygo.NewWindow(mygo.WindowOptions{
-		Title: a.title + " — ScreenPin", Width: minWidth, Height: barHeight + 80,
+		Title: a.title + " — " + brand.Name, Width: minWidth, Height: barHeight + 80,
 		MinWidth: minWidth, MinHeight: 2*barHeight + propertyHeight + 40, UseContentSize: true,
 		Frameless: true, DisableMaximize: true, DisableFullScreen: true,
 		Hidden: true, Content: ui.View(a.view),
@@ -158,7 +161,7 @@ func (a *App) release() {
 	a.ocrRunning, a.ocrCancel = false, nil
 	a.OnOCRResult = nil
 	a.OnOCRStart = nil
-	a.OnCapture, a.OnScroll, a.OnSettings = nil, nil, nil
+	a.OnCapture, a.OnScroll, a.OnSettings, a.OnRecord, a.OnGIF = nil, nil, nil, nil, nil
 	a.image, a.pixels, a.mosaicPx = nil, nil, nil
 	a.bitmap, a.mosaic = nil, nil
 	a.lease.Release()

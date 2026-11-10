@@ -37,8 +37,8 @@ icon = home / '.local/share/icons/hicolor/128x128/apps/screenpin.png'
 backup = repo / 'build/local-install-backup' / datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
 log = repo / 'build/native/screenpin-local.log'
 
-version = json.loads((repo / 'mygo.json').read_text())['version']
-assert subprocess.check_output([str(source), '--version'], text=True).strip() == f'ScreenPin {version} (mygo)'
+version = json.loads((repo / 'mygo.json').read_text(encoding="utf-8"))['version']
+assert subprocess.check_output([str(source), '--version'], text=True).strip() == f'Framely {version} (mygo)'
 backup.mkdir(parents=True)
 for path, name in [(binary, 'screenpin'), (applications / 'screenpin.desktop', 'screenpin.desktop'),
                    (desktop, desktop.name), (icon, 'screenpin.png')]:
@@ -84,9 +84,9 @@ os.replace(staged, binary)
 icon.parent.mkdir(parents=True, exist_ok=True)
 shutil.copy2(repo / 'assets/icons/128x128.png', icon)
 applications.mkdir(parents=True, exist_ok=True)
-entry = (repo / 'packaging/arch-native/io.screenpin.desktop.desktop').read_text()
+entry = (repo / 'packaging/arch-native/io.screenpin.desktop.desktop').read_text(encoding="utf-8")
 entry = entry.replace('Exec=screenpin\n', f'Exec="{binary}"\n').replace('Icon=screenpin\n', f'Icon={icon}\n')
-desktop.write_text(entry)
+desktop.write_text(entry, encoding="utf-8")
 desktop.chmod(0o644)
 legacy = applications / 'screenpin.desktop'
 if legacy.exists():
@@ -97,7 +97,7 @@ if shutil.which('update-desktop-database'):
 digest = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()
 assert digest(binary) == digest(source)
 print(subprocess.check_output([str(binary), '--version'], text=True).strip())
-with log.open('a') as output:
+with log.open('a', encoding='utf-8') as output:
     output.write(f'\n--- Local launch {datetime.datetime.now().isoformat()} ---\n')
     output.flush()
     process = subprocess.Popen([str(binary), *launch_args], stdout=output, stderr=subprocess.STDOUT, start_new_session=True)

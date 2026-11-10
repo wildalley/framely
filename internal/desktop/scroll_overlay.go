@@ -2,15 +2,13 @@ package desktop
 
 import (
 	"fmt"
+	"github.com/wildalley/screenpin/internal/brand"
 	"image"
 	"log"
-	"math"
-	"os"
 	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
-	"github.com/wildalley/screenpin/internal/editor"
 )
 
 // toolbarBeside never places controls inside the pixels being captured.
@@ -50,32 +48,14 @@ func (v *scrollWindow) openOverlay(display mygo.Display, region image.Rectangle,
 		return
 	}
 	v.overlayToolbar = toolbar
-	// The toolbar's XWayland display must not reuse the main Wayland GPU
-	// context. A 360px control panel is cheap to draw with Cairo.
-	previousGPU, hadGPU := os.LookupEnv("MYGO_GPU")
-	_ = os.Setenv("MYGO_GPU", "0")
-	defer func() {
-		if hadGPU {
-			_ = os.Setenv("MYGO_GPU", previousGPU)
-		} else {
-			_ = os.Unsetenv("MYGO_GPU")
-		}
-	}()
-	input := mygo.Rectangle{X: b.X + int(math.Floor(float64(toolbar.X))), Y: b.Y + int(math.Floor(float64(toolbar.Y))), Width: int(math.Ceil(float64(toolbar.W))), Height: int(math.Ceil(float64(toolbar.H)))}
-	w := mygo.NewWindow(mygo.WindowOptions{
-		Title: "ScreenPin 长截图控件", X: input.X, Y: input.Y, Width: input.Width, Height: input.Height,
-		UseContentSize: true, Frameless: true, Hidden: true,
-		AlwaysOnTop: true, SkipTaskbar: true, DisableResize: true, DisableShadow: true,
-		Content: ui.View(v.overlayView),
-	})
-	if !editor.ConfigureScrollToolbar(w.NativeHandle(), input) {
-		w.Destroy()
-		v.notice = "当前桌面无法定位选区旁按钮；滚动后按截图快捷键完成。"
+	w, err := openControlBar(v.ctx, brand.Title("长截图控件"), display, toolbar, v.overlayView, v.app.worker)
+	if err != nil {
+		v.notice = err.Error() + "；滚动后按截图快捷键完成。"
 		return
 	}
 	v.overlay, v.floating = w, true
+	input := w.Bounds()
 	w.OnClose(func(*mygo.CloseEvent) { v.win.Close() })
-	w.ShowInactive()
 	v.app.worker(func() {
 		timer := time.NewTimer(100 * time.Millisecond)
 		defer timer.Stop()
@@ -86,7 +66,7 @@ func (v *scrollWindow) openOverlay(display mygo.Display, region image.Rectangle,
 		}
 		v.later(func() {
 			if !w.IsDestroyed() {
-				log.Printf("ScreenPin: long screenshot toolbar: expected=%v actual=%v", input, w.Bounds())
+				log.Printf(brand.Name+": long screenshot toolbar: expected=%v actual=%v", input, w.Bounds())
 			}
 		})
 	})

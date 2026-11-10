@@ -28,6 +28,49 @@ def run(args, **kwargs):
     subprocess.run(list(map(str, args)), check=True, **kwargs)
 
 
+def tool(name, env):
+    """Resolve a build tool by PATH order.
+
+    Windows CreateProcess searches System32 before PATH for bare names, so
+    "bash" would start the WSL launcher instead of MSYS2's bash. Resolve the
+    full path ourselves and skip the system directory.
+    """
+    if SYSTEM != "Windows":
+        return name
+    system = Path(os.environ.get("SystemRoot", r"C:\Windows")).resolve()
+    for entry in env.get("PATH", "").split(os.pathsep):
+        found = entry and shutil.which(name, path=entry)
+        if found and system not in Path(found).resolve().parents:
+            return found
+    raise RuntimeError(f"{name} not found outside {system}; install it with MSYS2 and add C:\\msys64\\usr\\bin to PATH")
+
+
+# FFmpeg's pkg-config files omit the Media Foundation GUID libraries that the
+# static h264_mf encoder needs (IID_ICodecAPI, IID_IMFTransform, ...) and
+# bcrypt for av_random_bytes.
+WINDOWS_MEDIA_LIBS = ["mfplat.lib", "mfuuid.lib", "strmiids.lib", "ole32.lib", "bcrypt.lib"]
+
+
+def build_env():
+    env = os.environ.copy()
+    if SYSTEM == "Windows":
+        compiler = shutil.which("cl")
+        if not compiler:
+            raise RuntimeError("Run from an x64 MSVC developer shell")
+        # MSYS2's /usr/bin/link is a Unix file utility, not the MSVC linker.
+        env["PATH"] = str(Path(compiler).parent) + os.pathsep + env["PATH"]
+    return env
+
+
+def pkg_config_path():
+    """PKG_CONFIG_PATH for MSYS2's pkgconf, which splits the list on ":",
+    so a Windows "D:/..." path must be given in its /d/... form."""
+    path = (PREFIX / "lib/pkgconfig").as_posix()
+    if SYSTEM == "Windows" and path[1:2] == ":":
+        path = "/" + path[0].lower() + path[2:]
+    return path
+
+
 def source(url, checksum, folder):
     archive = WORK / url.rsplit("/", 1)[1]
     if not archive.exists() or hashlib.sha256(archive.read_bytes()).hexdigest() != checksum:
@@ -50,13 +93,7 @@ def main():
     if ARCH == "amd64" and not shutil.which("nasm"):
         print("nasm unavailable: using portable C SIMD fallbacks", flush=True)
         options.append("--disable-x86asm")
-    env = os.environ.copy()
-    if SYSTEM == "Windows":
-        compiler = shutil.which("cl")
-        if not compiler:
-            raise RuntimeError("Run from an x64 MSVC developer shell")
-        # MSYS2's /usr/bin/link is a Unix file utility, not the MSVC linker.
-        env["PATH"] = str(Path(compiler).parent) + os.pathsep + env["PATH"]
+    env = build_env()
     if SYSTEM == "Linux":
         options += ["--enable-vaapi", "--enable-encoder=h264_vaapi"]
     elif SYSTEM == "Darwin":
@@ -66,21 +103,21 @@ def main():
     # NVIDIA headers are a build-only dependency and add no CUDA runtime bundle.
     if SYSTEM != "Darwin":
         nv = source("https://codeload.github.com/FFmpeg/nv-codec-headers/tar.gz/refs/tags/n13.0.19.0", "86d15d1a7c0ac73a0eafdfc57bebfeba7da8264595bf531cf4d8db1c22940116", "nv-codec-headers-n13.0.19.0")
-        run(["make", f"PREFIX={PREFIX.as_posix()}", "install"], cwd=nv, env=env)
-        env["PKG_CONFIG_PATH"] = (PREFIX / "lib/pkgconfig").as_posix()
+        run([tool("make", env), f"PREFIX={PREFIX.as_posix()}", "install"], cwd=nv, env=env)
+        env["PKG_CONFIG_PATH"] = pkg_config_path()
         options += ["--enable-ffnvcodec", "--enable-nvenc", "--enable-encoder=h264_nvenc"]
     configure = WORK / "configure-options.json"
-    if not (PREFIX / "bin" / ("ffmpeg.exe" if SYSTEM == "Windows" else "ffmpeg")).exists() or not configure.exists() or json.loads(configure.read_text()) != options:
-        run(["bash", "configure", *options], cwd=ffmpeg, env=env)
-        run(["make", f"-j{min(os.cpu_count() or 2, 8)}"], cwd=ffmpeg, env=env)
-        run(["make", "install"], cwd=ffmpeg, env=env)
+    if not (PREFIX / "bin" / ("ffmpeg.exe" if SYSTEM == "Windows" else "ffmpeg")).exists() or not configure.exists() or json.loads(configure.read_text(encoding="utf-8")) != options:
+        run([tool("bash", env), "configure", *options], cwd=ffmpeg, env=env)
+        run([tool("make", env), f"-j{min(os.cpu_count() or 2, 8)}"], cwd=ffmpeg, env=env)
+        run([tool("make", env), "install"], cwd=ffmpeg, env=env)
         configure.write_text(json.dumps(options, indent=2) + "\n")
     suffix = ".exe" if SYSTEM == "Windows" else ""
     shutil.copy2(PREFIX / "bin" / ("ffmpeg" + suffix), DEST / ("screenpin-ffmpeg" + suffix))
-    env["PKG_CONFIG_PATH"] = (PREFIX / "lib/pkgconfig").as_posix()
+    env["PKG_CONFIG_PATH"] = pkg_config_path()
     if SYSTEM == "Windows":
         # pkgconf from MSYS2 must resolve native Windows paths for cl/link.
-        native_libs = shlex.split(subprocess.check_output(["pkg-config", "--msvc-syntax", "--static", "--libs", "libavformat", "libavcodec", "libavutil", "libswscale"], env=env, text=True))
+        native_libs = shlex.split(subprocess.check_output([tool("pkg-config", env), "--msvc-syntax", "--static", "--libs", "libavformat", "libavcodec", "libavutil", "libswscale"], env=env, text=True)) + WINDOWS_MEDIA_LIBS
         run(["cl", "/nologo", "/O2", "/MT", "/std:c11", "/c", "/I" + str(PREFIX / "include"), "/Fo" + str(WORK / "recorder.obj"), ROOT / "workers/media/recorder.c"], env=env)
         run(["cl", "/nologo", "/std:c++20", "/EHsc", "/O2", "/MT", "/utf-8", "/DSCREENPIN_RECORD", "/Fo" + str(WORK / "record-windows.obj"), "/Fe" + str(DEST / "screenpin-record.exe"), ROOT / "workers/capture/windows.cpp", WORK / "recorder.obj", "/link", *native_libs, "windowsapp.lib", "d3d11.lib", "dxgi.lib", "user32.lib", "shell32.lib"], env=env)
     else:

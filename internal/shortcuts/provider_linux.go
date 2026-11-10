@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/wildalley/screenpin/internal/brand"
 	"os"
 	"strings"
 	"sync"
@@ -294,7 +295,7 @@ func (b *portalBinding) Configure(ctx context.Context) error {
 		return err
 	}
 	if v, ok := version.Value().(uint32); !ok || v < 2 {
-		return errors.New("当前桌面不支持应用内打开快捷键配置，请在系统键盘设置中修改 ScreenPin 的快捷键")
+		return errors.New("当前桌面不支持应用内打开快捷键配置，请在系统键盘设置中修改 " + brand.Name + " 的快捷键")
 	}
 	// ConfigureShortcuts returns no request handle: assignment changes arrive
 	// through ShortcutsChanged, not through Request.Response.

@@ -6,6 +6,7 @@ import (
 	"runtime"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/wildalley/screenpin/internal/brand"
 	"github.com/wildalley/screenpin/internal/doc"
 	"github.com/wildalley/screenpin/internal/render"
 )
@@ -79,6 +80,7 @@ func (a *App) view(c *ui.Context) {
 	if a.closed || a.image == nil {
 		return
 	}
+	brand.Apply(c)
 	for _, message := range a.toasts {
 		c.Toast(message)
 	}
@@ -257,7 +259,7 @@ func (a *App) moveLayer(dir int) {
 }
 
 func iconButton(c *ui.Context, key string, svg *ui.SVG, label string, disabled bool) ui.Element {
-	b := ui.Button(c.Key(key), "").Size(32, 32).Padding(0).Radius(6).Center().Shrink(0).
+	b := ui.Button(c.Key(key), "").Size(32, 32).Padding(0).Radius(8).Center().Shrink(0).
 		Label(label).Tooltip(label).Disabled(disabled).
 		Border(0, ui.Transparent)
 	bg := ui.Transparent
@@ -271,14 +273,15 @@ func iconButton(c *ui.Context, key string, svg *ui.SVG, label string, disabled b
 }
 
 func iconToggle(c *ui.Context, key string, svg *ui.SVG, label string, on *bool, disabled bool) ui.Element {
-	b := ui.Toggle(c.Key(key), on, "").Size(32, 32).Padding(0).Radius(6).Center().Shrink(0).
+	b := ui.Toggle(c.Key(key), on, "").Size(32, 32).Padding(0).Radius(8).Center().Shrink(0).
 		Label(label).Tooltip(label).Disabled(disabled).
 		Border(0, ui.Transparent)
 	bg := ui.Transparent
 	switch {
 	case *on && !disabled:
-		bg = c.Theme().Accent.Alpha(0.18)
-		b.Border(1.5, c.Theme().Accent)
+		// A soft accent tile and accent glyph mark the active tool.
+		bg = brand.Soft(c)
+		b.TextColor(brand.Ink(c))
 	case b.Pressed():
 		bg = c.Theme().SurfacePressed
 	case b.Hovered():
@@ -287,6 +290,14 @@ func iconToggle(c *ui.Context, key string, svg *ui.SVG, label string, on *bool, 
 	b.Background(bg)
 	return b.Children(func() { ui.Icon(c, svg).Size(18, 18).Shrink(0) })
 }
+
+// compactActionsWidth is where the action row tightens to fit all buttons.
+const compactActionsWidth = 420
+
+// toolSegmentWidth fits every tool, the history divider and undo/redo in the
+// rounded tool segment, so it hugs its buttons on wide windows and only
+// overflows when the window is narrower.
+var toolSegmentWidth = float32(len(toolItems)+2)*32 + float32(len(toolItems)+2)*2 + 7 + 6 + 4
 
 func toolbarDivider(c *ui.Context, key string) {
 	ui.Box(c.Key(key)).Width(1).Height(18).Margin(0, 4).Background(c.Theme().Border.Alpha(0.6)).Shrink(0)
@@ -313,13 +324,16 @@ func (a *App) bar(c *ui.Context) {
 					a.setTool(it.tool)
 				}
 			}
+			ui.Box(c.Key("div-history")).Width(1).Height(16).Margin(0, 3).Background(c.Theme().Border).Shrink(0)
 			if iconButton(c, "undo", iconUndo, "撤销 ("+commandKey()+"+Z)", !a.history.CanUndo()).Clicked() {
 				a.undo()
 			}
 			if iconButton(c, "redo", iconRedo, "重做 ("+commandKey()+"+Shift+Z)", !a.history.CanRedo()).Clicked() {
 				a.redo()
 			}
-		}).Label("标注工具").Grow(1).MinWidth(0).Padding(0).Disabled(a.busy)
+		}).Label("标注工具").Width(toolSegmentWidth).Shrink(1).MinWidth(0).Height(38).Padding(3).Gap(2).
+			Radius(11).Background(c.Theme().Surface).Disabled(a.busy)
+		ui.Spacer(c).Grow(1).MinWidth(0)
 		styleOpen := a.panel == PanelStyle
 		styleAnchor = iconToggle(c, "style", iconPalette, "样式", &styleOpen, a.busy)
 		if styleAnchor.Changed() {
@@ -344,6 +358,8 @@ func (a *App) bar(c *ui.Context) {
 		if iconButton(c, "scroll", iconScroll, "长截图", a.busy || a.OnScroll == nil).Tooltip(scrollLabel).Clicked() {
 			a.OnScroll()
 		}
+		// Recording and GIF conversion sit with the other capture modes.
+		iconButton(c, "record", iconRecord, "录屏与 GIF", a.busy || a.OnRecord == nil).Menu(a.recordMenu)
 		ocrLabel := "识别文字"
 		if a.ocrRunning {
 			ocrLabel = "文字识别中…"
@@ -359,8 +375,17 @@ func (a *App) bar(c *ui.Context) {
 			a.TogglePin()
 		}
 		iconButton(c, "save", iconDownload, "保存图片 ("+commandKey()+"+S)", a.busy).Menu(a.imageMenu)
-		copy := ui.PrimaryButton(c.Key("copy"), "复制").Height(32).Padding(0, 10).Radius(6).Shrink(0).Disabled(a.busy).
-			Tooltip("复制图片 (" + commandKey() + "+C)")
+		var copy ui.Element
+		if width < compactActionsWidth {
+			// Every action must fit a 320px window whatever the font: show
+			// the copy glyph alone, keeping its name for assistive technology.
+			copy = ui.PrimaryButton(c.Key("copy-compact"), "").Size(32, 32).Padding(0).Radius(8).Center().Shrink(0).
+				Label("复制").Disabled(a.busy).Tooltip("复制图片 (" + commandKey() + "+C)").
+				Children(func() { ui.Icon(c, iconCopy).Size(18, 18).Shrink(0) })
+		} else {
+			copy = ui.PrimaryButton(c.Key("copy"), "复制").Height(32).Padding(0, 12).Radius(8).Shrink(0).Disabled(a.busy).
+				Tooltip("复制图片 (" + commandKey() + "+C)")
+		}
 		if copy.Clicked() {
 			a.Copy()
 		}
@@ -375,10 +400,14 @@ func (a *App) bar(c *ui.Context) {
 		}
 	}
 	row := func(key string, content func()) {
-		ui.Row(c.Key(key)).FillWidth().Height(barHeight).Gap(4).Padding(4, 6).AlignItems(ui.Center).DragWindow().Children(content)
+		gap := float32(4)
+		if width < compactActionsWidth {
+			gap = 2
+		}
+		ui.Row(c.Key(key)).FillWidth().Height(barHeight).Gap(gap).Padding(4, 6).AlignItems(ui.Center).DragWindow().Children(content)
 	}
 	ui.Column(c.Key("bar")).FillWidth().Height(float32(toolbarHeight(width))).Background(c.Theme().Background).
-		BorderWidth(1, 0, 0, 0).BorderColor(c.Theme().Border.Alpha(0.6)).Children(func() {
+		BorderWidth(1, 0, 0, 0).BorderColor(c.Theme().Border).Children(func() {
 		if width < 760 {
 			row("annotation-row", tools)
 			a.propertyRow(c, width)
@@ -444,9 +473,21 @@ func (a *App) imageMenu(m *ui.Menu) {
 	m.Item(fmt.Sprintf("%d × %d px", a.image.Width, a.image.Height)).Disabled(true)
 }
 
+func (a *App) recordMenu(m *ui.Menu) {
+	if m.Item("录制屏幕区域…").Disabled(a.busy || a.OnRecord == nil).Chosen() {
+		a.OnRecord()
+	}
+	if m.Item("视频转 GIF…").Disabled(a.OnGIF == nil).Chosen() {
+		a.OnGIF()
+	}
+}
+
 func (a *App) contextMenu(m *ui.Menu) {
 	if m.Item("长截图…").Disabled(a.busy || a.OnScroll == nil).Chosen() {
 		a.OnScroll()
+	}
+	if m.Item("录屏…").Disabled(a.busy || a.OnRecord == nil).Chosen() {
+		a.OnRecord()
 	}
 	m.Separator()
 	if m.Item("识别图片文字").Disabled(a.ocrRunning || a.OnOCRResult == nil).Chosen() {

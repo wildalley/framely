@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/wildalley/screenpin/internal/brand"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -125,7 +126,7 @@ func prepareShortcuts(path, command, key, scroll string, validator func(context.
 		return nil, err
 	}
 	if old.exists && !bytes.HasPrefix(old.data, []byte(marker)) {
-		return nil, errors.New("screenpin-shortcut.kdl 已存在且不由 ScreenPin 管理，请先为它改名")
+		return nil, errors.New("screenpin-shortcut.kdl 已存在且不由 " + brand.Name + " 管理，请先为它改名")
 	}
 	base := bytes.ReplaceAll(root.data, []byte(marker+"include "+strconv.Quote(owned)+"\n"), nil)
 	modKey, err := compositorMod(path, base, map[string]bool{})

@@ -2,6 +2,7 @@
 package recording
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -20,6 +21,9 @@ import (
 type GIFOptions struct {
 	Start, Duration float64
 	FPS, Width      int
+	// Progress, when set, receives the share of the export done, 0 to 1,
+	// on the exporting goroutine.
+	Progress func(done float64)
 }
 
 func (o GIFOptions) Validate() error {
@@ -126,14 +130,16 @@ func ExportGIF(ctx context.Context, source, destination string, o GIFOptions) er
 	filter := fmt.Sprintf("fps=%d,scale='min(%d,iw)':-2:flags=lanczos", o.FPS, o.Width)
 	// Two passes avoid retaining every source frame while a global palette is built.
 	args := append(append([]string{}, base...), "-vf", filter+",palettegen=stats_mode=diff", "-frames:v", "1", "-pix_fmt", "rgba", "-f", "rawvideo", palette)
-	if err = run(ctx, ffmpeg, args...); err != nil {
+	// The palette pass decodes the clip once; rendering decodes it again and
+	// encodes, so it takes most of the time.
+	if err = runProgress(ctx, o, 0, .3, ffmpeg, args...); err != nil {
 		return err
 	}
 	if info, e := os.Stat(palette); e != nil || info.Size() != 16*16*4 {
 		return errors.New("视频选段为空或无法生成 GIF 调色板")
 	}
 	args = append(append([]string{}, base...), "-f", "rawvideo", "-pixel_format", "rgba", "-video_size", "16x16", "-i", palette, "-lavfi", "[0:v]"+filter+"[v];[v][1:v]paletteuse=dither=bayer:diff_mode=rectangle", "-an", "-loop", "0", "-f", "gif", temp)
-	if err = run(ctx, ffmpeg, args...); err != nil {
+	if err = runProgress(ctx, o, .3, 1, ffmpeg, args...); err != nil {
 		return err
 	}
 	if err = ctx.Err(); err != nil {
@@ -158,6 +164,46 @@ func (b *limitedLog) Write(p []byte) (int, error) {
 	}
 	return n, nil
 }
+
+// runProgress maps FFmpeg's -progress output (out_time_us) onto from..to.
+func runProgress(ctx context.Context, o GIFOptions, from, to float64, path string, args ...string) error {
+	if o.Progress == nil {
+		return run(ctx, path, args...)
+	}
+	o.Progress(from)
+	args = append([]string{"-progress", "pipe:1", "-nostats"}, args...)
+	cmd := exec.CommandContext(ctx, path, args...)
+	hideWindow(cmd)
+	var log limitedLog
+	cmd.Stderr = &log
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	if err = cmd.Start(); err != nil {
+		return err
+	}
+	lines := bufio.NewScanner(out)
+	for lines.Scan() {
+		value, ok := strings.CutPrefix(lines.Text(), "out_time_us=")
+		if !ok {
+			continue
+		}
+		if us, e := strconv.ParseFloat(value, 64); e == nil && us >= 0 && o.Duration > 0 {
+			o.Progress(from + (to-from)*min(1, us/(o.Duration*1e6)))
+		}
+	}
+	_, _ = io.Copy(io.Discard, out)
+	if err = cmd.Wait(); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return fmt.Errorf("媒体导出失败：%w\n%s", err, strings.TrimSpace(log.String()))
+	}
+	o.Progress(to)
+	return nil
+}
+
 func run(ctx context.Context, path string, args ...string) error {
 	cmd := exec.CommandContext(ctx, path, args...)
 	hideWindow(cmd)

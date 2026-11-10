@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/wildalley/screenpin/internal/brand"
 	"image"
 	"strings"
 
@@ -58,7 +59,7 @@ func (s *application) openOCR() *ocrWindow {
 	}
 	v := newOCRWindow()
 	s.operations++
-	v.win = mygo.NewWindow(mygo.WindowOptions{Title: "ScreenPin 文字识别", Width: 760, Height: 620, MinWidth: 400, MinHeight: 400, UseContentSize: true, Content: ui.View(v.view)})
+	v.win = mygo.NewWindow(mygo.WindowOptions{Title: brand.Title("文字识别"), Width: 760, Height: 620, MinWidth: 400, MinHeight: 400, UseContentSize: true, Content: ui.View(v.view)})
 	v.closeWindow = func() { v.win.Close() }
 	v.win.OnClosed(func() { v.release(); s.operations--; s.maybeQuit() })
 	return v
@@ -228,8 +229,7 @@ func (v *ocrWindow) view(c *ui.Context) {
 		}
 	}
 	ui.Column(c).Fill().Padding(16).Gap(10).Children(func() {
-		ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-			ui.Text(c, "提取文字").FontSize(20).FontWeight(650)
+		panelHeader(c, "提取文字", "离线识别 · 不上传图片", func() {
 			if v.running && ui.Button(c, "取消识别").Clicked() {
 				if v.cancel != nil {
 					v.cancel()

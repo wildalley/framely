@@ -43,5 +43,5 @@ jobs:
         run: >-
           gh release create "$GITHUB_REF_NAME" release-assets/*
           --verify-tag --latest
-          --title "ScreenPin $GITHUB_REF_NAME — MyGo 原生版"
+          --title "Framely 取景 $GITHUB_REF_NAME"
           --notes-file docs/releases/${GITHUB_REF_NAME}.md

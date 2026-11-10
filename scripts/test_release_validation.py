@@ -21,7 +21,7 @@ class ReleaseValidationTests(unittest.TestCase):
         self.write("mygo.json", '{"version": "0.2.1"}')
         self.write("packaging/arch-native/PKGBUILD", "pkgver=0.2.1\npkgrel=1\n")
         self.write("internal/desktop/launch.go", 'package desktop\nconst Version = "0.2.1"\n')
-        self.write("docs/releases/v0.2.1.md", "ScreenPin 0.2.1 release notes\n")
+        self.write("docs/releases/v0.2.1.md", "Framely 0.2.1 release notes\n")
 
     def write(self, name, content):
         path = self.root / name
@@ -63,15 +63,15 @@ class ReleaseValidationTests(unittest.TestCase):
         self.write("packaging/arch-native/PKGBUILD", "pkgver=0.2.1\npkgrel=2\n")
         version, pkgrel = validation.verify_sources(self.root)
         folder = self.assets()
-        (folder / "screenpin-native-0.2.1-1-x86_64.pkg.tar.zst").rename(
-            folder / "screenpin-native-0.2.1-2-x86_64.pkg.tar.zst")
+        (folder / "framely-0.2.1-1-x86_64.pkg.tar.zst").rename(
+            folder / "framely-0.2.1-2-x86_64.pkg.tar.zst")
         validation.verify_assets(folder, version, pkgrel)
 
     def test_stale_arch_artifact_cannot_be_published(self):
         folder = self.assets()
-        (folder / "screenpin-native-0.2.1-1-x86_64.pkg.tar.zst").rename(
-            folder / "screenpin-native-0.2.0-1-x86_64.pkg.tar.zst")
-        with self.assertRaisesRegex(ValueError, "Missing/empty installer: screenpin-native-0.2.1"):
+        (folder / "framely-0.2.1-1-x86_64.pkg.tar.zst").rename(
+            folder / "framely-0.2.0-1-x86_64.pkg.tar.zst")
+        with self.assertRaisesRegex(ValueError, "Missing/empty installer: framely-0.2.1"):
             validation.verify_assets(folder, "0.2.1", "1")
 
     def test_empty_installer_and_unexpected_file_are_rejected(self):
@@ -81,7 +81,7 @@ class ReleaseValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Unexpected release files"):
             validation.verify_assets(folder, "0.2.1", "1")
         extra.unlink()
-        (folder / "screenpin-0.2.1-windows-amd64-setup.exe").write_bytes(b"")
+        (folder / "framely-0.2.1-windows-amd64-setup.exe").write_bytes(b"")
         with self.assertRaisesRegex(ValueError, "Missing/empty installer"):
             validation.verify_assets(folder, "0.2.1", "1")
 

@@ -17,7 +17,7 @@ if uv is None:
 venv = root / "build" / "ocr-venv"
 python = venv / ("Scripts/python.exe" if system == "Windows" else "bin/python")
 if not python.is_file():
-    subprocess.run([uv, "venv", "--python", "3.12", str(venv)], check=True)
+    subprocess.run([uv, "venv", "--allow-existing", "--python", "3.12", str(venv)], check=True)  # pip sync below makes it exact
 if subprocess.check_output([str(python), "-c", "import sys; print('.'.join(map(str, sys.version_info[:2])))"], text=True).strip() != "3.12":
     sys.exit("build/ocr-venv must use Python 3.12; recreate this build environment")
 # sync installs exactly the hashed distributions and removes stale packages,
