@@ -3,6 +3,7 @@ package desktop
 import (
 	"context"
 	"fmt"
+	"github.com/wildalley/screenpin/internal/brand"
 	"image"
 	"log"
 	"os"
@@ -66,10 +67,10 @@ func (s *application) recordDirFor(configured string) string {
 		return configured
 	}
 	if videos, err := mygo.App.Path(mygo.PathVideos); err == nil && videos != "" {
-		return filepath.Join(videos, "ScreenPin")
+		return filepath.Join(videos, brand.Name)
 	}
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, "Videos", "ScreenPin")
+	return filepath.Join(home, "Videos", brand.Name)
 }
 
 // chooseRecordDir asks for a folder and saves it as the default at once, so
@@ -133,7 +134,7 @@ func (s *application) openVideo(tab int) {
 	ctx, cancel := context.WithCancel(s.ctx)
 	v := newVideoWindow(s, ctx, cancel)
 	v.tab = tab
-	v.win = mygo.NewWindow(mygo.WindowOptions{Title: "ScreenPin 录屏", Width: 480, Height: 500, MinWidth: 400, MinHeight: 360, UseContentSize: true, AlwaysOnTop: true, Content: ui.View(v.view)})
+	v.win = mygo.NewWindow(mygo.WindowOptions{Title: brand.Title("录屏"), Width: 480, Height: 500, MinWidth: 400, MinHeight: 360, UseContentSize: true, AlwaysOnTop: true, Content: ui.View(v.view)})
 	capture.ExcludeWindow(v.win.NativeHandle())
 	s.video = v
 	s.operations++
@@ -212,9 +213,8 @@ func (v *videoWindow) view(c *ui.Context) {
 	}
 	locked := v.running || v.busy
 	ui.Column(c).Fill().Padding(20).Gap(12).Children(func() {
-		ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-			ui.Text(c, "屏幕录制").FontSize(20).FontWeight(600).Grow(1)
-			state := "无声 MP4"
+		panelHeader(c, "屏幕录制", "区域录屏 · 无声 MP4 · 可转 GIF", func() {
+			state := "就绪"
 			switch {
 			case v.ending:
 				state = "正在保存…"
@@ -227,7 +227,7 @@ func (v *videoWindow) view(c *ui.Context) {
 			case v.exporting:
 				state = "导出 GIF 中"
 			}
-			badge := ui.Badge(c, state)
+			badge := ui.Badge(c, state).Shrink(0)
 			if v.running && !v.paused {
 				badge.Background(c.Theme().Danger).TextColor(c.Theme().AccentText)
 			}

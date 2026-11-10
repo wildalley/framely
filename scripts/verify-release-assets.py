@@ -39,13 +39,13 @@ def verify_sources(root, tag=""):
 
 def expected_assets(version, pkgrel):
     return [
-        f"screenpin-{version}-linux-amd64.deb",
-        f"screenpin-{version}-linux-amd64-portable.tar.gz",
-        f"screenpin-{version}-windows-amd64-setup.exe",
-        f"screenpin-{version}-windows-amd64-portable.zip",
-        f"screenpin-{version}-darwin-arm64.dmg",
-        f"screenpin-{version}-darwin-amd64.dmg",
-        f"screenpin-native-{version}-{pkgrel}-x86_64.pkg.tar.zst",
+        f"framely-{version}-linux-amd64.deb",
+        f"framely-{version}-linux-amd64-portable.tar.gz",
+        f"framely-{version}-windows-amd64-setup.exe",
+        f"framely-{version}-windows-amd64-portable.zip",
+        f"framely-{version}-darwin-arm64.dmg",
+        f"framely-{version}-darwin-amd64.dmg",
+        f"framely-{version}-{pkgrel}-x86_64.pkg.tar.zst",
     ]
 
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/wildalley/screenpin/internal/brand"
 	"image"
 	"math"
 	"runtime"
@@ -131,7 +132,7 @@ func (s *pick) open() error {
 		v := &pickView{display: d, crop: crops[i]}
 		s.views = append(s.views, v)
 		v.win = mygo.NewWindow(mygo.WindowOptions{
-			Title:           "ScreenPin 选区",
+			Title:           brand.Title("选区"),
 			X:               d.Bounds.X,
 			Y:               d.Bounds.Y,
 			Width:           d.Bounds.Width,
@@ -358,6 +359,7 @@ var (
 )
 
 func (s *pick) view(c *ui.Context, v *pickView) {
+	brand.Apply(c)
 	if s.done || s.bitmap == nil {
 		return
 	}

@@ -1,7 +1,12 @@
 [Desktop Entry]
 Type=Application
-Name=ScreenPin
-Comment=Tray screenshot utility with temporary pinned images
+Name=Framely
+Name[zh_CN]=Framely 取景
+GenericName=Screenshot Tool
+GenericName[zh_CN]=截图工具
+Comment=Screenshots, pins, scrolling capture, recording and offline OCR
+Comment[zh_CN]=截图、贴图、长截图、录屏与离线文字识别
+Keywords=screenshot;screen recording;OCR;pin;ScreenPin;截图;录屏;贴图;
 Exec=screenpin
 Icon=screenpin
 Terminal=false

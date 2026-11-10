@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/wildalley/screenpin/internal/brand"
 	"image"
 	"log"
 	"os"
@@ -182,12 +183,12 @@ func openPortalStream(parent context.Context, options StreamOptions, forceChoose
 			bounds = options.DisplayBounds
 		}
 		if err := saveDisplayRestoreToken(iface, token, bounds); err != nil {
-			log.Printf("ScreenPin: shared source could not be remembered: %v", err)
+			log.Printf(brand.Name+": shared source could not be remembered: %v", err)
 		}
 	}
 	actualBounds := portalDisplayBounds(streams[0].Properties)
 	if restore != "" && !options.DisplayBounds.Empty() && !actualBounds.Empty() && actualBounds != options.DisplayBounds {
-		log.Printf("ScreenPin: restored display %v differs from requested %v; requesting source selection", actualBounds, options.DisplayBounds)
+		log.Printf(brand.Name+": restored display %v differs from requested %v; requesting source selection", actualBounds, options.DisplayBounds)
 		return fail(errRestoredOtherDisplay)
 	}
 	var fd dbus.UnixFD

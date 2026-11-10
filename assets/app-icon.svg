@@ -1,7 +1,18 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="92" fill="#157f5b"/>
-  <path d="M112 216V146c0-18.8 15.2-34 34-34h70M296 112h70c18.8 0 34 15.2 34 34v70M400 296v70c0 18.8-15.2 34-34 34h-70M216 400h-70c-18.8 0-34-15.2-34-34v-70" fill="none" stroke="#ffffff" stroke-width="34" stroke-linecap="round"/>
-  <circle cx="256" cy="244" r="72" fill="#ffffff"/>
-  <circle cx="256" cy="244" r="38" fill="#ff9147"/>
-  <path d="M256 282v82" fill="none" stroke="#ffffff" stroke-width="28" stroke-linecap="round"/>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6366F1"/>
+      <stop offset="0.5" stop-color="#4F46E5"/>
+      <stop offset="1" stop-color="#7C3AED"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.28" cy="0.18" r="0.85">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.30"/>
+      <stop offset="0.6" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" rx="116" fill="url(#bg)"/>
+  <rect width="512" height="512" rx="116" fill="url(#glow)"/>
+  <path d="M116 204V158a42 42 0 0 1 42-42h46M308 116h46a42 42 0 0 1 42 42v46M396 308v46a42 42 0 0 1-42 42h-46M204 396h-46a42 42 0 0 1-42-42v-46" fill="none" stroke="#FFFFFF" stroke-width="32" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M256 168c9 58 30 79 88 88c-58 9-79 30-88 88c-9-58-30-79-88-88c58-9 79-30 88-88z" fill="#FFFFFF"/>
+  <circle cx="338" cy="176" r="15" fill="#FFFFFF" fill-opacity="0.85"/>
 </svg>

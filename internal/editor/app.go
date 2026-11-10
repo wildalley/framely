@@ -3,6 +3,7 @@ package editor
 
 import (
 	"context"
+	"github.com/wildalley/screenpin/internal/brand"
 	"image"
 	"math"
 	"strings"
@@ -120,7 +121,7 @@ func (a *App) Open(parent context.Context, picture Picture, target *mygo.Rectang
 	a.ctx, a.cancel = context.WithCancel(parent)
 	a.loadPicture(picture, target)
 	a.win = mygo.NewWindow(mygo.WindowOptions{
-		Title: a.title + " — ScreenPin", Width: minWidth, Height: barHeight + 80,
+		Title: a.title + " — " + brand.Name, Width: minWidth, Height: barHeight + 80,
 		MinWidth: minWidth, MinHeight: 2*barHeight + propertyHeight + 40, UseContentSize: true,
 		Frameless: true, DisableMaximize: true, DisableFullScreen: true,
 		Hidden: true, Content: ui.View(a.view),

@@ -6,6 +6,7 @@ import (
 	"runtime"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/wildalley/screenpin/internal/brand"
 	"github.com/wildalley/screenpin/internal/doc"
 	"github.com/wildalley/screenpin/internal/render"
 )
@@ -79,6 +80,7 @@ func (a *App) view(c *ui.Context) {
 	if a.closed || a.image == nil {
 		return
 	}
+	brand.Apply(c)
 	for _, message := range a.toasts {
 		c.Toast(message)
 	}
@@ -257,7 +259,7 @@ func (a *App) moveLayer(dir int) {
 }
 
 func iconButton(c *ui.Context, key string, svg *ui.SVG, label string, disabled bool) ui.Element {
-	b := ui.Button(c.Key(key), "").Size(32, 32).Padding(0).Radius(6).Center().Shrink(0).
+	b := ui.Button(c.Key(key), "").Size(32, 32).Padding(0).Radius(8).Center().Shrink(0).
 		Label(label).Tooltip(label).Disabled(disabled).
 		Border(0, ui.Transparent)
 	bg := ui.Transparent
@@ -271,14 +273,15 @@ func iconButton(c *ui.Context, key string, svg *ui.SVG, label string, disabled b
 }
 
 func iconToggle(c *ui.Context, key string, svg *ui.SVG, label string, on *bool, disabled bool) ui.Element {
-	b := ui.Toggle(c.Key(key), on, "").Size(32, 32).Padding(0).Radius(6).Center().Shrink(0).
+	b := ui.Toggle(c.Key(key), on, "").Size(32, 32).Padding(0).Radius(8).Center().Shrink(0).
 		Label(label).Tooltip(label).Disabled(disabled).
 		Border(0, ui.Transparent)
 	bg := ui.Transparent
 	switch {
 	case *on && !disabled:
-		bg = c.Theme().Accent.Alpha(0.18)
-		b.Border(1.5, c.Theme().Accent)
+		// A soft accent tile and accent glyph mark the active tool.
+		bg = brand.Soft(c)
+		b.TextColor(brand.Ink(c))
 	case b.Pressed():
 		bg = c.Theme().SurfacePressed
 	case b.Hovered():
@@ -359,7 +362,7 @@ func (a *App) bar(c *ui.Context) {
 			a.TogglePin()
 		}
 		iconButton(c, "save", iconDownload, "保存图片 ("+commandKey()+"+S)", a.busy).Menu(a.imageMenu)
-		copy := ui.PrimaryButton(c.Key("copy"), "复制").Height(32).Padding(0, 10).Radius(6).Shrink(0).Disabled(a.busy).
+		copy := ui.PrimaryButton(c.Key("copy"), "复制").Height(32).Padding(0, 12).Radius(8).Shrink(0).Disabled(a.busy).
 			Tooltip("复制图片 (" + commandKey() + "+C)")
 		if copy.Clicked() {
 			a.Copy()

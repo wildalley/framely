@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/wildalley/screenpin/internal/brand"
 	"image"
 	"image/draw"
 	"log"
@@ -90,7 +91,7 @@ func (s *application) showScrollForSelection(selection *editor.ScreenSelection) 
 	s.scroll = v
 	s.captureBusy = true
 	s.operations++
-	v.win = mygo.NewWindow(mygo.WindowOptions{Title: "ScreenPin 长截图", Width: 620, Height: 620, MinWidth: 380, MinHeight: 140, UseContentSize: true, AlwaysOnTop: true, Hidden: true, Content: ui.View(v.view)})
+	v.win = mygo.NewWindow(mygo.WindowOptions{Title: brand.Title("长截图"), Width: 620, Height: 620, MinWidth: 380, MinHeight: 140, UseContentSize: true, AlwaysOnTop: true, Hidden: true, Content: ui.View(v.view)})
 	v.floating = capture.ExcludeWindow(v.win.NativeHandle())
 	if runtime.GOOS == "windows" {
 		v.win.Hide()
@@ -231,7 +232,7 @@ func (v *scrollWindow) finish() {
 		return
 	}
 	v.ending = true
-	log.Print("ScreenPin: long screenshot finish requested")
+	log.Print(brand.Name + ": long screenshot finish requested")
 	v.send("finish")
 	if v.overlay != nil {
 		v.overlay.Invalidate()
@@ -260,7 +261,7 @@ func (v *scrollWindow) view(c *ui.Context) {
 	}
 	ui.Column(c).Fill().Padding(18).Gap(12).Children(func() {
 		ui.Scroll(c).Grow(1).MinHeight(0).Gap(12).Children(func() {
-			ui.Text(c, "长截图").FontSize(20).FontWeight(600)
+			panelHeader(c, "长截图", "框选滚动区域，自动拼接", nil)
 			if !v.running {
 				ui.Text(c, "框选滚动内容，松开立即开始。截图过程中可从托盘查看或完成。").TextColor(c.Theme().TextMuted)
 				if v.loading {
@@ -428,12 +429,12 @@ func (v *scrollWindow) pickDesktopScrollRegion(displays []mygo.Display) (*deskto
 		if cancelled(err) || v.ctx.Err() != nil {
 			return nil, err
 		}
-		log.Printf("ScreenPin: long screenshot desktop frame unavailable: %v; selecting shared source first", err)
+		log.Printf(brand.Name+": long screenshot desktop frame unavailable: %v; selecting shared source first", err)
 		return nil, nil
 	}
 	full, err := capture.Decode(data)
 	if err != nil {
-		log.Printf("ScreenPin: long screenshot desktop frame: %v; selecting shared source first", err)
+		log.Printf(brand.Name+": long screenshot desktop frame: %v; selecting shared source first", err)
 		return nil, nil
 	}
 	region, target, err := editor.PickScreenRegion(v.ctx, full, displays, "", image.Pt(80, 160), "框选滚动内容，松开开始 · 首次共享请选择此屏 · Esc 取消")
@@ -449,7 +450,7 @@ func (v *scrollWindow) pickDesktopScrollRegion(displays []mygo.Display) (*deskto
 			if err != nil {
 				return nil, err
 			}
-			log.Printf("ScreenPin: long screenshot desktop selection: id=%d display=%v region=%v", display.ID, display.Bounds, region)
+			log.Printf(brand.Name+": long screenshot desktop selection: id=%d display=%v region=%v", display.ID, display.Bounds, region)
 			return &desktopScrollSelection{display: display, region: region, desktopSize: full.Bounds().Size(), pixels: pixels}, nil
 		}
 	}
@@ -535,7 +536,7 @@ func (v *scrollWindow) start() {
 				mygo.RunOnMain(func() { v.display = display })
 			}
 		}
-		log.Printf("ScreenPin: long screenshot requested display: id=%d bounds=%v", display.ID, options.DisplayBounds)
+		log.Printf(brand.Name+": long screenshot requested display: id=%d bounds=%v", display.ID, options.DisplayBounds)
 		source, err := capture.OpenStream(v.ctx, options)
 		fallback := false
 		if options.Automatic && errors.Is(err, capture.ErrAutomaticUnavailable) && v.ctx.Err() == nil {
@@ -560,7 +561,7 @@ func (v *scrollWindow) start() {
 			v.startFailed(err)
 			return
 		}
-		log.Printf("ScreenPin: long screenshot connected: %dx%d", first.Rect.Dx(), first.Rect.Dy())
+		log.Printf(brand.Name+": long screenshot connected: %dx%d", first.Rect.Dx(), first.Rect.Dy())
 		// Let the portal's source chooser disappear before taking the frame
 		// used for region selection; this is still the same capture session.
 		if runtime.GOOS == "linux" {
@@ -598,7 +599,7 @@ func (v *scrollWindow) start() {
 		}
 		if reuse != nil && screen != nil && screen.Bounds == reuse.Display {
 			region, err = reuse.ForStream(first.Bounds().Size())
-			log.Printf("ScreenPin: long screenshot reused selection: display=%v region=%v", screen.Bounds, region)
+			log.Printf(brand.Name+": long screenshot reused selection: display=%v region=%v", screen.Bounds, region)
 		} else if selected != nil && screen != nil && screen.Bounds == selected.display.Bounds {
 			region, err = editor.DesktopRegionToStream(selected.region, screen.Bounds, displays, selected.desktopSize, first.Bounds().Size())
 		} else if screen != nil {
@@ -676,7 +677,7 @@ func (v *scrollWindow) start() {
 				v.win.SetBounds(mygo.Rectangle{X: area.X + max(0, area.Width-440), Y: area.Y + 16, Width: 420, Height: 170})
 				v.win.ShowInactive()
 			}
-			log.Printf("ScreenPin: long screenshot selection: source=%d region=%v overlay=%t floating=%t", capture.StreamSourceType(source), region, v.overlay != nil, v.floating)
+			log.Printf(brand.Name+": long screenshot selection: source=%d region=%v overlay=%t floating=%t", capture.StreamSourceType(source), region, v.overlay != nil, v.floating)
 			controlsNotice = v.notice
 			v.app.refreshTray()
 		})
@@ -689,7 +690,7 @@ func (v *scrollWindow) start() {
 			return
 		}
 		pixels := controller.Stitch.Flatten()
-		log.Printf("ScreenPin: long screenshot completed: %dx%d", pixels.Rect.Dx(), pixels.Rect.Dy())
+		log.Printf(brand.Name+": long screenshot completed: %dx%d", pixels.Rect.Dx(), pixels.Rect.Dy())
 		// Image preparation runs off the UI thread; portal/helper teardown
 		// is deferred until after the editor handoff has been queued.
 		picture, err := slot.FromPixels(pixels, "长截图 "+time.Now().Format("15-04-05"))
@@ -706,7 +707,7 @@ func (v *scrollWindow) start() {
 			v.win.Destroy()
 			target := v.display.Bounds
 			v.app.showPicture(picture, &target, "")
-			log.Print("ScreenPin: long screenshot editor opened")
+			log.Print(brand.Name + ": long screenshot editor opened")
 			v.app.operations--
 			v.app.maybeQuit()
 		})
@@ -715,14 +716,14 @@ func (v *scrollWindow) start() {
 
 func (v *scrollWindow) startFailed(err error) {
 	if !cancelled(err) {
-		log.Printf("ScreenPin: long screenshot: %v", err)
+		log.Printf(brand.Name+": long screenshot: %v", err)
 	}
 	v.later(func() { v.applyStartFailure(err) })
 }
 
 func (v *scrollWindow) applyStartFailure(err error) {
 	if cancelled(err) {
-		log.Print("ScreenPin: long screenshot cancelled; discarding controller")
+		log.Print(brand.Name + ": long screenshot cancelled; discarding controller")
 		if v.win != nil {
 			v.win.Destroy()
 		} else {
@@ -745,7 +746,7 @@ func (v *scrollWindow) publish(c *scrollshot.Controller, show bool) {
 		preview = c.Stitch.Preview(previewWidth, previewHeight)
 	}
 	height, canUndo, paused, automatic, notice := c.Stitch.Height(), c.Stitch.CanUndo(), c.Paused, c.Automatic, c.Notice
-	log.Printf("ScreenPin: long screenshot progress: height=%d paused=%t notice=%q", height, paused, notice)
+	log.Printf(brand.Name+": long screenshot progress: height=%d paused=%t notice=%q", height, paused, notice)
 	v.later(func() {
 		if preview != nil {
 			v.setPreview(preview)

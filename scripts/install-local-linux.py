@@ -38,7 +38,7 @@ backup = repo / 'build/local-install-backup' / datetime.datetime.now().strftime(
 log = repo / 'build/native/screenpin-local.log'
 
 version = json.loads((repo / 'mygo.json').read_text())['version']
-assert subprocess.check_output([str(source), '--version'], text=True).strip() == f'ScreenPin {version} (mygo)'
+assert subprocess.check_output([str(source), '--version'], text=True).strip() == f'Framely {version} (mygo)'
 backup.mkdir(parents=True)
 for path, name in [(binary, 'screenpin'), (applications / 'screenpin.desktop', 'screenpin.desktop'),
                    (desktop, desktop.name), (icon, 'screenpin.png')]:

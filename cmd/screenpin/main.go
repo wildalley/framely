@@ -4,19 +4,21 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/wildalley/screenpin/internal/brand"
 	"os"
 
 	"github.com/wildalley/screenpin/internal/desktop"
 )
 
-const usage = `ScreenPin 托盘截图工具
+const usage = `Framely 取景 — 截图、贴图、长截图、录屏与离线文字识别
 
-用法: screenpin [--hidden | --capture | --scroll | --ocr] [图片]
+用法: screenpin [--hidden | --capture | --scroll | --ocr | --record] [图片]
   默认启动到托盘；每张图片独立开窗，关闭即销毁
   --hidden   在后台启动；已有实例时不打扰当前窗口
   --capture  截图；已有实例时交给该实例
   --scroll   打开长截图；已有实例时交给该实例
   --ocr      框选屏幕后直接取字；已有实例时交给该实例
+  --record   打开录屏；录制中再次调用则结束并保存
   --version  显示版本
   --help     显示帮助
 `
@@ -33,7 +35,7 @@ func main() {
 		os.Exit(2)
 	}
 	if launch.Version {
-		fmt.Println("ScreenPin " + desktop.Version + " (mygo)")
+		fmt.Println(brand.Name + " " + desktop.Version + " (mygo)")
 		return
 	}
 	if launch.File != "" {
@@ -44,7 +46,7 @@ func main() {
 		}
 	}
 	if err := desktop.Run(launch); err != nil {
-		fmt.Fprintln(os.Stderr, "ScreenPin:", err)
+		fmt.Fprintln(os.Stderr, brand.Name+":", err)
 		os.Exit(1)
 	}
 }

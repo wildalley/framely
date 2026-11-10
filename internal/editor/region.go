@@ -8,6 +8,7 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
+	"github.com/wildalley/screenpin/internal/brand"
 	"github.com/wildalley/screenpin/internal/capture"
 	"github.com/wildalley/screenpin/internal/doc"
 	"github.com/wildalley/screenpin/internal/render"
@@ -202,6 +203,7 @@ func (p *imagePicker) adjust(dx, dy int, resize bool) {
 	p.start, p.end = r.Min, r.Max
 }
 func (p *imagePicker) view(c *ui.Context) {
+	brand.Apply(c)
 	if p.done {
 		return
 	}

@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/wildalley/screenpin/internal/brand"
 	"os"
 	"strings"
 	"sync"
@@ -40,7 +41,7 @@ func New() (*Client, error) {
 		"org.freedesktop.host.portal.Registry.Register", 0, AppID, map[string]dbus.Variant{}).Err
 	if err != nil && !registryUnavailable(err) {
 		conn.Close()
-		return nil, fmt.Errorf("登记 ScreenPin 门户标识失败: %w", err)
+		return nil, fmt.Errorf("登记 %s 门户标识失败: %w", brand.Name, err)
 	}
 	return c, nil
 }

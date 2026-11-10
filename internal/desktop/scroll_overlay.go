@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"fmt"
+	"github.com/wildalley/screenpin/internal/brand"
 	"image"
 	"log"
 	"math"
@@ -63,7 +64,7 @@ func (v *scrollWindow) openOverlay(display mygo.Display, region image.Rectangle,
 	}()
 	input := mygo.Rectangle{X: b.X + int(math.Floor(float64(toolbar.X))), Y: b.Y + int(math.Floor(float64(toolbar.Y))), Width: int(math.Ceil(float64(toolbar.W))), Height: int(math.Ceil(float64(toolbar.H)))}
 	w := mygo.NewWindow(mygo.WindowOptions{
-		Title: "ScreenPin 长截图控件", X: input.X, Y: input.Y, Width: input.Width, Height: input.Height,
+		Title: brand.Title("长截图控件"), X: input.X, Y: input.Y, Width: input.Width, Height: input.Height,
 		UseContentSize: true, Frameless: true, Hidden: true,
 		AlwaysOnTop: true, SkipTaskbar: true, DisableResize: true, DisableShadow: true,
 		Content: ui.View(v.overlayView),
@@ -86,7 +87,7 @@ func (v *scrollWindow) openOverlay(display mygo.Display, region image.Rectangle,
 		}
 		v.later(func() {
 			if !w.IsDestroyed() {
-				log.Printf("ScreenPin: long screenshot toolbar: expected=%v actual=%v", input, w.Bounds())
+				log.Printf(brand.Name+": long screenshot toolbar: expected=%v actual=%v", input, w.Bounds())
 			}
 		})
 	})
