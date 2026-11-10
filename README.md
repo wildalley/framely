@@ -1,114 +1,103 @@
 # ScreenPin
 
-ScreenPin 是一个面向 Linux、Windows 和 macOS 的轻量、现代的桌面截图、标注与贴图工具。原生版使用 **Go + MyGo** 重制，采用托盘常驻与独立多贴图窗口架构：每次截图、粘贴或打开图片都会创建独立贴图窗口，支持标注涂鸦、置顶、复制、导出与离线 OCR；关闭贴图后即刻释放内存与图片资源。
+跨平台截图、标注、贴图与离线文字识别工具，使用 Go + MyGo 构建。启动后驻留托盘，每次截图、粘贴或打开图片都会创建独立窗口；关闭窗口后释放该图片和编辑历史。
 
-版本变更详见 [更新日志](CHANGELOG.md)，开发演进与测试见 [原生开发说明](docs/NATIVE.md) 与 [改进记录与计划](IMPROVEMENTS.md)。
+[下载 Release](https://github.com/wildalley/screenpin/releases/latest) · [更新日志](CHANGELOG.md) · [开发与构建](docs/NATIVE.md) · [OCR 流程](docs/OCR_WORKFLOW.md)
 
----
+## 功能
 
-## 核心特性
+- **截图与贴图**：区域截图、粘贴和导入图片；多窗口独立标注、缩放、置顶和关闭。
+- **标注编辑**：画笔、荧光笔、矩形、椭圆、箭头、文字和马赛克；调整颜色、粗细、透明度和圆角，支持撤销与重做。
+- **滚动长截图**：Linux 与 Windows 支持框选后连续拼接、暂停、撤回和完成；采集组件只传输选区像素，自动滚动以桌面授权能力为准。
+- **离线 OCR**：内置中英文模型，无需安装 Python；从托盘“框选取字…”或 `screenpin --ocr` 直接识别，长图逐块显示结果。
+- **“大爆炸”式选词**：中文分词、单字模式、点击或拖动选词、Shift 连选、反选和全文编辑，按原文顺序组合复制。
+- **图片导出**：复制到剪贴板，或保存为 PNG、JPEG、WebP；PNG/WebP 支持透明度，JPEG 使用白色背景。
 
-- **多平台原生截图与快速选区**
-  - **Linux (Wayland / X11)**：通过 `xdg-desktop-portal` + PipeWire 原生采集，各显示器分别记忆授权；支持全屏选区拖选、按住空格移动选区、`Enter` 全屏、`Esc` 取消。无需依赖 WebKitGTK。
-  - **Windows**：纯内存桌面采集与自有原生全屏选区，点击保存前不产生磁盘临时文件。
-  - **macOS**：原生桌面捕获与窗口展示。
-- **现代化极简工具栏与快捷属性栏**
-  - 极简无框底图标与强调色激活状态，按功能逻辑分组。
-  - 现代连体胶囊数值组件 `[ 标签 数值 | ▲▼ ]`，支持直接输入或快捷加减。
-  - 标注线宽、字体大小、矩形及整图圆角、不透明度、颜色调色板一键直达。
-- **智能长截图（滚动截图）**
-  - 进入长截图后直接框选、松开即开始；Windows 10 2004+ 与 Linux 提供原生浮动控制条。
-  - 边滚边拼（40ms 极低延迟持续采样），无需等待拖动停止；自动识别去除右侧灰色滚动条，固定页脚防重复追加。
-- **离线中英文 OCR 文字识别**
-  - 开箱即用内置本地离线 OCR 模型与独立子进程运行时，不依赖系统安装 Python。
-  - 纯本地推理，支持框选识别、长图逐块返回、全文编辑，以及类似「大爆炸」的中文分词与选词组合复制。
-  - 托盘「框选取字…」或 `screenpin --ocr` 截图后直接进入结果；支持点选、Shift 连选、全选/反选和单字模式。
-  - 连续识别复用模型，空闲 45 秒后释放子进程。识别与分词均不调用云端 API。
-- **独立多贴图与高效内存释放**
-  - 支持快捷键连续截图，每张贴图独立开窗，可随意移动、缩放、置顶（Pin）于屏幕最前。
-  - 贴图关闭后即刻销毁图片对象与撤销历史，严格控制驻留内存（日常待机仅约 20~30 MB）。
-  - 托盘图标动态显示全局快捷键与当前贴图数，支持「关闭所有贴图」一键批量清理。
-- **多样导出**
-  - PNG、WebP、JPEG 多格式导出；WebP / JPEG 质量无级可调；支持保留透明四角（PNG/WebP）或智能铺白底（JPEG）。
-
----
+截图和 OCR 在本机处理，不上传图片，不调用云端识别 API，也不在运行时下载模型。连续 OCR 会复用模型，空闲 45 秒后回收进程。内存与性能测量范围见 [优化检查记录](docs/AUDIT_2026-11-10.md)。
 
 ## 下载与安装
 
-安装包请从 [Releases](https://github.com/wildalley/screenpin/releases) 获取；当前原生源码版本为 `0.2.2`，本文中的开发改动以实际发布说明为准。完整安装包均内置离线中英文 OCR 组件。
+当前源码版本为 **0.2.2**，可下载版本以 [Release 页面](https://github.com/wildalley/screenpin/releases) 为准。完整包包含主程序、采集组件和离线 OCR 运行时，升级时请退出旧实例并完整替换配套文件。
 
-| 系统平台 | 安装方式 / 文件 |
-| :--- | :--- |
-| **Windows x64** | `screenpin-0.2.2-windows-amd64-setup.exe`；另提供免安装 `screenpin-0.2.2-windows-amd64-portable.zip` |
-| **macOS 15+ (Apple Silicon)** | `screenpin-0.2.2-darwin-arm64.dmg`（下载后将 ScreenPin 拖入 Applications） |
-| **macOS 15+ (Intel)** | `screenpin-0.2.2-darwin-amd64.dmg` |
-| **Ubuntu / Debian x64** | `sudo apt install ./screenpin-0.2.2-linux-amd64.deb` |
-| **Arch Linux x64** | `sudo pacman -U ./screenpin-native-0.2.2-1-x86_64.pkg.tar.zst` |
-| **其他 Linux x64** | 解压 `screenpin-0.2.2-linux-amd64-portable.tar.gz` 后运行 `./install.sh` 或 `./screenpin` |
+| 平台 | 安装包或便携包 |
+| --- | --- |
+| Windows x64 | `screenpin-0.2.2-windows-amd64-setup.exe` 或 `screenpin-0.2.2-windows-amd64-portable.zip` |
+| macOS 15+ Apple Silicon | `screenpin-0.2.2-darwin-arm64.dmg` |
+| macOS 15+ Intel | `screenpin-0.2.2-darwin-amd64.dmg` |
+| Ubuntu/Debian x64 | `screenpin-0.2.2-linux-amd64.deb` |
+| Arch Linux x64 | `screenpin-native-0.2.2-1-x86_64.pkg.tar.zst` |
+| 其他 Linux x64 | `screenpin-0.2.2-linux-amd64-portable.tar.gz` |
 
-所有安装包的 SHA-256 校验和见 Release 中的 `SHA256SUMS` 文件。
+Ubuntu/Debian 使用 `sudo apt install ./screenpin-0.2.2-linux-amd64.deb`；Arch 使用 `sudo pacman -U ./screenpin-native-0.2.2-1-x86_64.pkg.tar.zst`。Linux 便携包解压后运行 `./screenpin`，或执行 `./install.sh` 安装到当前用户目录。Release 中的 `SHA256SUMS` 可用于校验下载文件。
 
-> [!NOTE]
-> 平台说明与发布细节请参阅 [v0.2.2 发布说明](docs/releases/v0.2.2.md)。
+| 平台 | 使用条件 |
+| --- | --- |
+| Linux | GTK3、AppIndicator、PipeWire 与适合当前桌面的 `xdg-desktop-portal` 后端；无需 WebKitGTK。发行包以 Ubuntu 22.04 或兼容运行库为基线。 |
+| Windows | 长截图使用 Windows Graphics Capture，要求 Windows 10 1903+；浮动控制窗口排除采集需要 Windows 10 2004+。 |
+| macOS | 支持截图、标注、贴图和 OCR，暂不支持长截图。 |
 
----
+Windows/macOS 包暂未配置正式开发者签名与公证。更多平台限制见 [v0.2.2 发布说明](docs/releases/v0.2.2.md)。
 
-## 本地开发与构建
+## 快速使用
 
-### 依赖环境
-- **Go**：>= 1.27.3（与 `go.mod` 一致）
-- **MyGo 工具链**：`mygo`
-- **Linux 编译依赖**：`libayatana-appindicator3-dev`、`libpipewire-0.3-dev`、`pkg-config`
-
-### 常用命令
+1. 启动 ScreenPin，从托盘截图、粘贴图片或打开文件。
+2. 默认全局截图键为 **Win+Shift+S**，macOS 显示为 **Cmd+Shift+S**；可在设置中修改。已有配置保留原来的快捷键。
+3. 在图片窗口标注后，按 `Ctrl/Cmd+C` 复制、`Ctrl/Cmd+S` 保存、`Ctrl/Cmd+W` 关闭。
+4. 长截图从托盘或图片工具栏进入，也可在图片窗口按 `Ctrl/Cmd+Shift+L`；完成时再次按截图快捷键。
+5. OCR 从托盘“框选取字…”进入，或在图片窗口按 `Ctrl/Cmd+Shift+O` 识别整图。
 
 ```bash
-# 运行单元测试
-go test ./...
+screenpin                    # 启动或唤起托盘实例
+screenpin --capture          # 截图
+screenpin --scroll           # 长截图（Linux / Windows）
+screenpin --ocr              # 直接框选取字
+screenpin ./example.png      # 打开图片
+```
 
-# 运行代码竞态检测
+Linux Wayland 的截图、屏幕共享与快捷键授权由系统门户分别管理。niri 等桌面的设置方式、权限问题及全部快捷键见 [使用说明](docs/NATIVE.md)。
+
+配置位于 Linux 的 `~/.config/screenpin/config.json`（或 `$XDG_CONFIG_HOME` 下）、Windows 的 `%APPDATA%\screenpin\config.json`、macOS 的 `~/Library/Application Support/screenpin/config.json`。建议通过设置面板修改。
+
+## 开发与构建
+
+需要 Go 1.27.3+。完整发行包还需要 `uv`，构建脚本会准备 Python 3.12 环境。Linux 采集组件需要 C 编译器、`pkg-config` 和 PipeWire 开发头文件；Windows 需要 Visual Studio x64 Native Tools 与 Windows SDK；macOS 使用本机工具链。MyGo 由 `go.mod` 的工具依赖管理。
+
+```bash
+# Go 测试与静态检查
 go test -race ./...
+go vet ./...
 
-# 构建本地平台原生二进制与安装包
-go tool mygo build --platform linux/amd64
+# 构建当前平台的原生采集与离线 OCR 组件
+python3 scripts/build-components.py
 
-# 一键安装到当前用户本地目录 (~/.local/bin) 并启动
-python3 scripts/install-local-linux.py --image assets/app-icon.png
+# Linux x64 完整包示例
+go tool mygo build -platform linux/amd64 -skip-installer -skip-dmg -skip-notarize
+python3 scripts/package-release.py
 ```
 
-详细的各平台编译步骤、离线 OCR 构建流程及测试见 [原生开发说明](docs/NATIVE.md)。
+组件生成在 `resources/<系统>-<架构>/workers/`，应用包位于 `build/native/`，最终发行附件位于 `build/release/`。各平台组件须在目标系统构建；仅交叉编译 Go 程序不会得到完整 OCR 发行包。
 
----
+开发运行时显式设置组件目录：
 
-## 快捷键与配置
-
-可以在设置面板中直接录制全局截图快捷键。配置文件路径位于操作系统标准配置目录：
-- **Linux**：`~/.config/screenpin/config.json`
-- **Windows**：`%APPDATA%\ScreenPin\config.json`
-
-默认配置：
-```json
-{
-  "captureShortcut": "Ctrl+Alt+A",
-  "hideAfterCopy": false
-}
+```bash
+export SCREENPIN_COMPONENTS_DIR="$PWD/resources/$(go env GOOS)-$(go env GOARCH)/workers"
+go run ./cmd/screenpin
 ```
 
-- Linux Wayland 下保存快捷键会自动请求桌面门户（`org.freedesktop.portal.GlobalShortcuts`）授权。
-- 开机自启由操作系统注册表 / 自启目录管理，在托盘菜单或设置中即可一键开关。
+完整构建、集成测试和发布步骤见 [原生开发说明](docs/NATIVE.md)。问题反馈请附操作系统、桌面环境、ScreenPin 版本和复现步骤，避免上传含隐私的截图。
 
----
+## 仓库结构
 
-## 常用操作指引
+| 目录 | 内容 |
+| --- | --- |
+| `cmd/`、`internal/` | Go 应用、界面、图像处理、平台集成和测试 |
+| `workers/` | 原生采集组件与离线 OCR 运行时 |
+| `assets/` | 应用、托盘和安装图标 |
+| `scripts/`、`packaging/arch-native/` | 构建、校验、打包与安装脚本 |
+| `docs/` | 使用说明、测试记录和发行说明 |
 
-- **框选截图**：默认快捷键 `Ctrl + Alt + A`（支持自定义），拖拽选择范围，松开即可生成贴图窗口。
-- **滚动长截图**：托盘菜单选择「长截图」或按长截图快捷键，框选要滚动的区域，松开后滚动鼠标滚轮或拖动内容，再次按快捷键或点击浮动栏「完成」即可生成长图。
-- **快速固定与置顶**：点击工具栏图钉或双击标题栏，窗口将固定在所有应用最前层。
-- **标注编辑**：画笔、矩形、圆形、箭头、荧光笔、文字、马赛克。画完图形后可直接拖拽四角调节点缩放或移动。
-- **复制与保存**：`Ctrl + C` 一键复制合成图，`Ctrl + S` 弹出保存选项。
+当前主线仅维护 Go + MyGo 原生版；旧 Tauri/React 源码可在 `v0.1.1` 标签和 Git 历史中查阅。后续计划见 [改进记录](IMPROVEMENTS.md)。
 
----
+## 许可证
 
-## License
-
-[MIT](LICENSE)
+项目采用 [MIT](LICENSE) 许可证。分词词典及图标的第三方许可证保留在各自目录；发行包附带 OCR 依赖许可证与 Python 依赖清单。

@@ -1,9 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=ScreenPin
-Comment=Non-destructive screenshot editor
-Exec=screenpin
-Icon=screenpin
-Terminal=false
-Categories=Graphics;Utility;
-StartupWMClass=screenpin

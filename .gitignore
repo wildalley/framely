@@ -17,3 +17,9 @@ packaging/arch-native/*.pkg.tar.*
 *.log
 .DS_Store
 .claude/settings.local.json
+.env
+.env.*
+.aws/
+.agents/
+.codex/
+.scratch/

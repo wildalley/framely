@@ -62,14 +62,9 @@ package() {
   ln -s ../lib/screenpin/screenpin "$pkgdir/usr/bin/screenpin"
   # Match the registered portal ID and preserve permissions from the Tauri app.
   install -Dm644 "$startdir/io.screenpin.desktop.desktop" "$pkgdir/usr/share/applications/io.screenpin.desktop.desktop"
-  local _size _icon
+  local _size
   for _size in 32 64 128 256 512; do
-    case "$_size" in
-      256) _icon=128x128@2x.png ;;
-      512) _icon=icon.png ;;
-      *) _icon="${_size}x${_size}.png" ;;
-    esac
-    install -Dm644 "$_build_root/src-tauri/icons/$_icon" "$pkgdir/usr/share/icons/hicolor/${_size}x${_size}/apps/screenpin.png"
+    install -Dm644 "$_build_root/assets/icons/${_size}x${_size}.png" "$pkgdir/usr/share/icons/hicolor/${_size}x${_size}/apps/screenpin.png"
   done
   install -Dm644 "$_build_root/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
   install -Dm644 "$_build_root/internal/ocrtext/LICENSE.jieba" "$pkgdir/usr/share/licenses/$pkgname/LICENSE.jieba"
