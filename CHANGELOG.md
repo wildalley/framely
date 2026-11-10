@@ -11,7 +11,7 @@
 - 新增录屏浮动控制条：录制时显示在录制区域外侧，带计时、暂停/继续和结束按钮。
 - niri 上长截图与录屏控制条改为原生 Wayland 窗口，通过 niri IPC 设为浮动并放到选区旁，跟随输出缩放，不再显示得很小或跑到左上角；定位后焦点交还原窗口。
 - 启动采集/录屏组件前检查协议版本；旧版组件不再以 `EOF exit status 2` 失败，而是提示重新安装配套组件。本地组件构建脚本可重复运行。
-- 修复 Windows CI 构建：FFmpeg 配置误用 WSL 的 `bash.exe`，以及录屏测试可能链接到 MSYS2 的 `link.exe`。
+- 修复 Windows CI 构建：FFmpeg 配置误用 WSL 的 `bash.exe`、MSYS2 pkgconf 无法解析 `D:/…` 形式的 `PKG_CONFIG_PATH`、录屏组件缺少 Media Foundation GUID 链接库，以及录屏测试可能链接到 MSYS2 的 `link.exe`。
 
 - 新增原生区域录屏：30/60 fps、最大 720p/1080p/1440p/4K、暂停/继续、MP4 保存和首帧预览；独立录屏快捷键推荐 `Super+Shift+R`，默认留空。
 - 新增录后 GIF 导出：起点、最多 60 秒时长、10/15/20/30 fps、最大宽度；采用两遍调色板处理，取消或失败不覆盖已有文件。
