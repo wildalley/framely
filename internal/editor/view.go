@@ -291,6 +291,9 @@ func iconToggle(c *ui.Context, key string, svg *ui.SVG, label string, on *bool, 
 	return b.Children(func() { ui.Icon(c, svg).Size(18, 18).Shrink(0) })
 }
 
+// compactActionsWidth is where the action row tightens to fit all buttons.
+const compactActionsWidth = 420
+
 // toolSegmentWidth fits every tool, the history divider and undo/redo in the
 // rounded tool segment, so it hugs its buttons on wide windows and only
 // overflows when the window is narrower.
@@ -372,8 +375,17 @@ func (a *App) bar(c *ui.Context) {
 			a.TogglePin()
 		}
 		iconButton(c, "save", iconDownload, "保存图片 ("+commandKey()+"+S)", a.busy).Menu(a.imageMenu)
-		copy := ui.PrimaryButton(c.Key("copy"), "复制").Height(32).Padding(0, 12).Radius(8).Shrink(0).Disabled(a.busy).
-			Tooltip("复制图片 (" + commandKey() + "+C)")
+		var copy ui.Element
+		if width < compactActionsWidth {
+			// Every action must fit a 320px window whatever the font: show
+			// the copy glyph alone, keeping its name for assistive technology.
+			copy = ui.PrimaryButton(c.Key("copy-compact"), "").Size(32, 32).Padding(0).Radius(8).Center().Shrink(0).
+				Label("复制").Disabled(a.busy).Tooltip("复制图片 (" + commandKey() + "+C)").
+				Children(func() { ui.Icon(c, iconCopy).Size(18, 18).Shrink(0) })
+		} else {
+			copy = ui.PrimaryButton(c.Key("copy"), "复制").Height(32).Padding(0, 12).Radius(8).Shrink(0).Disabled(a.busy).
+				Tooltip("复制图片 (" + commandKey() + "+C)")
+		}
 		if copy.Clicked() {
 			a.Copy()
 		}
@@ -388,7 +400,11 @@ func (a *App) bar(c *ui.Context) {
 		}
 	}
 	row := func(key string, content func()) {
-		ui.Row(c.Key(key)).FillWidth().Height(barHeight).Gap(4).Padding(4, 6).AlignItems(ui.Center).DragWindow().Children(content)
+		gap := float32(4)
+		if width < compactActionsWidth {
+			gap = 2
+		}
+		ui.Row(c.Key(key)).FillWidth().Height(barHeight).Gap(gap).Padding(4, 6).AlignItems(ui.Center).DragWindow().Children(content)
 	}
 	ui.Column(c.Key("bar")).FillWidth().Height(float32(toolbarHeight(width))).Background(c.Theme().Background).
 		BorderWidth(1, 0, 0, 0).BorderColor(c.Theme().Border).Children(func() {
