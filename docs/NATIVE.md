@@ -1,6 +1,6 @@
 # MyGo 原生预览版
 
-`refactor/mygo-native` 使用 Go + MyGo 实现托盘截图与贴图工具。启动时只显示托盘；每张图片独立开窗，关闭就销毁图片、标注和撤销记录。没有主页、截图历史或工程保存流程。当前原生发行版本为 `v0.2.0`，Tauri 旧版为 `v0.1.1`。
+`refactor/mygo-native` 使用 Go + MyGo 实现托盘截图与贴图工具。启动时只显示托盘；每张图片独立开窗，关闭就销毁图片、标注和撤销记录。没有主页、截图历史或工程保存流程。当前原生源码版本为 `0.2.1`，发行包功能以实际发布说明为准；Tauri 旧版为 `v0.1.1`。
 
 ## 使用
 
@@ -67,17 +67,24 @@ CPU 格式与 DMA-BUF 分别协商，DMA modifier 为必需属性；只有实际
 
 拼接最多保留 2400 万像素、高 30000 像素；达到限制后可完成当前图片。预览使用缩略图，完成时才生成整张像素，保存仍用完整分辨率。macOS 暂未实现长截图采集组件，发行包包含离线 OCR。
 
-图片窗口工具栏「识别文字」菜单可识别整图或框选，右键菜单也提供入口；`Ctrl/Cmd+Shift+O` 识别整图。结果窗口支持编辑全文、复制全文及逐行复制。识别处理当前标注后的画面，马赛克不读取底下原图。关闭图片或点击取消会终止 OCR；识别超时为 3 分钟，输入最多 3200 万像素。
+图片窗口工具栏「识别文字」菜单可识别整图或框选，右键菜单也提供入口；`Ctrl/Cmd+Shift+O` 识别整图。托盘「框选取字…」或 `screenpin --ocr` 会直接打开取字结果，省去图片编辑器这一步；可在桌面快捷键设置中绑定该命令。识别处理当前标注后的画面，马赛克不读取底下原图。先选区域，获得全局识别名额后才合成选区，避免多个窗口排队时各自生成整张合成图。
 
-完整 Windows/Linux/macOS 包附带 RapidOCR 3.9.2、PP-OCRv6-small ONNX CPU 模型和独立运行时，不需要安装 Python，不上传截图、不在运行时下载模型。长图分块识别并合并重叠文字；复杂多栏排版和表格暂不重建文档结构。
+结果默认显示类似「大爆炸」的词块：中文本地分词，英文、数字、邮箱、网址尽量保持完整；点选或 Shift 连选，再按原文顺序组合复制。支持全选、反选、清空和单字模式；方向键在一组词块中移动焦点，空格切换，`Ctrl/Cmd+A` 全选，`Ctrl/Cmd+C` 复制已选内容。「全文编辑」可纠正识别结果，切回选词时重新分词并清空选择。长图每完成一个区块就更新结果，取消后保留已完成文字。
+
+关闭来源图片、关闭识别窗口或点击取消会终止当前 OCR。识别超时为 3 分钟（包含排队），输入最多 3200 万像素，输出最多 20000 行、2 MiB 文字。全局仅一个模型进程，连续识别复用模型，空闲 45 秒、取消、错误或程序退出时回收进程。UI 仅保留文字，分词词典按需加载。
+
+完整 Windows/Linux/macOS 包附带 RapidOCR 3.9.2、PP-OCRv6-small ONNX CPU 模型和独立运行时，不需要安装 Python，不上传截图、不在运行时下载模型。长图分块识别，仅对跨块且有文本重叠的片段去重合并，同行独立表格单元格保持分开；复杂多栏排版和表格暂不重建文档结构。当前实现和实测见 [OCR 流程说明](OCR_WORKFLOW.md)。
 
 ## 开发与检查
 
 需要 Go 1.27.3 或更新版本。Linux 原生窗口需要 GTK3、DBus、AppIndicator 和 `xdg-desktop-portal`，不需要 WebKitGTK。Wayland 需要适合桌面环境的 portal 后端。
 
 ```bash
+# 在仓库根目录运行；开发组件目录必须显式指定为绝对路径。
+export SCREENPIN_COMPONENTS_DIR="$PWD/resources/$(go env GOOS)-$(go env GOARCH)/workers"
 go run ./cmd/screenpin
 go run ./cmd/screenpin --capture
+go run ./cmd/screenpin --ocr
 go run ./cmd/screenpin ./example.png
 go test -race ./...
 go test -tags nodynamic ./internal/render
@@ -87,7 +94,7 @@ bash scripts/test-capture.sh # Linux 原生缓冲区协议及 DMA-BUF 哨兵/步
 
 在真实 Linux 桌面手动检查来源选择器及首帧时，可运行 `SCREENPIN_LIVE_CAPTURE=1 go test -count=1 -run TestLiveDesktopStream -v ./internal/capture`。该命令会请求真正的系统共享选择；测试不替用户授权，30 秒后取消。自动化协议测试仍使用独立总线，不会请求真实桌面。
 
-默认启动和再次启动都只让托盘待命；`--hidden` 保留为兼容参数。`--capture` 和图片参数交给已有实例，每次打开独立图片，不替换当前图片。
+默认启动和再次启动都只让托盘待命；`--hidden` 保留为兼容参数。`--capture`、`--scroll`、`--ocr` 和图片参数交给已有实例；三个动作参数互斥，不能与图片参数同时使用。
 
 Linux 门户测试使用独立会话总线，不调用当前桌面的门户。MyGo 无窗口控件回归覆盖文字输入焦点、工具栏溢出与方向键、画布菜单、关闭时的状态释放及异步结果隔离。CI 执行这些检查并构建 Linux、Windows 和 macOS 原生产物。
 
@@ -103,6 +110,14 @@ SCREENPIN_OCR_INTEGRATION=1 go test -v ./internal/ocr # Linux；Windows 先设�
 ```
 
 生成组件位于 `resources/<goos>-<goarch>/workers/`，MyGo 构建会复制到应用旁；发布时保留整个目录，包含模型、运行库和 licenses。构建脚本默认包含离线 OCR，解压后的组件约 350 MiB，实际大小依平台变化。只交叉编译 Go 主程序无法生成完整组件包。CI 在 Windows/Linux 本机编译并上传含组件的产物，另保留三平台 Go 构建检查；CI 配置的增加不等同于本地执行过 Windows 测试。
+
+OCR 和长截图采集组件均需要 protocol 2。OCR 使用有长度边界的 RGB 请求和逐块 JSON 响应；采集收到选区后只传该区域的像素，保留原始坐标与来源尺寸。更新主程序时必须重新构建配套组件；旧组件会提示版本不匹配。打包检查会核对采集组件的 `--protocol-version`，无需授权桌面即可检查版本。
+
+组件只从应用旁的 workers、macOS Resources 或用户安装目录查找，不再扫描当前工作目录及祖先目录。开发时设置 `SCREENPIN_COMPONENTS_DIR` 为 `resources/<goos>-<goarch>/workers` 的绝对路径；该覆盖是唯一查找目录，缺失时直接报错，不会混用旧安装组件。OCR 集成测试在没有显式覆盖时会使用测试仓库的构建目录。
+
+OCR 构建使用 `uv pip sync --require-hashes --only-binary :all:` 和两个跨平台锁文件，包含 Windows/macOS 专用依赖，清除旧环境的多余包。修改版本后用锁文件头部的命令重新生成，提交来源文件和锁文件；RapidOCR 单独锁定，完整依赖中用 headless OpenCV 替代其 GUI 包。包内包含 Python 分发依赖的 `sbom.cdx.json`，manifest 记录源码和锁文件哈希；这份清单不覆盖所有系统库、模型和 Go 主程序。Actions 已固定到完整提交 SHA，并提供每周 Go/Python 漏洞扫描与 Dependabot 更新配置。
+
+普通图片、截图解码与 OCR 统一限制为 32 MP、最长边 32768；采集屏幕仍保留 16384 边长限制，长图拼接保留更低的 24 MP / 30000px 限制。文件和门户读取上限为 220 MiB，先检查图片头再解码。多窗口图片共用 512 MiB 的估算预算（每像素 13 字节加固定开销），加载失败、窗口关闭与后台任务结束会释放。长截图开始滚动前按最大拼接尺寸预留结果额度，完成后按实际尺寸缩减；预算不足会在开始前提示，取消会归还预留。它不是整个进程的 RSS/GPU 硬上限，采集流、编码数据、历史和 OCR 子进程另有生命周期。每个窗口的撤销/重做历史最多 80 步、保守估算 32 MiB，当前文档内容不会因历史裁剪被删除。
 
 ```bash
 go tool mygo build -platform linux/amd64,windows/amd64,darwin/arm64 \
@@ -122,7 +137,7 @@ SDK 默认生成的 Linux 安装入口名为 `screenpin.desktop`。ScreenPin 历
 ```bash
 cd packaging/arch-native
 makepkg --syncdeps --cleanbuild
-sudo pacman -U ./screenpin-native-0.2.0-1-x86_64.pkg.tar.zst
+sudo pacman -U ./screenpin-native-0.2.1-1-x86_64.pkg.tar.zst
 ```
 
 该配方从当前工作区构建，支持 x86_64 和 aarch64，并排除本地凭据、代理状态和编译产物。`screenpin-native` 提供 `screenpin` 命令，与稳定版包互斥。配置仍沿用 `screenpin/config.json`，安装前请从托盘退出旧实例。
