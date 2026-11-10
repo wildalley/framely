@@ -4,7 +4,17 @@ on:
   push:
     branches: [main]
     tags: ["v0.1.*"]
+    paths: &legacy-paths
+      - '.github/workflows/build-arch.yml'
+      - 'src/**'
+      - 'src-tauri/**'
+      - 'packaging/arch/**'
+      - 'package*.json'
+      - 'index.html'
+      - 'vite.config.*'
+      - 'tsconfig*.json'
   pull_request:
+    paths: *legacy-paths
   workflow_dispatch:
 
 permissions:
@@ -13,9 +23,10 @@ permissions:
 jobs:
   arch-package:
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
 
@@ -43,7 +54,7 @@ jobs:
             '
 
       - name: Upload Arch package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: screenpin-arch-${{ github.sha }}
           path: packaging/arch/*.pkg.tar.zst
