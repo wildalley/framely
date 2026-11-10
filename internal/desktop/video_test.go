@@ -117,3 +117,36 @@ func TestGIFTabValidatesAgainstVideoLength(t *testing.T) {
 		t.Fatal("start beyond the video accepted")
 	}
 }
+
+func TestRecordBarStaysOutsideRegionAndShowsControls(t *testing.T) {
+	region := ui.Rect{X: 100, Y: 100, W: 1800, H: 1100}
+	r, ok := barBeside(region, 2560, 1440, recordBarW, recordBarH)
+	if !ok || r.Y < region.Y+region.H || r.X+r.W > 2560 || r.Y+r.H > 1440 {
+		t.Fatalf("below: %+v %v", r, ok)
+	}
+	full := ui.Rect{X: 0, Y: 0, W: 2560, H: 1440}
+	if _, ok := barBeside(full, 2560, 1440, recordBarW, recordBarH); ok {
+		t.Fatal("bar placed over a full-screen recording")
+	}
+	for _, dark := range []bool{false, true} {
+		for _, paused := range []bool{false, true} {
+			v := newVideoWindow(&application{ctx: context.Background()}, context.Background(), func() {})
+			v.running, v.paused, v.status.ElapsedMS = true, paused, 83_000
+			tt := ui.NewTester(v.barView, recordBarW, recordBarH)
+			tt.SetDark(dark)
+			for _, label := range []string{"01:23", "结束"} {
+				if r, ok := tt.Find(label); !ok || r.X+r.W > recordBarW+.5 {
+					t.Fatalf("%s hidden: %+v", label, r)
+				}
+			}
+			want := "暂停"
+			if paused {
+				want = "继续"
+			}
+			if _, ok := tt.Find(want); !ok {
+				t.Fatalf("missing %s", want)
+			}
+			saveShortcutPreview(t, tt, fmt.Sprintf("record-bar-paused-%t-dark-%t", paused, dark))
+		}
+	}
+}

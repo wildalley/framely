@@ -661,6 +661,27 @@ func (s *application) refreshTray() {
 	s.tray.SetMenu(s.menu)
 }
 
+// refreshTrayClock updates the recording status line, tooltip and macOS
+// title in place. It runs every second while recording or exporting, so it
+// must not call SetMenu: rebuilding the menu while it is open (dbusmenu on
+// Linux panels) invalidates the items under the pointer and drops clicks,
+// which made 结束录屏 unreachable.
+func (s *application) refreshTrayClock() {
+	if s.tray == nil {
+		return
+	}
+	status := s.video.trayStatus()
+	if item := s.menu.ItemByID("record-status"); item != nil && status != "" {
+		item.SetLabel(status)
+	}
+	if status != "" {
+		s.tray.SetToolTip(brand.Name + " — " + status)
+	}
+	if runtime.GOOS == "darwin" && s.video != nil && s.video.running {
+		s.tray.SetTitle(clock(s.video.status.ElapsedMS))
+	}
+}
+
 // setTrayRecording swaps the tray icon only when the state changes.
 func (s *application) setTrayRecording(on bool) {
 	if s.trayRecording == on {

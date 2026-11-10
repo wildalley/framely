@@ -41,6 +41,8 @@ type videoWindow struct {
 	choosing                                         bool
 	exportCancel                                     context.CancelFunc
 	traySecond                                       int64
+	// bar is the floating control beside the recorded region.
+	bar *mygo.Window
 }
 
 const (
@@ -475,6 +477,81 @@ func (v *videoWindow) chooseVideo() {
 	})
 }
 
+const recordBarW, recordBarH = 264, 48
+
+// openBar shows timer, pause and stop beside the recorded region, so the
+// recording can be controlled without the tray.
+func (v *videoWindow) openBar(display mygo.Display, region image.Rectangle, source image.Point) {
+	if v.bar != nil || source.X <= 0 || source.Y <= 0 {
+		return
+	}
+	b := display.Bounds
+	sx, sy := float32(b.Width)/float32(source.X), float32(b.Height)/float32(source.Y)
+	selected := ui.Rect{X: float32(region.Min.X) * sx, Y: float32(region.Min.Y) * sy, W: float32(region.Dx()) * sx, H: float32(region.Dy()) * sy}
+	rect, ok := barBeside(selected, float32(b.Width), float32(b.Height), recordBarW, recordBarH)
+	if !ok {
+		v.notice = "录制区域周围没有空间放置控制条，请用托盘或录屏快捷键结束。"
+		return
+	}
+	w, err := openControlBar(v.ctx, brand.Title("录屏控制"), display, rect, v.barView, v.app.worker)
+	if err != nil {
+		v.notice = err.Error() + "，请用托盘或录屏快捷键结束。"
+		return
+	}
+	v.bar = w
+	// Closing the bar (for example with the compositor's close key) ends the
+	// recording and saves it, as the main window's close does.
+	w.OnClose(func(e *mygo.CloseEvent) {
+		if v.running {
+			e.PreventDefault()
+			v.command("finish")
+		}
+	})
+}
+
+func (v *videoWindow) closeBar() {
+	if v.bar != nil {
+		if !v.bar.IsDestroyed() {
+			v.bar.Destroy()
+		}
+		v.bar = nil
+	}
+}
+
+func (v *videoWindow) barView(c *ui.Context) {
+	panelTheme(c)
+	t := c.Theme()
+	ui.Row(c).Fill().Padding(6, 8, 6, 12).Gap(8).AlignItems(ui.Center).Background(t.Background).
+		Border(1, t.Border).Radius(12).Children(func() {
+		dot := t.Danger
+		if v.paused {
+			dot = t.TextMuted
+		}
+		ui.Box(c).Size(10, 10).Radius(5).Background(dot).Shrink(0)
+		label := clock(v.status.ElapsedMS)
+		if v.ending {
+			label = "保存中…"
+		}
+		ui.Text(c, label).Font("monospace").FontSize(15).FontWeight(600).Grow(1).MinWidth(0)
+		pause := "暂停"
+		if v.paused {
+			pause = "继续"
+		}
+		if ui.Button(c.Key("bar-pause"), pause).Height(32).Padding(0, 10).Disabled(!v.running || v.busy || v.ending).Clicked() {
+			if v.paused {
+				v.command("resume")
+			} else {
+				v.command("pause")
+			}
+		}
+		stop := ui.PrimaryButton(c.Key("bar-stop"), "结束").Height(32).Padding(0, 12).Disabled(!v.running || v.ending).
+			Background(t.Danger).Tooltip("结束并保存录屏")
+		if stop.Clicked() {
+			v.command("finish")
+		}
+	})
+}
+
 func (v *videoWindow) command(command string) {
 	if !v.running || v.ending || (v.busy && command != "finish") {
 		return
@@ -522,6 +599,7 @@ func (v *videoWindow) start() {
 				}
 			}
 			v.busy, v.running, v.ending = false, false, false
+			v.closeBar()
 			v.app.refreshTray()
 			if v.quitAfter {
 				mygo.App.Quit()
@@ -643,8 +721,11 @@ func (v *videoWindow) start() {
 			v.path = ""
 			v.preview = nil
 			v.status = capture.RecordingStatus{}
-			v.notice = "录制已开始，控制窗口已隐藏。托盘显示录制时长，可暂停、继续或结束。"
+			v.notice = "录制已开始。用选区旁的控制条或托盘暂停、继续或结束。"
 			v.app.refreshTray()
+			if screen != nil {
+				v.openBar(*screen, region, size)
+			}
 			if v.app.tray == nil {
 				v.win.Show()
 				v.notice = "录制中。请把控制窗口移到录制区域外。"
@@ -689,7 +770,14 @@ func (v *videoWindow) start() {
 					})
 					return
 				}
-				v.later(func() { v.busy = v.ending; v.paused = command == "pause"; v.app.refreshTray() })
+				v.later(func() {
+					v.busy = v.ending
+					v.paused = command == "pause"
+					v.app.refreshTray()
+					if v.bar != nil {
+						v.bar.Invalidate()
+					}
+				})
 			case <-ticker.C:
 				status, e := capture.RecordingSnapshot(source)
 				if e != nil {
@@ -699,10 +787,13 @@ func (v *videoWindow) start() {
 				}
 				v.later(func() {
 					v.status = status
-					// The tray shows elapsed seconds; rebuild its menu only when they change.
+					if v.bar != nil {
+						v.bar.Invalidate()
+					}
+					// The tray shows elapsed seconds; update it in place when they change.
 					if second := status.ElapsedMS / 1000; second != v.traySecond {
 						v.traySecond = second
-						v.app.refreshTray()
+						v.app.refreshTrayClock()
 					}
 				})
 			}
@@ -746,7 +837,7 @@ func (v *videoWindow) exportGIF() {
 			shown = percent
 			v.later(func() {
 				v.gifProgress = done
-				v.app.refreshTray()
+				v.app.refreshTrayClock()
 			})
 		}
 	}
