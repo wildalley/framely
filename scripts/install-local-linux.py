@@ -14,7 +14,7 @@ repo = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--image', type=Path, help='Open a test image after restarting')
 parser.add_argument('--replace-system-instance', action='store_true',
-                    help='Also stop this user\'s ScreenPin from the system package')
+                    help='Also stop this user\'s Framely from the system package')
 args = parser.parse_args()
 launch_args = ['--scroll']
 if args.image is not None:
@@ -31,6 +31,7 @@ workers = home / '.local/share/screenpin/workers'
 assert (source_workers / 'screenpin-capture').is_file()
 assert (source_workers / 'screenpin-ocr/screenpin-ocr').is_file()
 binary = home / '.local/bin/screenpin'
+command = binary.with_name('framely')
 applications = home / '.local/share/applications'
 desktop = applications / 'io.screenpin.desktop.desktop'
 icon = home / '.local/share/icons/hicolor/128x128/apps/screenpin.png'
@@ -40,10 +41,11 @@ log = repo / 'build/native/screenpin-local.log'
 version = json.loads((repo / 'mygo.json').read_text(encoding="utf-8"))['version']
 assert subprocess.check_output([str(source), '--version'], text=True).strip() == f'Framely {version} (mygo)'
 backup.mkdir(parents=True)
-for path, name in [(binary, 'screenpin'), (applications / 'screenpin.desktop', 'screenpin.desktop'),
+for path, name in [(binary, 'screenpin'), (command, 'framely'),
+                   (applications / 'screenpin.desktop', 'screenpin.desktop'),
                    (desktop, desktop.name), (icon, 'screenpin.png')]:
-    if path.exists():
-        shutil.copy2(path, backup / name)
+    if path.exists() or path.is_symlink():
+        shutil.copy2(path, backup / name, follow_symlinks=False)
 
 # Stage the complete runtime before replacing a running installation.
 workers.parent.mkdir(parents=True, exist_ok=True)
@@ -62,15 +64,15 @@ for line in result.stdout.splitlines():
     if args.replace_system_instance:
         allowed.update(['/usr/bin/screenpin', '/usr/lib/screenpin/screenpin'])
     if executable not in allowed or proc.stat().st_uid != os.getuid():
-        raise RuntimeError(f'Unexpected running ScreenPin: {pid} {executable}')
+        raise RuntimeError(f'Unexpected running Framely: {pid} {executable}')
     os.kill(pid, signal.SIGTERM)
     for attempt in range(100):
         if not proc.exists():
             break
         time.sleep(0.1)
     else:
-        raise RuntimeError(f'Old ScreenPin did not exit: {pid}')
-    print(f'Stopped old ScreenPin: {pid}')
+        raise RuntimeError(f'Old Framely did not exit: {pid}')
+    print(f'Stopped old Framely: {pid}')
 
 if workers.exists():
     shutil.move(str(workers), str(backup / 'workers'))
@@ -81,11 +83,16 @@ staged = binary.with_name('.screenpin.installing')
 shutil.copy2(source, staged)
 staged.chmod(0o755)
 os.replace(staged, binary)
+# Keep the executable path stable for existing shortcuts and autostart entries.
+# Publish the new command atomically, including on repeated installations.
+staged_command = command.with_name('.framely.installing-' + backup.name)
+staged_command.symlink_to(binary.name)
+os.replace(staged_command, command)
 icon.parent.mkdir(parents=True, exist_ok=True)
 shutil.copy2(repo / 'assets/icons/128x128.png', icon)
 applications.mkdir(parents=True, exist_ok=True)
 entry = (repo / 'packaging/arch-native/io.screenpin.desktop.desktop').read_text(encoding="utf-8")
-entry = entry.replace('Exec=screenpin\n', f'Exec="{binary}"\n').replace('Icon=screenpin\n', f'Icon={icon}\n')
+entry = entry.replace('Exec=framely\n', f'Exec="{command}"\n').replace('Icon=screenpin\n', f'Icon={icon}\n')
 desktop.write_text(entry, encoding="utf-8")
 desktop.chmod(0o644)
 legacy = applications / 'screenpin.desktop'
@@ -96,16 +103,17 @@ if shutil.which('update-desktop-database'):
 
 digest = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()
 assert digest(binary) == digest(source)
-print(subprocess.check_output([str(binary), '--version'], text=True).strip())
+print(subprocess.check_output([str(command), '--version'], text=True).strip())
 with log.open('a', encoding='utf-8') as output:
     output.write(f'\n--- Local launch {datetime.datetime.now().isoformat()} ---\n')
     output.flush()
-    process = subprocess.Popen([str(binary), *launch_args], stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
+    process = subprocess.Popen([str(command), *launch_args], stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
 time.sleep(2)
 if process.poll() is not None:
-    raise RuntimeError(f'ScreenPin exited with {process.returncode}; see {log}')
+    raise RuntimeError(f'Framely exited with {process.returncode}; see {log}')
 print(f'Running PID: {process.pid}')
 print(f'Installed: {binary}')
+print(f'Command: {command}')
 print(f'Components: {workers}')
 print(f'Desktop entry: {desktop}')
 print(f'Backup: {backup}')
