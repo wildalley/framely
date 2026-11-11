@@ -178,7 +178,7 @@ func (a *App) pointerDown(ev ui.InputEvent, zoom float64) bool {
 		if i := doc.HitTest(list, p, 4/zoom); i >= 0 {
 			an := list[i]
 			if a.selected != an.ID {
-				a.propertyImage = false
+				a.styleHidden = false
 			}
 			a.selected = an.ID
 			if ev.Clicks >= 2 && an.Type == doc.ToolText {
@@ -260,7 +260,7 @@ func (a *App) finishDrag() {
 	}
 	a.history.End()
 	if created != nil && !created.Type.Freehand() {
-		a.propertyImage = false
+		a.styleHidden = false
 		a.tool = doc.ToolSelect
 		a.hoverCursor = ui.CursorDefault
 	}
@@ -308,10 +308,6 @@ func (a *App) finishEditing() {
 	}
 	if a.textEdit || a.slidingKey != "" {
 		a.textEdit, a.slidingKey = false, ""
-		a.history.End()
-	}
-	if a.propertyEditKey != "" {
-		a.propertyEditKey = ""
 		a.history.End()
 	}
 	if a.editingID == "" {

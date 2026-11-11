@@ -110,7 +110,7 @@ func (a *App) view(c *ui.Context) {
 				ui.Column(c).Fill().AlignItems(ui.Center).Justify(ui.Center).Children(func() {
 					a.canvas(c, z)
 				})
-				a.styleStrip(c, stageW)
+				a.styleFlyout(c, stageW, stageH, z)
 			})
 			a.stylePopover(c, styleAnchor)
 		})
@@ -130,9 +130,6 @@ func (a *App) shortcuts(c *ui.Context) {
 		return
 	}
 	typing := a.annotationText.FocusWithin(c) || a.styleText.FocusWithin(c)
-	for _, handle := range a.propertyInputs {
-		typing = typing || handle.FocusWithin(c)
-	}
 	if !typing {
 		if c.Shortcut(ui.Cmd|ui.Shift, ui.KeyS) && a.OnCapture != nil {
 			a.OnCapture()
@@ -225,7 +222,7 @@ func (a *App) redo() {
 func (a *App) setTool(t doc.Tool) {
 	a.finishEditing()
 	a.tool = t
-	a.propertyImage = false
+	a.styleHidden = false
 	if t != doc.ToolSelect {
 		a.selected = ""
 	}
@@ -399,7 +396,12 @@ func (a *App) rail(c *ui.Context) ui.Element {
 					on := a.tool == it.tool
 					disabled := it.tool == doc.ToolMosaic && a.mosaic == nil
 					if iconToggle(c, "tool-"+string(it.tool), it.icon, it.label+" ("+it.char+")", &on, disabled).Size(36, 36).Changed() {
-						a.setTool(it.tool)
+						if it.tool == a.tool && it.tool != doc.ToolSelect {
+							// Clicking the active tool again shows or hides its styles.
+							a.styleHidden = !a.styleHidden
+						} else {
+							a.setTool(it.tool)
+						}
 					}
 				}
 			})

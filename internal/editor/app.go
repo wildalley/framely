@@ -55,22 +55,21 @@ type App struct {
 	history  doc.History
 	lease    *imagelimit.Lease
 
-	tool            doc.Tool
-	selected        string
-	styles          map[doc.Tool]doc.Style
-	zoom            float64
-	pinned          bool
-	busy            bool
-	ocrRunning      bool
-	ocrCancel       context.CancelFunc
-	panel           Panel
-	lastPanel       Panel
-	appearanceTab   int
-	propertyImage   bool
-	propertyInputs  [4]ui.Handle
-	propertyValues  [4]string
-	propertyEditKey string
-	toasts          []string
+	tool          doc.Tool
+	selected      string
+	styles        map[doc.Tool]doc.Style
+	zoom          float64
+	pinned        bool
+	busy          bool
+	ocrRunning    bool
+	ocrCancel     context.CancelFunc
+	panel         Panel
+	lastPanel     Panel
+	appearanceTab int
+	// styleHidden puts the style flyout away until the tool or the
+	// selection changes.
+	styleHidden bool
+	toasts      []string
 
 	exportFormat  render.Format
 	exportQuality float64
@@ -171,7 +170,7 @@ func (a *App) release() {
 	a.drag, a.styles, a.toasts = nil, nil, nil
 	a.selected, a.editingID, a.editingText, a.slidingKey, a.title = "", "", "", "", ""
 	a.annotationText, a.styleText = ui.Handle{}, ui.Handle{}
-	a.propertyInputs, a.propertyValues, a.propertyEditKey = [4]ui.Handle{}, [4]string{}, ""
+	a.styleHidden = false
 	a.target, a.panel, a.lastPanel = nil, PanelNone, PanelNone
 	a.selection = nil
 	a.busy, a.pinned, a.textEdit, a.editFresh = false, false, false, false

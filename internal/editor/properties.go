@@ -1,8 +1,8 @@
 package editor
 
 import (
+	"fmt"
 	"math"
-	"strconv"
 	"strings"
 
 	"github.com/egoist/mygo/ui"
@@ -10,136 +10,195 @@ import (
 	"github.com/wildalley/framely/internal/doc"
 )
 
-const propertyGroupHeight = 44
+// styleFlyoutWidth is the panel that opens beside the tool rail.
+const styleFlyoutWidth = 184
 
-func propertyCaption(c *ui.Context, caption string) {
-	ui.Text(c, caption).FontSize(11).LineHeight(1).Height(14).TextColor(c.Theme().TextMuted)
+var colorNames = map[string]string{
+	"#e5484d": "红色", "#ff8a3d": "橙色", "#f2c94c": "黄色", "#1f9d73": "绿色",
+	"#2383e2": "蓝色", "#7c5cff": "紫色", "#171717": "黑色", "#ffffff": "白色",
 }
 
-// propertyNumber groups a typed value or a held stepper into one history
-// change. Its text input keeps editing shortcuts away from the canvas.
-func (a *App) propertyNumber(c *ui.Context, index int, key, label, caption string, value, lo, hi, width float64, set func(float64, bool)) {
-	ui.Column(c.Key(key)).Width(float32(width)).Height(propertyGroupHeight).Shrink(0).Gap(2).Children(func() {
-		propertyCaption(c, caption)
-		ui.Row(c).Gap(0).Height(28).Radius(7).Border(1, c.Theme().Border).Background(c.Theme().Background).Clip().Children(func() {
-			text := &a.propertyValues[index]
-			if !a.propertyInputs[index].FocusWithin(c) {
-				*text = strconv.FormatFloat(value, 'f', 0, 64)
-			}
-			field := ui.TextInput(c.Key("value"), text).Bind(&a.propertyInputs[index]).Label(label).Tooltip(label).
-				Width(float32(width)-21).MinWidth(0).Height(28).Padding(2, 6).FontSize(12).Border(0, ui.Transparent)
-			apply := func(v float64) {
-				v = math.Round(clamp(v, lo, hi))
-				if a.propertyEditKey != key {
-					a.finishEditing()
-					a.propertyEditKey = key
-					a.history.Begin()
-				}
-				set(v, true)
-			}
-			if field.Changed() {
-				if v, err := strconv.ParseFloat(strings.TrimSpace(*text), 64); err == nil && !math.IsNaN(v) && !math.IsInf(v, 0) && v >= lo && v <= hi {
-					apply(v)
-				}
-			}
-			v := value
-			if field.Shortcut(0, ui.KeyUp) {
-				apply(value + 1)
-				*text = strconv.FormatFloat(clamp(value+1, lo, hi), 'f', 0, 64)
-			}
-			if field.Shortcut(0, ui.KeyDown) {
-				apply(value - 1)
-				*text = strconv.FormatFloat(clamp(value-1, lo, hi), 'f', 0, 64)
-			}
-			ui.Box(c).Width(1).FillHeight().Background(c.Theme().Border.Alpha(0.6))
-			step := ui.Stepper(c.Key("step"), &v, lo, hi, 1).Label(label+"增减").Tooltip(label+"增减").
-				Width(20).Height(28).Border(0, ui.Transparent)
-			if step.Changed() {
-				if step.Pressed() || step.Dragging() {
-					apply(v)
-				} else {
-					a.finishEditing()
-					set(v, false)
-				}
-				*text = strconv.FormatFloat(v, 'f', 0, 64)
-			}
-			if a.propertyEditKey == key && !field.Focused() && !step.Pressed() && !step.Dragging() {
-				a.propertyEditKey = ""
-				a.history.End()
-			}
-		})
-	})
+// preset is one choice of a segmented preset row: its glyph is drawn by
+// glyph, sized for the value.
+type preset struct {
+	label string
+	value float64
 }
 
-func (a *App) propertyColors(c *ui.Context, style doc.Style, expanded bool) {
-	ui.Column(c).Height(propertyGroupHeight).Shrink(0).Gap(2).Children(func() {
-		propertyCaption(c, "颜色")
-		choose := func(col string) { a.finishEditing(); a.changeStyle(func(s *doc.Style) { s.Color = col }, false) }
-		if expanded {
-			ui.Row(c).Height(28).Gap(3).AlignItems(ui.Center).Children(func() {
-				for _, col := range doc.Colors {
-					b := ui.Button(c.Key("inline-color-"+col), "").Size(24, 24).Padding(0).Radius(12).
-						Background(ui.Hex(col)).Border(1, c.Theme().Border).Label("颜色 " + col).Tooltip(col)
-					if strings.EqualFold(style.Color, col) {
-						b.Border(2.5, brand.Accent(c.Theme().Dark))
-					}
-					if b.Clicked() {
-						choose(col)
-					}
-				}
-			})
-		} else {
-			ui.Button(c.Key("inline-color"), "").Size(28, 28).Padding(0).Radius(6).
-				Background(ui.Hex(style.Color)).Border(1, c.Theme().Border).Label("颜色").Tooltip("标注颜色").Menu(func(m *ui.Menu) {
-				for i, col := range doc.Colors {
-					names := []string{"红色", "橙色", "黄色", "绿色", "蓝色", "紫色", "黑色", "白色"}
-					if m.Item(names[i]).Radio(strings.EqualFold(style.Color, col)).Chosen() {
-						choose(col)
-					}
-				}
-			})
-		}
-	})
+// strokePresets are thin, medium and thick for the tool.
+func strokePresets(t doc.Tool) []preset {
+	if t == doc.ToolHighlighter {
+		return []preset{{"细", 12}, {"中", 18}, {"粗", 30}}
+	}
+	return []preset{{"细", 2}, {"中", 4}, {"粗", 8}}
 }
 
-// styleStrip floats over the top-left of the canvas while the
-// current tool or the selected annotation has a style to change, and hides
-// while drawing. The whole image's corners and the full set of options stay
-// in the appearance popover.
-func (a *App) styleStrip(c *ui.Context, stageWidth float32) {
+var fontPresets = []preset{{"小", 18}, {"中", 28}, {"大", 44}}
+
+var cornerPresets = []preset{{"直角", 0}, {"小圆角", .1}, {"大圆角", .3}}
+
+// styleFlyout opens beside the tool rail while the current tool or the
+// selected annotation has a style: color dots, thin/medium/thick, corner
+// presets and an opacity slider. Exact numbers stay in the full style
+// popover. It hides while drawing; clicking the active tool again or Esc
+// puts it away.
+func (a *App) styleFlyout(c *ui.Context, stageWidth, stageHeight float32, zoom float64) {
 	style := a.activeStyle()
-	if style == nil || a.drag != nil {
+	if style == nil || a.drag != nil || a.styleHidden {
 		return
 	}
 	target := a.styleTarget()
 	if target == doc.ToolMosaic {
 		return
 	}
-	cellWidth := 64.0
-	if stageWidth >= 520 {
-		cellWidth = 80
+	t := c.Theme()
+	panel := ui.Scroll(c.Key("properties")).Label("快捷属性").Absolute().Top(8).Width(styleFlyoutWidth).
+		MaxHeight(stageHeight-16).Padding(12).Gap(10).Radius(12).
+		Background(t.Background).Border(1, t.Border).Shadow(0, 8, 22, 0, ui.RGBA(7, 61, 65, .14)).
+		Disabled(a.busy)
+	if a.selectionUnderFlyout(stageWidth, stageHeight, zoom) {
+		panel.Right(8)
+	} else {
+		panel.Left(8)
 	}
-	ui.Row(c.Key("properties")).Label("快捷属性").Absolute().Top(10).Left(10).MaxWidth(stageWidth-20).
-		Height(propertyGroupHeight+16).Padding(8, 12).Gap(8).AlignItems(ui.End).Radius(12).
-		Background(c.Theme().Background).Border(1, c.Theme().Border).
-		Shadow(0, 6, 18, 0, ui.RGBA(7, 61, 65, .14)).Disabled(a.busy).Children(func() {
-		ui.Text(c, toolName(target)).FontSize(12).FontWeight(600).Height(28).MaxLines(1).Shrink(0)
-		a.propertyColors(c, *style, stageWidth >= 560)
-		index := 0
-		if target == doc.ToolRectangle {
-			a.propertyNumber(c, index, "inline-rect-corner", "矩形圆角", "圆角 %", style.CornerRatio*100, 0, 100, cellWidth, func(v float64, live bool) { a.changeStyle(func(s *doc.Style) { s.CornerRatio = v / 100 }, live) })
-			index++
-		}
-		if target == doc.ToolText {
-			a.propertyNumber(c, index, "inline-font", "字号", "字号 px", style.FontSize, 12, 96, cellWidth, func(v float64, live bool) { a.changeStyle(func(s *doc.Style) { s.FontSize = v }, live) })
-		} else {
-			hi := 16.0
-			if target == doc.ToolHighlighter {
-				hi = 40
+	panel.Children(func() {
+		ui.Row(c).FillWidth().AlignItems(ui.Center).Margin(0, 0, -6).Children(func() {
+			ui.Text(c, "颜色").FontSize(11).TextColor(c.Theme().TextMuted)
+			ui.Spacer(c).Grow(1)
+			more := ui.Button(c.Key("more-style"), "更多…").Height(18).Padding(0, 2).FontSize(11).
+				Background(ui.Transparent).Border(0, ui.Transparent).TextColor(brand.Ink(c)).
+				Label("更多样式").Tooltip("全部样式与精确数值")
+			if more.Clicked() {
+				a.appearanceTab = 0
+				a.togglePanel(PanelStyle)
 			}
-			a.propertyNumber(c, index, "inline-stroke", "粗细", "粗细 px", style.StrokeWidth, 1, hi, cellWidth, func(v float64, live bool) { a.changeStyle(func(s *doc.Style) { s.StrokeWidth = v }, live) })
+		})
+		ui.Row(c.Key("colors")).FillWidth().Wrap().Gap(8).Children(func() {
+			for _, col := range doc.Colors {
+				a.colorDot(c, col, strings.EqualFold(style.Color, col))
+			}
+		})
+		if target == doc.ToolText {
+			flyoutCaption(c, "字号", fmt.Sprintf("%.0f", style.FontSize))
+			a.presetRow(c, "font", fontPresets, style.FontSize, func(v float64) float32 { return float32(v) / 4 }, glyphText,
+				func(v float64) { a.changeStyle(func(s *doc.Style) { s.FontSize = v }, false) })
+		} else {
+			flyoutCaption(c, "粗细", fmt.Sprintf("%.0f", style.StrokeWidth))
+			scale := float32(1)
+			if target == doc.ToolHighlighter {
+				scale = .25
+			}
+			a.presetRow(c, "stroke", strokePresets(target), style.StrokeWidth, func(v float64) float32 { return float32(v) * scale }, glyphLine,
+				func(v float64) { a.changeStyle(func(s *doc.Style) { s.StrokeWidth = v }, false) })
 		}
-		index++
-		a.propertyNumber(c, index, "inline-opacity", "不透明度", "不透明 %", style.Opacity*100, 10, 100, cellWidth, func(v float64, live bool) { a.changeStyle(func(s *doc.Style) { s.Opacity = v / 100 }, live) })
+		if target == doc.ToolRectangle {
+			flyoutCaption(c, "边角", "")
+			a.presetRow(c, "corner", cornerPresets, style.CornerRatio, func(v float64) float32 { return float32(v) }, glyphCorner,
+				func(v float64) { a.changeStyle(func(s *doc.Style) { s.CornerRatio = v }, false) })
+		}
+		a.slider(c, "inline-opacity", "不透明度", style.Opacity*100, 10, 100, "%", func(v float64, live bool) {
+			a.changeStyle(func(s *doc.Style) { s.Opacity = v / 100 }, live)
+		})
+	})
+}
+
+// selectionUnderFlyout reports whether the selected annotation would sit
+// under the flyout at the stage's left while the right side has room, so
+// the flyout moves there rather than hide what is being styled.
+func (a *App) selectionUnderFlyout(stageWidth, stageHeight float32, zoom float64) bool {
+	sel := a.selectedAnnotation()
+	if sel == nil || a.image == nil {
+		return false
+	}
+	b := sel.Bounds()
+	left := (float64(stageWidth) - float64(a.image.Width)*zoom) / 2
+	start, end := left+b.X*zoom, left+(b.X+b.W)*zoom
+	reach := float64(8 + styleFlyoutWidth + 8)
+	return start < reach && float64(stageWidth)-end >= reach
+}
+
+func flyoutCaption(c *ui.Context, caption, value string) {
+	ui.Row(c).FillWidth().Justify(ui.SpaceBetween).Margin(0, 0, -6).Children(func() {
+		ui.Text(c, caption).FontSize(11).TextColor(c.Theme().TextMuted)
+		if value != "" {
+			ui.Text(c, value).FontSize(11).Font("monospace").TextColor(c.Theme().TextMuted)
+		}
+	})
+}
+
+func (a *App) colorDot(c *ui.Context, col string, chosen bool) {
+	t := c.Theme()
+	name := colorNames[col]
+	if name == "" {
+		name = col
+	}
+	b := ui.Button(c.Key("color-"+col), "").Size(30, 30).Padding(0).Radius(15).Center().
+		Background(ui.Transparent).Border(0, ui.Transparent).Label("颜色 " + name).Tooltip(name)
+	if chosen {
+		b.Border(2, brand.Ink(c))
+	}
+	b.Children(func() {
+		edge := t.Text.Alpha(.15)
+		if t.Dark {
+			edge = t.Text.Alpha(.35) // Keeps the black dot visible on a dark panel.
+		}
+		ui.Box(c).Size(22, 22).Radius(11).Background(ui.Hex(col)).Border(1, edge)
+	})
+	if b.Clicked() {
+		a.finishEditing()
+		a.changeStyle(func(s *doc.Style) { s.Color = col }, false)
+	}
+}
+
+type glyph int
+
+const (
+	glyphLine glyph = iota
+	glyphCorner
+	glyphText
+)
+
+// presetRow is a segmented control; the chosen preset is a raised tab. A
+// value set elsewhere to something in between chooses none.
+func (a *App) presetRow(c *ui.Context, key string, presets []preset, value float64, size func(float64) float32, kind glyph, set func(float64)) {
+	t := c.Theme()
+	ui.Row(c.Key(key)).FillWidth().Height(30).Gap(2).Padding(2).Radius(8).Background(t.Surface).Children(func() {
+		for _, p := range presets {
+			on := math.Abs(value-p.value) < 1e-3
+			name := map[string]string{"stroke": "粗细", "font": "字号", "corner": "边角"}[key]
+			b := ui.Toggle(c.Key(fmt.Sprintf("%s-%v", key, p.value)), &on, "").Grow(1).Height(26).Padding(0).Radius(6).Center().
+				Border(0, ui.Transparent).Label(name + " " + p.label).Tooltip(p.label)
+			if on && t.Dark {
+				b.Background(t.SurfacePressed)
+			} else if on {
+				b.Background(t.Background).Shadow(0, 1, 2, 0, ui.RGBA(0, 0, 0, .12))
+			} else {
+				b.Background(ui.Transparent)
+			}
+			ink := t.Text
+			if on {
+				ink = brand.Ink(c)
+			}
+			v := p.value
+			b.Children(func() {
+				switch kind {
+				case glyphLine:
+					h := max(1.5, min(9, size(v)))
+					ui.Box(c).Size(18, h).Radius(h / 2).Background(ink)
+				case glyphCorner:
+					r := float32(0)
+					if v > 0 {
+						r = min(6, 2.5+size(v)*12)
+					}
+					ui.Box(c).Size(16, 13).Radius(r).Border(2, ink)
+				case glyphText:
+					ui.Text(c, "A").FontSize(max(10, min(18, size(v)*1.6))).FontWeight(600).TextColor(ink)
+				}
+			})
+			if b.Changed() {
+				a.finishEditing()
+				set(v)
+			}
+		}
 	})
 }

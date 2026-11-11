@@ -27,7 +27,7 @@
 
 ## 展示截图
 
-`docs/images/framely.png` 由真实编辑器视图的软件渲染器生成，画布为 `docs/images/demo-canvas.svg` 的生成示例内容，带一处选中的真实矩形标注和浮动样式条；不是用户的桌面或文件截图，也不是 imagegen 生成的应用界面。
+`docs/images/framely.png` 由真实编辑器视图的软件渲染器生成，画布为 `docs/images/demo-canvas.svg` 的生成示例内容，带一处选中的真实矩形标注和样式面板；不是用户的桌面或文件截图，也不是 imagegen 生成的应用界面。
 
 复现：
 
