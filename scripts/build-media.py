@@ -5,6 +5,7 @@ network support; hardware H.264 is preferred and native MPEG-4 is the fallback.
 """
 from pathlib import Path
 import hashlib
+import http.client
 import json
 import os
 import platform
@@ -12,6 +13,8 @@ import shutil
 import shlex
 import subprocess
 import tarfile
+import time
+import urllib.error
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -74,8 +77,31 @@ def pkg_config_path():
 def source(url, checksum, folder):
     archive = WORK / url.rsplit("/", 1)[1]
     if not archive.exists() or hashlib.sha256(archive.read_bytes()).hexdigest() != checksum:
-        with urllib.request.urlopen(url, timeout=120) as response, archive.open("wb") as output:
-            shutil.copyfileobj(response, output)
+        # Retry transport failures without caching a partial source archive.
+        # Checksum failures and permanent HTTP errors must still stop the build.
+        partial = archive.with_name(archive.name + ".part")
+        attempts = 4
+        for attempt in range(1, attempts + 1):
+            print(f"Downloading {url} (attempt {attempt}/{attempts})", flush=True)
+            try:
+                with urllib.request.urlopen(url, timeout=120) as response, partial.open("wb") as output:
+                    shutil.copyfileobj(response, output)
+                if hashlib.sha256(partial.read_bytes()).hexdigest() != checksum:
+                    raise ValueError(f"Source checksum mismatch: {archive.name}")
+                partial.replace(archive)
+                break
+            except (urllib.error.URLError, TimeoutError, ConnectionError, http.client.IncompleteRead) as error:
+                if isinstance(error, urllib.error.HTTPError):
+                    error.close()
+                    if error.code not in (408, 429, 500, 502, 503, 504):
+                        raise
+                if attempt == attempts:
+                    raise
+                delay = 2 ** attempt
+                print(f"Download failed: {error}; retrying in {delay}s", flush=True)
+            finally:
+                partial.unlink(missing_ok=True)
+            time.sleep(delay)
     if hashlib.sha256(archive.read_bytes()).hexdigest() != checksum:
         raise ValueError(f"Source checksum mismatch: {archive.name}")
     directory = WORK / folder
