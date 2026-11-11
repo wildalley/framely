@@ -26,18 +26,18 @@ Framely is an open-source screenshot, annotation, pinning, offline OCR and trans
 
 ## 下载与安装
 
-当前版本为 **0.4.0**，使用 MyGo **0.8.3**。下载以 [Release 页面](https://github.com/wildalley/framely/releases) 为准。安装包使用 `framely-*` 名称，Arch 包名为 `framely`（自动替换旧版包）；命令为 `framely`。完整包包含采集、录屏和离线 OCR 运行时，升级前请退出旧实例并完整替换配套文件。
+当前版本为 **0.4.1**，使用 MyGo **0.8.3**。下载以 [Release 页面](https://github.com/wildalley/framely/releases) 为准。安装包使用 `framely-*` 名称，Arch 包名为 `framely`（自动替换旧版包）；命令为 `framely`。完整包包含采集、录屏和离线 OCR 运行时，升级前请退出旧实例并完整替换配套文件。
 
 | 平台 | 安装包或便携包 |
 | --- | --- |
-| Windows x64 | `framely-0.4.0-windows-amd64-setup.exe` 或 `framely-0.4.0-windows-amd64-portable.zip` |
-| macOS 15+ Apple Silicon | `framely-0.4.0-darwin-arm64.dmg` |
-| macOS 15+ Intel | `framely-0.4.0-darwin-amd64.dmg` |
-| Ubuntu/Debian x64 | `framely-0.4.0-linux-amd64.deb` |
-| Arch Linux x64 | `framely-0.4.0-1-x86_64.pkg.tar.zst` |
-| 其他 Linux x64 | `framely-0.4.0-linux-amd64-portable.tar.gz` |
+| Windows x64 | `framely-0.4.1-windows-amd64-setup.exe` 或 `framely-0.4.1-windows-amd64-portable.zip` |
+| macOS 15+ Apple Silicon | `framely-0.4.1-darwin-arm64.dmg` |
+| macOS 15+ Intel | `framely-0.4.1-darwin-amd64.dmg` |
+| Ubuntu/Debian x64 | `framely-0.4.1-linux-amd64.deb` |
+| Arch Linux x64 | `framely-0.4.1-1-x86_64.pkg.tar.zst` |
+| 其他 Linux x64 | `framely-0.4.1-linux-amd64-portable.tar.gz` |
 
-Ubuntu/Debian 使用 `sudo apt install ./framely-0.4.0-linux-amd64.deb`；Arch 使用 `sudo pacman -U ./framely-0.4.0-1-x86_64.pkg.tar.zst`。Linux 便携包解压后执行 `./install.sh` 安装到当前用户目录，之后从应用菜单或 `framely` 启动。Release 中的 `SHA256SUMS` 可用于校验下载文件。
+Ubuntu/Debian 使用 `sudo apt install ./framely-0.4.1-linux-amd64.deb`；Arch 使用 `sudo pacman -U ./framely-0.4.1-1-x86_64.pkg.tar.zst`。Linux 便携包解压后执行 `./install.sh` 安装到当前用户目录，之后从应用菜单或 `framely` 启动。Release 中的 `SHA256SUMS` 可用于校验下载文件。
 
 | 平台 | 使用条件 |
 | --- | --- |
@@ -45,7 +45,7 @@ Ubuntu/Debian 使用 `sudo apt install ./framely-0.4.0-linux-amd64.deb`；Arch �
 | Windows | 长截图使用 Windows Graphics Capture，要求 Windows 10 1903+；浮动控制窗口排除采集需要 Windows 10 2004+。 |
 | macOS | 支持截图、标注、贴图和 OCR，暂不支持长截图。 |
 
-Windows/macOS 包暂未配置正式开发者签名与公证。更多平台限制见 [v0.4.0 发布说明](docs/releases/v0.4.0.md)。
+Windows/macOS 包暂未配置正式开发者签名与公证。更多平台限制见 [v0.4.1 发布说明](docs/releases/v0.4.1.md)。
 
 ## 快速使用
 
