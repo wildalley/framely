@@ -195,6 +195,9 @@ jobs:
         run: go test ./...
       - name: Bundle application and workers
         run: go tool mygo build -platform ${{ matrix.platform }} -skip-notarize -skip-dmg
+      - name: Check final macOS application name and bundle metadata
+        if: runner.os == 'macOS'
+        run: python scripts/check-installers.py
       - name: Verify bundled runtimes and collect installers
         run: python scripts/package-release.py
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

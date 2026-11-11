@@ -43,3 +43,4 @@ for artifact in workers.glob("screenpin-*"):
         shutil.rmtree(artifact)
     else:
         artifact.unlink()
+(workers / "media-licenses/screenpin-media-source.tar.gz").unlink(missing_ok=True)
