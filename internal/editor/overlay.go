@@ -41,6 +41,9 @@ type PickOptions struct {
 	Hint                 string
 	Actions              bool
 	Scroll, Record, Text bool
+	// Color picks no region: a click or C copies the color under the
+	// pointer and closes, as a color picker.
+	Color bool
 }
 
 // Pick is a confirmed region: source pixels, the display it was on, the
@@ -185,15 +188,7 @@ func (s *pick) open() error {
 	if len(displays) == 0 {
 		return errors.New("没有可用的显示器")
 	}
-	b := s.full.Bounds()
-	crops := layoutScreens(displays, b.Dx(), b.Dy())
-	if s.displays != nil && len(displays) == 1 {
-		crops[0] = b
-	} else if runtime.GOOS == "windows" {
-		for i, d := range displays {
-			crops[i] = physicalDisplay(d).Intersect(b)
-		}
-	}
+	crops := displayCrops(s.full.Bounds(), displays, s.displays != nil)
 	s.bitmap = ui.NewBitmap(s.full).Pixelated()
 	for i, d := range displays {
 		v := &pickView{display: d, crop: crops[i]}
@@ -230,6 +225,45 @@ func (s *pick) open() error {
 		v.win.OnClosed(func() { s.cancel() })
 	}
 	return nil
+}
+
+// displayCrops is each display's part of an image of the whole desktop. A
+// single display that was given maps the whole image, as a stream frame.
+func displayCrops(b image.Rectangle, displays []mygo.Display, given bool) []image.Rectangle {
+	crops := layoutScreens(displays, b.Dx(), b.Dy())
+	if given && len(displays) == 1 {
+		crops[0] = b
+	} else if runtime.GOOS == "windows" {
+		for i, d := range displays {
+			crops[i] = physicalDisplay(d).Intersect(b)
+		}
+	}
+	return crops
+}
+
+// HasLastPick reports whether a region was confirmed in this session.
+func HasLastPick() bool { return lastPick.ok }
+
+// RepeatPick is the region confirmed last, on a new image of the whole
+// desktop, ready to open without picking again. It fails when that
+// display is gone.
+func RepeatPick(full *image.RGBA, displays []mygo.Display) (Pick, error) {
+	if !lastPick.ok {
+		return Pick{}, errors.New("还没有可重复的截图区域，请先截一次图")
+	}
+	crops := displayCrops(full.Bounds(), displays, true)
+	for i, d := range displays {
+		if d.Bounds != lastPick.display {
+			continue
+		}
+		r, err := regionToCrop(lastPick.rect, float64(d.Bounds.Width), float64(d.Bounds.Height), crops[i])
+		if err != nil {
+			return Pick{}, err
+		}
+		target := d.Bounds
+		return Pick{Region: r, Target: &target}, nil
+	}
+	return Pick{}, errors.New("上次截图所在的显示器已断开")
 }
 
 func physicalDisplay(d mygo.Display) image.Rectangle {
@@ -439,6 +473,9 @@ func (s *pick) confirm(v *pickView, choice Pick, w, h float64) {
 }
 
 func (s *pick) input(v *pickView, ev ui.InputEvent, w, h float64) bool {
+	if s.opts.Color {
+		return s.colorInput(v, ev, w, h)
+	}
 	switch ev.Kind {
 	case ui.InputKeyDown:
 		return s.key(v, ev, w, h)
@@ -570,10 +607,7 @@ func (s *pick) key(v *pickView, ev ui.InputEvent, w, h float64) bool {
 		if s.hover != v {
 			return false
 		}
-		if hex, ok := s.colorAt(v, s.pointer, w, h); ok {
-			mygo.Clipboard.WriteText(hex)
-			s.cancel()
-		}
+		s.copyColor(v, w, h)
 	case ui.KeyLeft, ui.KeyRight, ui.KeyUp, ui.KeyDown:
 		if !s.adjusting || s.active != v || s.dragging {
 			return false
@@ -599,6 +633,51 @@ func (s *pick) key(v *pickView, ev ui.InputEvent, w, h float64) bool {
 	}
 	return true
 }
+
+// colorInput is the color picker's: the pointer moves the magnifier, a
+// click or C copies the color under it, a right click or Esc cancels.
+func (s *pick) colorInput(v *pickView, ev ui.InputEvent, w, h float64) bool {
+	switch ev.Kind {
+	case ui.InputPointerMove, ui.InputPointerDown:
+		s.pointer, s.hover = doc.Point{X: clamp(float64(ev.X), 0, w), Y: clamp(float64(ev.Y), 0, h)}, v
+		if ev.Kind == ui.InputPointerMove {
+			return true
+		}
+		if ev.Button == 0 {
+			s.copyColor(v, w, h)
+		} else {
+			s.cancel()
+		}
+		return true
+	case ui.InputKeyDown:
+		switch ev.Key {
+		case ui.KeyEscape:
+			s.cancel()
+		case ui.KeyC, ui.KeyEnter:
+			s.copyColor(v, w, h)
+		default:
+			return false
+		}
+		return true
+	}
+	return false
+}
+
+// copyColor puts the color under the pointer on the clipboard as #RRGGBB
+// and closes the picker.
+func (s *pick) copyColor(v *pickView, w, h float64) {
+	if s.hover != v {
+		return
+	}
+	if hex, ok := s.colorAt(v, s.pointer, w, h); ok {
+		writeColor(hex)
+		s.cancel()
+	}
+}
+
+// writeColor puts a picked color on the clipboard; tests replace it, as
+// the clipboard needs the running app.
+var writeColor = func(hex string) { mygo.Clipboard.WriteText(hex) }
 
 // pixelAt is the source pixel under p on v.
 func (s *pick) pixelAt(v *pickView, p doc.Point, w, h float64) (image.Point, bool) {
@@ -659,7 +738,9 @@ func (s *pick) canvas(c *ui.Context, v *pickView, sel doc.Rect, shown bool, w, h
 	box.Draw(func(p *ui.Painter, r ui.Rect) {
 		p.ImageRegion(bm, ui.Rect{X: float32(crop.Min.X - bmOrigin.X), Y: float32(crop.Min.Y - bmOrigin.Y), W: float32(crop.Dx()), H: float32(crop.Dy())}, r, ui.ImageOptions{})
 		if !shown || sel.W <= 0 || sel.H <= 0 {
-			p.Fill(r, pickDim, 0)
+			if !s.opts.Color {
+				p.Fill(r, pickDim, 0)
+			}
 			text := s.opts.Hint
 			if text == "" {
 				text = "拖动选择区域 · Enter 整屏 · R 上次区域 · C 复制颜色 · Esc 取消"

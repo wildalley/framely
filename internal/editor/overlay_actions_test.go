@@ -190,3 +190,48 @@ func TestPickerPreview(t *testing.T) {
 		save("picker-actions")
 	}
 }
+
+func TestColorPickerPicksNoRegionAndCancelsAfterCopying(t *testing.T) {
+	var copied string
+	saved := writeColor
+	writeColor = func(hex string) { copied = hex }
+	defer func() { writeColor = saved }()
+	s, _, tt := actionPicker()
+	s.opts = PickOptions{Color: true}
+	tt.Press(100, 100)
+	tt.Move(300, 300)
+	tt.Release(300, 300)
+	if s.adjusting || s.dragging {
+		t.Fatal("the color picker drew a region")
+	}
+	if r, ok := tt.Find("选区操作"); ok && r.W > 0 {
+		t.Fatal("the color picker shows the region actions")
+	}
+	// The click copied the color and closed; nothing opens.
+	if choice := waitPick(t, s); choice.err != capture.ErrCancelled || copied != fmt.Sprintf("#%02X%02X8C", 200/7, 200/5) {
+		t.Fatalf("color pick: %+v copied %q", choice, copied)
+	}
+}
+
+func TestRepeatPickMapsTheLastRegionOntoANewDesktopImage(t *testing.T) {
+	lastPick.ok = false
+	display := mygo.Display{Bounds: mygo.Rectangle{Width: 800, Height: 600}}
+	full := image.NewRGBA(image.Rect(0, 0, 1600, 1200))
+	if _, err := RepeatPick(full, []mygo.Display{display}); err == nil || HasLastPick() {
+		t.Fatal("repeated a region before any was picked")
+	}
+	s, _, tt := actionPicker()
+	dragPick(tt, 100, 100, 300, 250)
+	if err := tt.Click("复制"); err != nil {
+		t.Fatal(err)
+	}
+	waitPick(t, s)
+	choice, err := RepeatPick(full, []mygo.Display{display})
+	if err != nil || choice.Region != image.Rect(200, 200, 600, 500) || choice.Target == nil || *choice.Target != display.Bounds {
+		t.Fatalf("repeat: %+v %v", choice, err)
+	}
+	other := mygo.Display{Bounds: mygo.Rectangle{X: 800, Width: 800, Height: 600}}
+	if _, err := RepeatPick(full, []mygo.Display{other}); err == nil {
+		t.Fatal("repeated a region on a display that is gone")
+	}
+}

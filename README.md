@@ -18,6 +18,7 @@ Framely is an open-source screenshot, annotation, pinning and offline OCR app bu
 - **区域录屏**：30/60 fps 无声 MP4，可沿用本次截图选区，也可一键录制上次区域；记住帧率和分辨率，自动保存到「视频/Framely」（可修改）；录制区域旁的浮动控制条和托盘都显示计时，可暂停、继续与结束。录完或从托盘「视频转 GIF…」按起点、时长、宽度和帧率导出 GIF，显示进度。平台实测范围见 [录屏说明](docs/RECORDING.md)。
 - **离线 OCR**：内置中英文模型，无需安装 Python；从托盘“框选取字…”或 `screenpin --ocr` 直接识别，长图逐块显示结果。
 - **“大爆炸”式选词**：中文分词、单字模式、点击或拖动选词、Shift 连选、反选和全文编辑，按原文顺序组合复制。
+- **取色与重复截图**：托盘「取色器…」或 `screenpin --color` 在屏幕上取色，点击复制 `#RRGGBB`；「重复上次区域」或 `screenpin --repeat` 不用框选，直接按上次确认的区域再截一张。
 - **图片导出**：复制到剪贴板，或保存为 PNG、JPEG、WebP；PNG/WebP 支持透明度，JPEG 使用白色背景。
 
 截图和 OCR 在本机处理，不上传图片，不调用云端识别 API，也不在运行时下载模型。连续 OCR 会复用模型，空闲 45 秒后回收进程。内存与性能测量范围见 [资源与性能检查](docs/AUDIT_2026-11-11.md)。
@@ -59,6 +60,8 @@ screenpin                    # 启动或唤起托盘实例
 screenpin --capture          # 截图
 screenpin --scroll           # 长截图（Linux / Windows）
 screenpin --ocr              # 直接框选取字
+screenpin --color            # 取色器：点击复制颜色值（Linux / Windows）
+screenpin --repeat           # 按上次区域再截一张（Linux / Windows）
 screenpin --record           # 开始录屏（沿用上次区域）；录制中再次调用结束保存
 screenpin ./example.png      # 打开图片
 ```

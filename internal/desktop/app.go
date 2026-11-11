@@ -208,6 +208,10 @@ func (s *application) launch(launch Launch) {
 	switch {
 	case launch.OCR:
 		s.CaptureText()
+	case launch.Color:
+		s.PickColor()
+	case launch.Repeat:
+		s.RepeatCapture()
 	case launch.Scroll:
 		s.ScrollWithActivation("")
 	case launch.Record:
@@ -382,7 +386,7 @@ func (s *application) Capture() { s.CaptureWithActivation("") }
 
 func (s *application) CaptureWithActivation(token string) {
 	log.Print(brand.Name + ": capture action activated")
-	s.captureWithActivation(token, false)
+	s.captureWithActivation(token, captureRegion)
 }
 
 func (s *application) ScrollWithActivation(token string) {
@@ -414,9 +418,52 @@ func (s *application) shortcutsChanged() {
 	}
 }
 
-func (s *application) CaptureText() { s.captureWithActivation("", true) }
+func (s *application) CaptureText() { s.captureWithActivation("", captureText) }
 
-func (s *application) captureWithActivation(token string, textOnly bool) {
+// PickColor opens the picker as a color picker: a click copies #RRGGBB.
+func (s *application) PickColor() { s.captureWithActivation("", captureColor) }
+
+// RepeatCapture takes the region confirmed last again, without picking.
+func (s *application) RepeatCapture() { s.captureWithActivation("", captureRepeat) }
+
+// captureMode is what a capture is for.
+type captureMode int
+
+const (
+	captureRegion captureMode = iota // pick a region and what to do with it
+	captureText                      // pick a region and recognize its text
+	captureColor                     // copy a color from the screen
+	captureRepeat                    // take the last region again
+)
+
+// ownPicker reports whether this system shows Framely's own picker, which
+// the color picker and repeating a region need.
+func ownPicker() bool { return runtime.GOOS == "windows" || runtime.GOOS == "linux" }
+
+// desktopImage is one image of the whole desktop for the picker.
+func desktopImage(ctx context.Context) (*image.RGBA, []mygo.Display, error) {
+	var displays []mygo.Display
+	mygo.RunOnMain(func() { displays = mygo.Screen.Displays() })
+	switch runtime.GOOS {
+	case "windows":
+		full, err := capture.DesktopPixels(ctx)
+		return full, displays, err
+	case "linux":
+		if capture.ScreenshotAccessContext(ctx) != capture.AccessGranted {
+			return nil, nil, errors.New("需要先在「设置与快捷键 › 权限与长截图」中允许直接截图")
+		}
+		data, err := capture.ScreenshotContext(ctx, false)
+		if err != nil {
+			return nil, nil, err
+		}
+		full, err := capture.Decode(data)
+		return full, displays, err
+	}
+	return nil, nil, errors.New("当前系统暂不支持")
+}
+
+func (s *application) captureWithActivation(token string, mode captureMode) {
+	textOnly := mode == captureText
 	if s.ctx.Err() != nil {
 		return
 	}
@@ -470,6 +517,34 @@ func (s *application) captureWithActivation(token string, textOnly bool) {
 				return editor.Picture{}, nil, "", ctx.Err()
 			case <-timer.C:
 			}
+		}
+		switch mode {
+		case captureColor:
+			full, displays, err := desktopImage(ctx)
+			if err != nil {
+				return editor.Picture{}, nil, "", err
+			}
+			_, err = editor.PickScreen(ctx, full, displays, token, editor.PickOptions{Color: true, Hint: "移动鼠标取色 · 点击或 C 复制颜色值 · Esc 取消"})
+			if err == nil {
+				err = capture.ErrCancelled // The color is on the clipboard; nothing opens.
+			}
+			return editor.Picture{}, nil, "", err
+		case captureRepeat:
+			full, displays, err := desktopImage(ctx)
+			if err != nil {
+				return editor.Picture{}, nil, "", err
+			}
+			choice, err := editor.RepeatPick(full, displays)
+			if err != nil {
+				return editor.Picture{}, nil, "", err
+			}
+			pixels, err := capture.CropPixels(full, choice.Region)
+			if err != nil {
+				return editor.Picture{}, nil, "", err
+			}
+			picture, err := editor.PictureFromPixels(pixels, "截图 "+time.Now().Format("15-04-05"))
+			selection, _ := editor.ScreenSelectionFromDesktop(choice.Region, choice.Target, displays, full.Bounds())
+			return picture.WithScreenSelection(selection).WithPick(choice), choice.Target, "", err
 		}
 		if runtime.GOOS == "windows" {
 			full, err := capture.DesktopPixels(ctx)
@@ -582,7 +657,9 @@ func (s *application) trayItems() []*mygo.MenuItem {
 	}
 	return []*mygo.MenuItem{
 		{ID: "record-status", Label: "", Hidden: true, Disabled: true},
+		// Start something.
 		s.captureItem,
+		{ID: "repeat-capture", Label: "重复上次区域", Disabled: true, Click: func(*mygo.MenuItem, *mygo.Window) { s.RepeatCapture() }},
 		{ID: "scroll-capture", Label: "长截图…", Disabled: !capture.ScrollingSupported(), Click: func(*mygo.MenuItem, *mygo.Window) { s.showScroll() }},
 		{ID: "record-start", Label: "开始录屏…", Click: func(*mygo.MenuItem, *mygo.Window) { s.RecordWithActivation("") }},
 		{ID: "record-pause", Label: "暂停录屏", Hidden: true, Click: func(*mygo.MenuItem, *mygo.Window) {
@@ -600,15 +677,18 @@ func (s *application) trayItems() []*mygo.MenuItem {
 			}
 		}},
 		{ID: "record-video", Label: "录屏设置…", Click: func(*mygo.MenuItem, *mygo.Window) { s.showVideo() }},
-		{ID: "video-gif", Label: "视频转 GIF…", Click: func(*mygo.MenuItem, *mygo.Window) { s.showGIF() }},
-		{ID: "ocr-capture", Label: "框选取字…", Click: func(*mygo.MenuItem, *mygo.Window) { s.CaptureText() }},
 		mygo.Separator(),
+		// Text and color.
+		{ID: "ocr-capture", Label: "框选取字…", Click: func(*mygo.MenuItem, *mygo.Window) { s.CaptureText() }},
+		{ID: "color-picker", Label: "取色器…", Disabled: !ownPicker(), Click: func(*mygo.MenuItem, *mygo.Window) { s.PickColor() }},
+		mygo.Separator(),
+		// Images and videos.
 		{ID: "paste", Label: "粘贴图片", Click: func(*mygo.MenuItem, *mygo.Window) { s.Paste() }},
 		{ID: "open-image", Label: "打开图片…", Click: func(*mygo.MenuItem, *mygo.Window) { s.OpenImage() }},
+		{ID: "video-gif", Label: "视频转 GIF…", Click: func(*mygo.MenuItem, *mygo.Window) { s.showGIF() }},
 		s.closeAllItem,
 		mygo.Separator(),
 		{ID: "settings", Label: "设置与快捷键…", Click: func(*mygo.MenuItem, *mygo.Window) { s.showSettings("") }},
-		mygo.Separator(),
 		{ID: "quit", Label: "退出 " + brand.Name, Click: func(*mygo.MenuItem, *mygo.Window) { mygo.App.Quit() }},
 	}
 }
@@ -688,6 +768,9 @@ func (s *application) refreshTray() {
 	}
 	s.captureItem.SetLabel(label)
 	s.captureItem.SetEnabled(!s.captureBusy || s.scroll != nil && s.scroll.running)
+	idle := !s.captureBusy && !videoActive && (s.scroll == nil || !s.scroll.running)
+	s.menu.ItemByID("repeat-capture").SetEnabled(idle && ownPicker() && editor.HasLastPick())
+	s.menu.ItemByID("color-picker").SetEnabled(idle && ownPicker())
 	longActive := s.scroll != nil && (s.scroll.loading || s.scroll.busy || s.scroll.running)
 	for _, id := range []string{"paste", "open-image"} {
 		s.menu.ItemByID(id).SetEnabled(!longActive)
