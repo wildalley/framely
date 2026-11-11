@@ -1,6 +1,6 @@
 # 原生版开发与构建
 
-Framely · 取景（原 ScreenPin）当前主线使用 Go + MyGo 实现托盘截图与贴图工具。可执行文件、配置目录、门户应用 ID 与 niri 绑定文件沿用 `screenpin` 名称，升级后设置与授权保留。启动时只显示托盘；每张图片独立开窗，关闭就销毁图片、标注和撤销记录。没有主页、截图历史或工程保存流程。当前原生源码版本为 `0.2.3`，发行包功能以实际发布说明为准；Tauri 旧版为 `v0.1.1`。
+Framely · 取景（原 ScreenPin）当前主线使用 Go + MyGo 实现托盘截图与贴图工具。可执行文件、配置目录、门户应用 ID 与 niri 绑定文件沿用 `screenpin` 名称，升级后设置与授权保留。启动时只显示托盘；每张图片独立开窗，关闭就销毁图片、标注和撤销记录。没有主页、截图历史或工程保存流程。当前原生源码版本为 `0.3.0`，使用 MyGo `0.8.3`，发行包功能以实际发布说明为准；Tauri 旧版为 `v0.1.1`。
 
 ## 使用
 
@@ -79,7 +79,7 @@ CPU 格式与 DMA-BUF 分别协商，DMA modifier 为必需属性；只有实际
 
 完整 Windows/Linux/macOS 包附带 RapidOCR 3.9.2、PP-OCRv6-small ONNX CPU 模型和独立运行时，不需要安装 Python，不上传截图、不在运行时下载模型。长图分块识别，仅对跨块且有文本重叠的片段去重合并，同行独立表格单元格保持分开；复杂多栏排版和表格暂不重建文档结构。当前实现和实测见 [OCR 流程说明](OCR_WORKFLOW.md)。
 
-## 区域录屏（未发布）
+## 区域录屏
 
 截图后可直接点击图片工具栏「录屏」并沿用该区域。托盘「录屏设置…」打开录屏窗口，选择 30/60 fps 和最大分辨率后直接框选，成功开始后记住区域和参数，可通过「录制上次区域」或录屏快捷键再次录制，无需重选；显示器或来源变化时回到选区。「重新选区…」可更改范围。视频自动保存到「视频/Framely」（可在设置「录屏」页修改或改为每次询问）。录制中主窗口隐藏，录制区域外侧显示浮动控制条（计时、暂停/继续、结束），托盘显示录制状态与计时；独立录屏快捷键或再次执行 `screenpin --record` 会结束保存。录完可在「转 GIF」页导出，也可从托盘「视频转 GIF…」处理任意 MP4。关闭录屏窗口、正常退出应用会先结束保存。当前版本录制无声视频，完整流程、GIF 导出和平台验收范围见 [录屏说明](RECORDING.md)。
 
@@ -145,7 +145,7 @@ SDK 默认生成的 Linux 安装入口名为 `screenpin.desktop`。ScreenPin 历
 ```bash
 cd packaging/arch-native
 makepkg --syncdeps --cleanbuild
-sudo pacman -U ./screenpin-native-0.2.3-1-x86_64.pkg.tar.zst
+sudo pacman -U ./framely-0.3.0-1-x86_64.pkg.tar.zst
 ```
 
 该配方从当前工作区构建，支持 x86_64 和 aarch64，并排除本地凭据、代理状态和编译产物。Arch 包名为 `framely`，提供 `screenpin` 命令，替换并与 `screenpin-native`、旧版 `screenpin` 包互斥。配置仍沿用 `screenpin/config.json`，安装前请从托盘退出旧实例。

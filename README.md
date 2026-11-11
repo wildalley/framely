@@ -4,7 +4,7 @@
 
 跨平台截图、标注、贴图、长截图、录屏与离线文字识别工具，使用 Go + MyGo 构建。原名 ScreenPin，v0.2.3 之后改名；可执行文件仍为 `screenpin`，配置与授权在升级后保留。启动后驻留托盘，每次截图、粘贴或打开图片都会创建独立窗口；关闭窗口后释放该图片和编辑历史。
 
-Framely is an open-source screenshot, annotation, pinning and offline OCR app built with MyGo native UI for Windows, Linux and macOS. Scrolling capture is available on Windows/Linux; region recording and GIF export are included in the latest source preview.
+Framely is an open-source screenshot, annotation, pinning and offline OCR app built with MyGo native UI for Windows, Linux and macOS. Scrolling capture is available on Windows/Linux; region recording and GIF export are available in v0.3.0.
 
 ![Framely 原生截图编辑器，使用生成的示例内容](docs/images/framely.png)
 
@@ -15,7 +15,7 @@ Framely is an open-source screenshot, annotation, pinning and offline OCR app bu
 - **截图与贴图**：区域截图、粘贴和导入图片；多窗口独立标注、缩放、置顶和关闭。
 - **标注编辑**：画笔、荧光笔、矩形、椭圆、箭头、文字和马赛克；调整颜色、粗细、透明度和圆角，支持撤销与重做。
 - **滚动长截图**：Linux 与 Windows 支持框选后连续拼接、暂停、撤回和完成；采集组件只传输选区像素，自动滚动以桌面授权能力为准。
-- **区域录屏（未发布）**：30/60 fps 无声 MP4，可沿用本次截图选区，也可一键录制上次区域；记住帧率和分辨率，自动保存到「视频/Framely」（可修改）；录制区域旁的浮动控制条和托盘都显示计时，可暂停、继续与结束。录完或从托盘「视频转 GIF…」按起点、时长、宽度和帧率导出 GIF，显示进度。平台实测范围见 [录屏说明](docs/RECORDING.md)。
+- **区域录屏**：30/60 fps 无声 MP4，可沿用本次截图选区，也可一键录制上次区域；记住帧率和分辨率，自动保存到「视频/Framely」（可修改）；录制区域旁的浮动控制条和托盘都显示计时，可暂停、继续与结束。录完或从托盘「视频转 GIF…」按起点、时长、宽度和帧率导出 GIF，显示进度。平台实测范围见 [录屏说明](docs/RECORDING.md)。
 - **离线 OCR**：内置中英文模型，无需安装 Python；从托盘“框选取字…”或 `screenpin --ocr` 直接识别，长图逐块显示结果。
 - **“大爆炸”式选词**：中文分词、单字模式、点击或拖动选词、Shift 连选、反选和全文编辑，按原文顺序组合复制。
 - **图片导出**：复制到剪贴板，或保存为 PNG、JPEG、WebP；PNG/WebP 支持透明度，JPEG 使用白色背景。
@@ -24,18 +24,18 @@ Framely is an open-source screenshot, annotation, pinning and offline OCR app bu
 
 ## 下载与安装
 
-当前源码版本为 **0.2.3**，可下载版本以 [Release 页面](https://github.com/wildalley/screenpin/releases) 为准。下表为已发布的 v0.2.3 文件名；下一版本起安装包改名为 `framely-*`，Arch 包改名为 `framely`（自动替换 `screenpin-native`）。完整包包含主程序、采集组件和离线 OCR 运行时，升级时请退出旧实例并完整替换配套文件。
+当前版本为 **0.3.0**，使用 MyGo **0.8.3**。下载以 [Release 页面](https://github.com/wildalley/screenpin/releases) 为准。安装包使用 `framely-*` 名称，Arch 包名为 `framely`（自动替换 `screenpin-native`）；命令仍为 `screenpin`。完整包包含采集、录屏和离线 OCR 运行时，升级前请退出旧实例并完整替换配套文件。
 
 | 平台 | 安装包或便携包 |
 | --- | --- |
-| Windows x64 | `screenpin-0.2.3-windows-amd64-setup.exe` 或 `screenpin-0.2.3-windows-amd64-portable.zip` |
-| macOS 15+ Apple Silicon | `screenpin-0.2.3-darwin-arm64.dmg` |
-| macOS 15+ Intel | `screenpin-0.2.3-darwin-amd64.dmg` |
-| Ubuntu/Debian x64 | `screenpin-0.2.3-linux-amd64.deb` |
-| Arch Linux x64 | `screenpin-native-0.2.3-1-x86_64.pkg.tar.zst` |
-| 其他 Linux x64 | `screenpin-0.2.3-linux-amd64-portable.tar.gz` |
+| Windows x64 | `framely-0.3.0-windows-amd64-setup.exe` 或 `framely-0.3.0-windows-amd64-portable.zip` |
+| macOS 15+ Apple Silicon | `framely-0.3.0-darwin-arm64.dmg` |
+| macOS 15+ Intel | `framely-0.3.0-darwin-amd64.dmg` |
+| Ubuntu/Debian x64 | `framely-0.3.0-linux-amd64.deb` |
+| Arch Linux x64 | `framely-0.3.0-1-x86_64.pkg.tar.zst` |
+| 其他 Linux x64 | `framely-0.3.0-linux-amd64-portable.tar.gz` |
 
-Ubuntu/Debian 使用 `sudo apt install ./screenpin-0.2.3-linux-amd64.deb`；Arch 使用 `sudo pacman -U ./screenpin-native-0.2.3-1-x86_64.pkg.tar.zst`。Linux 便携包解压后运行 `./screenpin`，或执行 `./install.sh` 安装到当前用户目录。Release 中的 `SHA256SUMS` 可用于校验下载文件。
+Ubuntu/Debian 使用 `sudo apt install ./framely-0.3.0-linux-amd64.deb`；Arch 使用 `sudo pacman -U ./framely-0.3.0-1-x86_64.pkg.tar.zst`。Linux 便携包解压后运行 `./screenpin`，或执行 `./install.sh` 安装到当前用户目录。Release 中的 `SHA256SUMS` 可用于校验下载文件。
 
 | 平台 | 使用条件 |
 | --- | --- |
@@ -43,7 +43,7 @@ Ubuntu/Debian 使用 `sudo apt install ./screenpin-0.2.3-linux-amd64.deb`；Arch
 | Windows | 长截图使用 Windows Graphics Capture，要求 Windows 10 1903+；浮动控制窗口排除采集需要 Windows 10 2004+。 |
 | macOS | 支持截图、标注、贴图和 OCR，暂不支持长截图。 |
 
-Windows/macOS 包暂未配置正式开发者签名与公证。更多平台限制见 [v0.2.3 发布说明](docs/releases/v0.2.3.md)。
+Windows/macOS 包暂未配置正式开发者签名与公证。更多平台限制见 [v0.3.0 发布说明](docs/releases/v0.3.0.md)。
 
 ## 快速使用
 
@@ -59,7 +59,7 @@ screenpin                    # 启动或唤起托盘实例
 screenpin --capture          # 截图
 screenpin --scroll           # 长截图（Linux / Windows）
 screenpin --ocr              # 直接框选取字
-screenpin --record           # 开始录屏（沿用上次区域）；录制中再次调用结束保存（未发布）
+screenpin --record           # 开始录屏（沿用上次区域）；录制中再次调用结束保存
 screenpin ./example.png      # 打开图片
 ```
 

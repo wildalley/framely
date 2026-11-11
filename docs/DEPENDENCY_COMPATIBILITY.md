@@ -1,5 +1,15 @@
 # Dependency compatibility review — 2026-11-10
 
+## 2026-11-11 — MyGo 0.8.3 / Framely 0.3.0
+
+The previous compatibility upgrade to MyGo 0.8.1 succeeded and was released in v0.2.3. The later recording/icon commits still pinned 0.8.1; they did not attempt an upgrade to 0.8.3. This release updates the module and its CLI tool together to the latest stable MyGo 0.8.3, retaining Go 1.27.3.
+
+Upstream reports no breaking Go API changes. The default Markdown mention/reference parsing and generated TypeScript Record/Promise name changes do not affect this native-UI application. The prior InputEvent.Canceled adaptations remain in place. The upgrade includes upstream clip-mask cache budgets, animated mask reuse, idle Windows texture cleanup and Linux overlay behavior fixes; these are upstream changes, not a claim that all Framely GPU paths are leak-free.
+
+Local source race tests, static analysis, all 28 Python regressions and the v0.3.0 version/notes preflight pass with 0.8.3. Complete target-native workers, installers and packaged OCR/media verification run in the tag-triggered release CI. Published assets are accepted only after all seven platform packages and checksums are verified.
+
+Primary source: https://github.com/egoist/mygo/releases/tag/v0.8.3
+
 Baseline: `v0.2.2` / `69e3eca`. Validation branch: `audit/dependency-compat-20261110`. The validated changes are integrated into main for v0.2.3.
 This branch evaluates the 12 open Dependabot PRs against the native Go/MyGo architecture.
 
