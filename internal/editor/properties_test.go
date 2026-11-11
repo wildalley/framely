@@ -9,35 +9,6 @@ import (
 	"github.com/wildalley/framely/internal/doc"
 )
 
-func TestPropertyControlsShareTheSameVerticalCenter(t *testing.T) {
-	for _, width := range []int{320, 420, 760, 900} {
-		for _, scale := range []float32{1, 1.5, 2} {
-			for _, dark := range []bool{false, true} {
-				a := rectangleApp()
-				a.propertyImage = true
-				tt := ui.NewTester(a.view, width, 400)
-				tt.SetScale(scale)
-				tt.SetDark(dark)
-				labels := []string{"属性目标", "截图圆角", "截图圆角增减", "快捷圆角 0%", "快捷圆角 50%", "快捷圆角 100%"}
-				var center float32
-				for i, label := range labels {
-					r, ok := tt.Find(label)
-					if !ok {
-						t.Fatalf("missing %s", label)
-					}
-					if i == 0 {
-						center = r.Y + r.H/2
-					}
-					if math.Abs(float64(r.Y+r.H/2-center)) > .5 {
-						t.Fatalf("width=%d scale=%g dark=%v %s center=%g, expected=%g", width, scale, dark, label, r.Y+r.H/2, center)
-					}
-				}
-				a.release()
-			}
-		}
-	}
-}
-
 func rectangleApp() *App {
 	a := New(config.Default())
 	a.image = &doc.Image{Width: 500, Height: 300}
@@ -48,36 +19,23 @@ func rectangleApp() *App {
 	return a
 }
 
-func TestInlinePropertiesFitTheSecondRowWithoutScrolling(t *testing.T) {
-	for _, width := range []int{320, 420, 600, 759, 760, 900, 1100} {
+func TestStyleFlyoutFitsBesideTheRail(t *testing.T) {
+	for _, size := range [][2]int{{minWidth, minHeight}, {760, 400}, {1100, 700}} {
+		width, height := size[0], size[1]
 		for _, dark := range []bool{false, true} {
 			for _, scale := range []float32{1, 1.5, 2} {
 				a := rectangleApp()
-				tt := ui.NewTester(a.view, width, 400)
+				tt := ui.NewTester(a.view, width, height)
 				tt.SetDark(dark)
 				tt.SetScale(scale)
-				row, ok := tt.Find("快捷属性")
-				if !ok {
-					t.Fatal("missing property row")
+				panel, ok := tt.Find("快捷属性")
+				if !ok || panel.X < railWidth || panel.Y < topBarHeight || panel.Y+panel.H > float32(height)+.5 {
+					t.Fatalf("%v the style flyout is missing or outside the stage: %+v", size, panel)
 				}
-				labels := []string{"属性目标", "颜色", "矩形圆角", "粗细", "不透明度"}
-				if width >= 900 {
-					labels[1] = "颜色 #e5484d"
-				}
-				if width >= 600 {
-					labels = append(labels, "截图圆角")
-				}
-				for _, label := range labels {
+				for _, label := range []string{"颜色 红色", "颜色 白色", "粗细 细", "粗细 粗", "边角 直角", "边角 大圆角", "不透明度", "更多样式"} {
 					r, ok := tt.Find(label)
-					if !ok || r.X < 0 || r.X+r.W > float32(width)+.5 || r.Y < row.Y || r.Y+r.H > row.Y+row.H+.5 {
-						t.Fatalf("width=%d scale=%g dark=%v %s=%+v row=%+v found=%v", width, scale, dark, label, r, row, ok)
-					}
-				}
-				for i := 1; i < len(labels); i++ {
-					before, _ := tt.Find(labels[i-1])
-					after, _ := tt.Find(labels[i])
-					if before.X+before.W > after.X+.5 {
-						t.Fatalf("width=%d controls overlap: %s=%+v %s=%+v", width, labels[i-1], before, labels[i], after)
+					if !ok || r.W <= 0 || r.X < panel.X || r.X+r.W > panel.X+panel.W+.5 || r.Y < panel.Y || r.Y+r.H > panel.Y+panel.H+.5 {
+						t.Fatalf("%v scale=%g dark=%v %s=%+v panel=%+v found=%v", size, scale, dark, label, r, panel, ok)
 					}
 				}
 				a.release()
@@ -86,63 +44,70 @@ func TestInlinePropertiesFitTheSecondRowWithoutScrolling(t *testing.T) {
 	}
 }
 
-func TestInlineNumberEditingIsOneUndoAndDoesNotTriggerCanvasCommands(t *testing.T) {
+func TestStylePresetsRestyleTheSelectionInOneUndoStepEach(t *testing.T) {
 	a := rectangleApp()
 	defer a.release()
-	a.OnScroll = func() { t.Fatal("typing launched long capture") }
+	a.OnScroll = func() { t.Fatal("a style click launched long capture") }
 	tt := ui.NewTester(a.view, 900, 500)
-	if err := tt.Click("矩形圆角"); err != nil {
-		t.Fatal(err)
+	if r, ok := tt.Find("粗细 中"); !ok || r.W <= 0 {
+		t.Fatal("the default stroke is not shown as the medium preset")
 	}
-	tt.Key(ui.Cmd, ui.KeyA)
-	tt.TypeKey(0, ui.KeyR, "r")
-	tt.Key(0, ui.KeyBackspace)
-	tt.Key(ui.Cmd|ui.Shift, ui.KeyL)
-	if a.tool != doc.ToolSelect || len(a.history.Present()) != 1 {
-		t.Fatal("numeric field editing changed canvas state")
+	for _, label := range []string{"粗细 粗", "边角 直角", "颜色 蓝色"} {
+		if err := tt.Click(label); err != nil {
+			t.Fatal(err)
+		}
 	}
-	tt.Type("50")
-	if got := a.history.Present()[0].CornerRadius(); got != 25 {
-		t.Fatal("number did not update the selected rectangle", got)
+	got := a.history.Present()[0]
+	if got.StrokeWidth != 8 || got.CornerRadius() != 0 || got.Color != "#2383e2" {
+		t.Fatalf("presets did not restyle the rectangle: stroke=%g corner=%g color=%s", got.StrokeWidth, got.CornerRadius(), got.Color)
 	}
-	if err := tt.Click("选择 (V)"); err != nil {
-		t.Fatal(err)
+	if a.styles[doc.ToolRectangle].StrokeWidth != 8 {
+		t.Fatal("the next rectangle does not keep the chosen stroke")
 	}
-	if a.history.InTransaction() {
-		t.Fatal("leaving numeric input kept its transaction open")
+	for i := 0; i < 3; i++ {
+		a.undo()
 	}
-	a.undo()
-	if a.history.Present()[0].CornerRadius() != 5 || a.history.CanUndo() {
-		t.Fatal("typed numeric value was not one undo step")
-	}
-	if err := tt.Click("截图圆角"); err != nil {
-		t.Fatal(err)
-	}
-	tt.Key(ui.Cmd, ui.KeyA)
-	tt.Type("25")
-	_ = tt.Click("选择 (V)")
-	if a.history.ImageCornerRatio() != .25 || a.history.Present()[0].CornerRadius() != 5 {
-		t.Fatal("image corner control restyled the annotation")
+	got = a.history.Present()[0]
+	if got.StrokeWidth != 4 || math.Abs(got.CornerRadius()-5) > 1e-9 || a.history.CanUndo() {
+		t.Fatalf("each preset was not one undo step: stroke=%g corner=%g", got.StrokeWidth, got.CornerRadius())
 	}
 }
 
-func TestCompactPropertyTargetSwitchesBetweenRectangleAndImage(t *testing.T) {
+func TestStyleFlyoutFollowsToolAndSelection(t *testing.T) {
 	a := rectangleApp()
 	defer a.release()
-	tt := ui.NewTester(a.view, 320, 400)
-	if err := tt.Click("属性目标"); err != nil {
+	tt := ui.NewTester(a.view, 760, 400)
+	if _, ok := tt.Find("快捷属性"); !ok {
+		t.Fatal("a selected rectangle shows no style flyout")
+	}
+	a.selected = ""
+	tt.Frame()
+	if r, ok := tt.Find("快捷属性"); ok && r.W > 0 {
+		t.Fatal("the style flyout stays over the canvas with nothing to style")
+	}
+	if err := tt.Click("文字 (T)"); err != nil {
 		t.Fatal(err)
 	}
-	if err := tt.Click("截图"); err != nil {
+	if r, ok := tt.Find("字号 中"); !ok || r.W <= 0 {
+		t.Fatal("the text tool shows no font size presets")
+	}
+	// Clicking the active tool again puts its styles away, and back.
+	if err := tt.Click("文字 (T)"); err != nil {
 		t.Fatal(err)
 	}
-	if err := tt.Click("截图圆角"); err != nil {
+	if r, ok := tt.Find("快捷属性"); (ok && r.W > 0) || a.tool != doc.ToolText {
+		t.Fatal("clicking the active tool did not hide its styles")
+	}
+	if err := tt.Click("文字 (T)"); err != nil {
 		t.Fatal(err)
 	}
-	tt.Key(ui.Cmd, ui.KeyA)
-	tt.Type("75")
-	_ = tt.Click("选择 (V)")
-	if a.history.ImageCornerRatio() != .75 || a.history.Present()[0].CornerRadius() != 5 {
-		t.Fatal("compact target selection changed the wrong object")
+	if r, ok := tt.Find("快捷属性"); !ok || r.W <= 0 {
+		t.Fatal("clicking the active tool again did not bring its styles back")
+	}
+	if err := tt.Click("更多样式"); err != nil {
+		t.Fatal(err)
+	}
+	if a.panel != PanelStyle {
+		t.Fatal("更多样式 did not open the full style popover")
 	}
 }

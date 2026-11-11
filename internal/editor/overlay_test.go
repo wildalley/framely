@@ -65,12 +65,12 @@ func TestDesktopScrollSelectionMapsDisplayGeometryAndStreamScale(t *testing.T) {
 
 func TestScreenRegionConfirmsReleaseCoordinatesAndReleasesState(t *testing.T) {
 	v := &pickView{display: mygo.Display{Bounds: mygo.Rectangle{Width: 800, Height: 600}}, crop: image.Rect(-1600, 0, 0, 1200)}
-	s := &pick{full: image.NewRGBA(v.crop), result: make(chan pickResult, 1), active: v, dragging: true, origin: doc.Point{X: 10, Y: 20}, corner: doc.Point{X: 10, Y: 20}, minimum: image.Pt(80, 160)}
+	s := &pick{full: image.NewRGBA(v.crop), result: make(chan pickResult, 1), active: v, dragging: true, origin: doc.Point{X: 10, Y: 20}, corner: doc.Point{X: 10, Y: 20}, opts: PickOptions{Minimum: image.Pt(80, 160)}}
 	if !s.input(v, ui.InputEvent{Kind: ui.InputPointerUp, X: 210, Y: 220}, 800, 600) {
 		t.Fatal("release not handled")
 	}
 	choice := <-s.result
-	if choice.err != nil || choice.region != image.Rect(-1580, 40, -1180, 440) {
+	if choice.err != nil || choice.Region != image.Rect(-1580, 40, -1180, 440) {
 		t.Fatal(choice)
 	}
 	if !s.done || s.full != nil || s.active != nil || s.dragging {
@@ -80,7 +80,7 @@ func TestScreenRegionConfirmsReleaseCoordinatesAndReleasesState(t *testing.T) {
 
 func TestScreenRegionSmallDragDoesNotConfirmAndEscapeCancels(t *testing.T) {
 	v := &pickView{display: mygo.Display{Bounds: mygo.Rectangle{Width: 800, Height: 600}}, crop: image.Rect(0, 0, 800, 600)}
-	s := &pick{result: make(chan pickResult, 1), active: v, dragging: true, origin: doc.Point{X: 10, Y: 10}, minimum: image.Pt(80, 160)}
+	s := &pick{result: make(chan pickResult, 1), active: v, dragging: true, origin: doc.Point{X: 10, Y: 10}, opts: PickOptions{Minimum: image.Pt(80, 160)}}
 	s.input(v, ui.InputEvent{Kind: ui.InputPointerUp, X: 50, Y: 50}, 800, 600)
 	if s.done {
 		t.Fatal("tiny scroll selection confirmed")

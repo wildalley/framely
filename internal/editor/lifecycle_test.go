@@ -55,10 +55,10 @@ func TestClosingImageReleasesStateAndRejectsPendingWork(t *testing.T) {
 
 func TestCancelledPickerReleasesDesktopPixels(t *testing.T) {
 	full := image.NewRGBA(image.Rect(0, 0, 100, 100))
-	s := &pick{full: full, bitmap: ui.NewBitmap(full), active: &pickView{}, result: make(chan pickResult, 1), dragging: true, shift: true}
-	s.finish(nil, nil)
-	s.finish(nil, nil)
-	if !s.done || s.full != nil || s.bitmap != nil || s.active != nil || s.views != nil || s.dragging || s.shift {
+	s := &pick{full: full, bitmap: ui.NewBitmap(full), active: &pickView{}, result: make(chan pickResult, 1), dragging: true, space: true, adjusting: true}
+	s.cancel()
+	s.cancel()
+	if !s.done || s.full != nil || s.bitmap != nil || s.active != nil || s.views != nil || s.dragging || s.space || s.adjusting {
 		t.Fatal("a cancelled selector kept its screenshot")
 	}
 	if result := <-s.result; !errors.Is(result.err, capture.ErrCancelled) {

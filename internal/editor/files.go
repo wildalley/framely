@@ -22,7 +22,23 @@ type Picture struct {
 	mosaic    *image.RGBA
 	title     string
 	selection *ScreenSelection
+	pick      Pick
 	lease     *imagelimit.Lease
+}
+
+// WithPick records what the region picker chose to do with this picture.
+func (p Picture) WithPick(choice Pick) Picture { p.pick = choice; return p }
+
+// Pick is what the region picker chose; PickEdit for other pictures.
+func (p Picture) Pick() Pick { return p.pick }
+
+// Selection is where on screen a fresh screenshot was taken, or nil.
+func (p Picture) Selection() *ScreenSelection {
+	if p.selection == nil {
+		return nil
+	}
+	copy := *p.selection
+	return &copy
 }
 
 // Close releases this ownership handle; call it after a synchronous handoff.
@@ -134,4 +150,13 @@ func ReadPicture(path string) (Picture, error) {
 		return Picture{}, err
 	}
 	return DecodePicture(data, filepath.Base(path))
+}
+
+// PNG encodes the picture as taken, for copying a region without opening
+// a window.
+func (p Picture) PNG() ([]byte, error) {
+	if p.pixels == nil {
+		return nil, errors.New("没有图片")
+	}
+	return render.Encode(p.pixels, render.PNG, 1)
 }

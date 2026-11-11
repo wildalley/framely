@@ -11,6 +11,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 	"github.com/wildalley/framely/internal/config"
+	"github.com/wildalley/framely/internal/doc"
 )
 
 // This deliberately uses the software renderer. Native GPU/OS allocations
@@ -31,6 +32,12 @@ func TestSoftwareImageLifecycleMemoryStress(t *testing.T) {
 		a := New(config.Default())
 		a.loadPicture(picture, nil)
 		tt := ui.NewTester(a.view, 640, 480)
+		_ = tt.Image()
+		// Draw the style flyout, then the pinned view with its hover bar.
+		a.setTool(doc.ToolRectangle)
+		_ = tt.Image()
+		a.pinned = true
+		tt.Move(320, 240)
 		_ = tt.Image()
 		a.Close()
 		tt.Frame()

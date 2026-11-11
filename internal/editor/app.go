@@ -25,13 +25,14 @@ const (
 )
 
 const (
-	minZoom        = 0.1
-	maxZoom        = 3
-	minWidth       = 320
-	barHeight      = 44
-	propertyHeight = 52
-	styleWidth     = 280
-	styleHeight    = 330
+	minZoom = 0.1
+	maxZoom = 3
+	// The window never gets smaller than this, so the top bar and the tool
+	// rail keep their room; a smaller image sits centered on the stage.
+	minWidth    = 480
+	minHeight   = 360
+	styleWidth  = 280
+	styleHeight = 330
 )
 
 // App belongs to one image. Closing it cancels its work and drops the image,
@@ -54,22 +55,21 @@ type App struct {
 	history  doc.History
 	lease    *imagelimit.Lease
 
-	tool            doc.Tool
-	selected        string
-	styles          map[doc.Tool]doc.Style
-	zoom            float64
-	pinned          bool
-	busy            bool
-	ocrRunning      bool
-	ocrCancel       context.CancelFunc
-	panel           Panel
-	lastPanel       Panel
-	appearanceTab   int
-	propertyImage   bool
-	propertyInputs  [4]ui.Handle
-	propertyValues  [4]string
-	propertyEditKey string
-	toasts          []string
+	tool          doc.Tool
+	selected      string
+	styles        map[doc.Tool]doc.Style
+	zoom          float64
+	pinned        bool
+	busy          bool
+	ocrRunning    bool
+	ocrCancel     context.CancelFunc
+	panel         Panel
+	lastPanel     Panel
+	appearanceTab int
+	// styleHidden puts the style flyout away until the tool or the
+	// selection changes.
+	styleHidden bool
+	toasts      []string
 
 	exportFormat  render.Format
 	exportQuality float64
@@ -123,8 +123,8 @@ func (a *App) Open(parent context.Context, picture Picture, target *mygo.Rectang
 	a.ctx, a.cancel = context.WithCancel(parent)
 	a.loadPicture(picture, target)
 	a.win = mygo.NewWindow(mygo.WindowOptions{
-		Title: a.title + " — " + brand.Name, Width: minWidth, Height: barHeight + 80,
-		MinWidth: minWidth, MinHeight: 2*barHeight + propertyHeight + 40, UseContentSize: true,
+		Title: a.title + " — " + brand.Name, Width: minWidth, Height: minHeight,
+		MinWidth: minWidth, MinHeight: minHeight, UseContentSize: true,
 		Frameless: true, DisableMaximize: true, DisableFullScreen: true,
 		Hidden: true, Content: ui.View(a.view),
 	})
@@ -170,7 +170,7 @@ func (a *App) release() {
 	a.drag, a.styles, a.toasts = nil, nil, nil
 	a.selected, a.editingID, a.editingText, a.slidingKey, a.title = "", "", "", "", ""
 	a.annotationText, a.styleText = ui.Handle{}, ui.Handle{}
-	a.propertyInputs, a.propertyValues, a.propertyEditKey = [4]ui.Handle{}, [4]string{}, ""
+	a.styleHidden = false
 	a.target, a.panel, a.lastPanel = nil, PanelNone, PanelNone
 	a.selection = nil
 	a.busy, a.pinned, a.textEdit, a.editFresh = false, false, false, false
@@ -226,8 +226,8 @@ func (a *App) fitZoom() float64 {
 		return 1
 	}
 	area := a.workArea()
-	w := math.Max(120, float64(area.Width)-24)
-	h := math.Max(120, float64(area.Height)-float64(toolbarHeight(float32(min(a.image.Width, area.Width-24))))-24)
+	w := math.Max(120, float64(area.Width)-railWidth-24)
+	h := math.Max(120, float64(area.Height)-topBarHeight-24)
 	z := math.Min(1, math.Min(w/float64(a.image.Width), h/float64(a.image.Height)))
 	return roundZoom(clamp(z, minZoom, 1))
 }
@@ -274,15 +274,21 @@ func (a *App) fitWindow(center bool) {
 }
 
 func (a *App) wantedSize() (int, int) {
-	w := max(minWidth, int(math.Round(float64(a.image.Width)*a.zoom)))
-	h := max(40, int(math.Round(float64(a.image.Height)*a.zoom)))
+	if a.pinned {
+		area := a.workArea()
+		w := min(max(pinMinSize, int(math.Round(float64(a.image.Width)*a.zoom))), area.Width)
+		h := min(max(pinMinSize, int(math.Round(float64(a.image.Height)*a.zoom))), area.Height)
+		return w, h
+	}
+	w := int(math.Round(float64(a.image.Width)*a.zoom)) + railWidth
+	h := int(math.Round(float64(a.image.Height)*a.zoom)) + topBarHeight
 	if a.panel == PanelStyle {
-		w, h = max(w, styleWidth+16), max(h, styleHeight)
+		h = max(h, styleHeight+topBarHeight)
 	}
 	area := a.workArea()
-	w = min(w, max(minWidth, area.Width-24))
-	bar := toolbarHeight(float32(w))
-	return w, min(h+bar, max(bar+40, area.Height-24))
+	w = min(max(w, minWidth), max(minWidth, area.Width-24))
+	h = min(max(h, minHeight), max(minHeight, area.Height-24))
+	return w, h
 }
 
 func safeFileName(s string) string {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/wildalley/framely/internal/brand"
 	"runtime"
+	"strings"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -11,6 +12,7 @@ import (
 	"github.com/wildalley/framely/internal/config"
 	"github.com/wildalley/framely/internal/editor"
 	"github.com/wildalley/framely/internal/niribind"
+	"github.com/wildalley/framely/internal/translate"
 )
 
 type settingsWindow struct {
@@ -34,6 +36,13 @@ type settingsWindow struct {
 	notice          string
 	tab             int
 	streamIssue     string
+
+	// Translation keys being entered; empty keeps what is stored.
+	trID, trKey string
+	trStored    map[string]bool // provider → a key is stored
+	trTesting   bool
+	trResult    string
+	models      map[string]*modelState // direction → offline model
 }
 
 func (s *application) showSettings(notice string) {
@@ -98,7 +107,7 @@ func (v *settingsWindow) view(c *ui.Context) {
 	ui.Column(c).Fill().Padding(20).Gap(16).Children(func() {
 		panelHeader(c, "设置", brand.Name+" "+brand.ChineseName+" "+Version, nil)
 		previousTab := v.tab
-		ui.Tabs(c, &v.tab, "快捷键", "常规", "录屏", "权限与长截图")
+		ui.Tabs(c, &v.tab, "快捷键", "常规", "录屏", "权限与长截图", "翻译")
 		if previousTab != v.tab {
 			v.stopRecording()
 		}
@@ -205,6 +214,8 @@ func (v *settingsWindow) view(c *ui.Context) {
 						s.showGIF()
 					}
 				})
+			} else if v.tab == 4 {
+				v.translateSettings(c)
 			} else {
 				ui.Text(c, "长截图").FontWeight(600)
 				ui.Checkbox(c.Key("automatic-scroll"), &v.draft.AutomaticScroll, "长截图自动向下滚动").Disabled(v.saving || !capture.ScrollingSupported())
@@ -328,6 +339,29 @@ func (v *settingsWindow) save() {
 	v.recording = false
 	v.saving = true
 	v.notice = ""
+	provider, id, key := translate.Provider(v.draft.TranslateProvider), v.trID, v.trKey
+	if provider != translate.None && (strings.TrimSpace(id) != "" || strings.TrimSpace(key) != "") {
+		// Store the keys first, off the main thread: the credential store
+		// may ask the user to unlock it.
+		v.app.worker(func() {
+			err := storeCredentials(provider, id, key)
+			v.later(func() {
+				if err != nil {
+					v.saving = false
+					v.notice = "保存翻译密钥失败：" + err.Error()
+					return
+				}
+				v.trID, v.trKey = "", ""
+				if v.trStored == nil {
+					v.trStored = map[string]bool{}
+				}
+				v.trStored[string(provider)] = true
+				v.saving = false
+				v.save()
+			})
+		})
+		return
+	}
 	v.app.saveSettings(v.ctx, v.draft, func(err error) {
 		if v.ctx.Err() != nil {
 			return
