@@ -133,3 +133,33 @@ func (a *App) TogglePin() {
 	a.win.SetMinimumSize(minWidth, minHeight)
 	a.win.SetPosition(x-ox, y-oy)
 }
+
+// PinInPlace pins a fresh screenshot over the region it was taken from, at
+// the size it showed there. Without a known region it pins in place.
+func (a *App) PinInPlace() {
+	if a.closed || a.win == nil {
+		return
+	}
+	sel := a.selection
+	if sel == nil || sel.Size.X <= 0 || sel.Size.Y <= 0 || sel.Region.Empty() {
+		a.TogglePin()
+		return
+	}
+	sx := float64(sel.Display.Width) / float64(sel.Size.X)
+	sy := float64(sel.Display.Height) / float64(sel.Size.Y)
+	a.finishEditing()
+	a.zoom = roundZoom(clamp(float64(sel.Region.Dx())*sx/float64(a.image.Width), minZoom, maxZoom))
+	a.pinned, a.selected, a.tool, a.panel = true, "", doc.ToolSelect, PanelNone
+	a.win.SetMinimumSize(pinMinSize, pinMinSize)
+	a.win.SetAlwaysOnTop(true)
+	a.fitWindow(false)
+	a.win.SetPosition(sel.Display.X+int(math.Round(float64(sel.Region.Min.X)*sx)), sel.Display.Y+int(math.Round(float64(sel.Region.Min.Y)*sy)))
+}
+
+// UseTool starts the image window with an annotation tool chosen.
+func (a *App) UseTool(t doc.Tool) {
+	if a.closed || t == "" {
+		return
+	}
+	a.setTool(t)
+}

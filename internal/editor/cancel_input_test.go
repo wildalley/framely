@@ -41,7 +41,7 @@ func TestCanceledCanvasDragDoesNotCommitOrDiscardRedo(t *testing.T) {
 
 func TestCanceledScreenRegionDoesNotConfirm(t *testing.T) {
 	v := &pickView{display: mygo.Display{Bounds: mygo.Rectangle{Width: 800, Height: 600}}, crop: image.Rect(0, 0, 800, 600)}
-	s := &pick{result: make(chan pickResult, 1), active: v, dragging: true, origin: doc.Point{X: 10, Y: 10}, corner: doc.Point{X: 210, Y: 220}, minimum: image.Pt(80, 160)}
+	s := &pick{result: make(chan pickResult, 1), active: v, dragging: true, origin: doc.Point{X: 10, Y: 10}, corner: doc.Point{X: 210, Y: 220}, opts: PickOptions{Minimum: image.Pt(80, 160)}}
 	s.input(v, ui.InputEvent{Kind: ui.InputPointerUp, X: 210, Y: 220, Canceled: true}, 800, 600)
 	if s.done || s.dragging || s.active != nil || len(s.result) != 0 {
 		t.Fatal("cancelled screen selection confirmed or retained the drag")

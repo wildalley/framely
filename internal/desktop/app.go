@@ -266,9 +266,18 @@ func (s *application) showPicture(picture editor.Picture, target *mygo.Rectangle
 		s.refreshTray()
 		s.maybeQuit()
 	}
+	choice := picture.Pick()
 	if image.Open(s.ctx, picture, target, token) != nil {
 		s.images = append(s.images, image)
 		s.refreshTray()
+		switch choice.Action {
+		case editor.PickPin:
+			image.PinInPlace()
+		case editor.PickSave:
+			image.Export()
+		case editor.PickEdit:
+			image.UseTool(choice.Tool)
+		}
 	}
 }
 
@@ -442,9 +451,15 @@ func (s *application) captureWithActivation(token string, textOnly bool) {
 			win.Hide()
 		}
 	}
-	present := s.showPicture
+	present := s.presentPick
 	if textOnly {
 		present = func(p editor.Picture, _ *mygo.Rectangle, _ string) { s.recognizePicture(p) }
+	}
+	// Text capture confirms on release; a screenshot keeps the region
+	// adjustable and offers what to do with it.
+	opts := editor.PickOptions{Minimum: image.Pt(4, 4)}
+	if !textOnly {
+		opts.Actions, opts.Scroll, opts.Record, opts.Text = true, capture.ScrollingSupported(), true, true
 	}
 	s.beginPicture(func(ctx context.Context) (editor.Picture, *mygo.Rectangle, string, error) {
 		if len(hidden) > 0 {
@@ -463,24 +478,24 @@ func (s *application) captureWithActivation(token string, textOnly bool) {
 			}
 			var displays []mygo.Display
 			mygo.RunOnMain(func() { displays = mygo.Screen.Displays() })
-			r, target, err := editor.PickScreenRegion(ctx, full, displays, token, image.Pt(4, 4), "")
+			choice, err := editor.PickScreen(ctx, full, displays, token, opts)
 			if err != nil {
 				return editor.Picture{}, nil, "", err
 			}
-			pixels, err := capture.CropPixels(full, r)
+			pixels, err := capture.CropPixels(full, choice.Region)
 			if err != nil {
 				return editor.Picture{}, nil, "", err
 			}
 			picture, err := editor.PictureFromPixels(pixels, "截图 "+time.Now().Format("15-04-05"))
-			selection, _ := editor.ScreenSelectionFromDesktop(r, target, displays, full.Bounds())
-			return picture.WithScreenSelection(selection), target, "", err
+			selection, _ := editor.ScreenSelectionFromDesktop(choice.Region, choice.Target, displays, full.Bounds())
+			return picture.WithScreenSelection(selection).WithPick(choice), choice.Target, "", err
 		}
-		data, target, selection, remaining, err := grab(ctx, token)
+		data, choice, selection, remaining, err := grab(ctx, token, opts)
 		if err != nil {
 			return editor.Picture{}, nil, "", err
 		}
 		picture, err := editor.DecodePicture(data, "截图 "+time.Now().Format("15-04-05"))
-		return picture.WithScreenSelection(selection), target, remaining, err
+		return picture.WithScreenSelection(selection).WithPick(choice), choice.Target, remaining, err
 	}, func() {
 		for _, win := range hidden {
 			if !win.IsDestroyed() {
@@ -496,28 +511,66 @@ func (s *application) captureWithActivation(token string, textOnly bool) {
 }
 
 // First-use capture uses the system selector without opening a fake editor
-// just to focus a permission prompt. Once granted, use ScreenPin's own picker.
-func grab(ctx context.Context, token string) ([]byte, *mygo.Rectangle, *editor.ScreenSelection, string, error) {
+// just to focus a permission prompt. Once granted, use Framely's own picker.
+func grab(ctx context.Context, token string, opts editor.PickOptions) ([]byte, editor.Pick, *editor.ScreenSelection, string, error) {
 	if runtime.GOOS != "linux" {
 		data, err := capture.SystemContext(ctx, mygo.Clipboard.ReadImage)
-		return data, nil, nil, token, err
+		return data, editor.Pick{}, nil, token, err
 	}
 	if capture.ScreenshotAccessContext(ctx) == capture.AccessGranted {
 		full, err := capture.ScreenshotContext(ctx, false)
 		if err == nil {
-			data, target, selection, pickErr := editor.PickRegion(ctx, full, token)
+			data, choice, selection, pickErr := editor.PickRegion(ctx, full, token, opts)
 			// The token activated the picker; it must not be used a second time.
 			token = ""
 			if pickErr == nil || cancelled(pickErr) || ctx.Err() != nil {
-				return data, target, selection, token, pickErr
+				return data, choice, selection, token, pickErr
 			}
 			log.Printf(brand.Name+": region picker: %v; using system selector", pickErr)
 		} else if cancelled(err) || ctx.Err() != nil {
-			return nil, nil, nil, token, err
+			return nil, editor.Pick{}, nil, token, err
 		}
 	}
 	data, err := capture.ScreenshotContext(ctx, true)
-	return data, nil, nil, token, err
+	return data, editor.Pick{}, nil, token, err
+}
+
+// presentPick does what the region picker chose with a fresh screenshot.
+func (s *application) presentPick(picture editor.Picture, target *mygo.Rectangle, token string) {
+	switch choice := picture.Pick(); choice.Action {
+	case editor.PickCopy:
+		s.copyPicture(picture)
+	case editor.PickText:
+		s.recognizePicture(picture)
+	case editor.PickScroll:
+		selection := picture.Selection()
+		picture.Close()
+		s.showScrollForSelection(selection)
+	case editor.PickRecord:
+		selection := picture.Selection()
+		picture.Close()
+		s.showVideoForSelection(selection)
+	default:
+		s.showPicture(picture, target, token)
+	}
+}
+
+// copyPicture puts a picked region on the clipboard without a window.
+func (s *application) copyPicture(picture editor.Picture) {
+	retained := picture.Retain()
+	picture.Close()
+	s.worker(func() {
+		defer retained.Close()
+		data, err := retained.PNG()
+		s.dispatch(func() {
+			if err == nil {
+				err = mygo.Clipboard.WriteImage(data)
+			}
+			if err != nil {
+				s.notify("复制截图失败：" + err.Error())
+			}
+		})
+	})
 }
 
 // trayItems is shared by the native tray and its interaction regression tests.
