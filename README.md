@@ -4,7 +4,7 @@
 
 跨平台截图、标注、贴图、长截图、录屏与离线文字识别工具，使用 Go + MyGo 构建。原名 ScreenPin，v0.2.3 之后改名，GitHub 仓库也已从 `wildalley/screenpin` 改为 `wildalley/framely`（旧链接自动跳转）；可执行文件仍为 `screenpin`，配置与授权在升级后保留。启动后驻留托盘，每次截图、粘贴或打开图片都会创建独立窗口；关闭窗口后释放该图片和编辑历史。
 
-Framely is an open-source screenshot, annotation, pinning and offline OCR app built with MyGo native UI for Windows, Linux and macOS. Scrolling capture is available on Windows/Linux; region recording and GIF export are available in v0.3.0.
+Framely is an open-source screenshot, annotation, pinning, offline OCR and translation app built with MyGo native UI for Windows, Linux and macOS. Scrolling capture is available on Windows/Linux; region recording, GIF export, a color picker and online or downloadable offline translation are included in v0.4.0.
 
 ![Framely 原生截图编辑器，使用生成的示例内容](docs/images/framely.png)
 
@@ -26,18 +26,18 @@ Framely is an open-source screenshot, annotation, pinning and offline OCR app bu
 
 ## 下载与安装
 
-当前版本为 **0.3.0**，使用 MyGo **0.8.3**。下载以 [Release 页面](https://github.com/wildalley/framely/releases) 为准。安装包使用 `framely-*` 名称，Arch 包名为 `framely`（自动替换 `screenpin-native`）；命令仍为 `screenpin`。完整包包含采集、录屏和离线 OCR 运行时，升级前请退出旧实例并完整替换配套文件。
+当前版本为 **0.4.0**，使用 MyGo **0.8.3**。下载以 [Release 页面](https://github.com/wildalley/framely/releases) 为准。安装包使用 `framely-*` 名称，Arch 包名为 `framely`（自动替换 `screenpin-native`）；命令仍为 `screenpin`。完整包包含采集、录屏和离线 OCR 运行时，升级前请退出旧实例并完整替换配套文件。
 
 | 平台 | 安装包或便携包 |
 | --- | --- |
-| Windows x64 | `framely-0.3.0-windows-amd64-setup.exe` 或 `framely-0.3.0-windows-amd64-portable.zip` |
-| macOS 15+ Apple Silicon | `framely-0.3.0-darwin-arm64.dmg` |
-| macOS 15+ Intel | `framely-0.3.0-darwin-amd64.dmg` |
-| Ubuntu/Debian x64 | `framely-0.3.0-linux-amd64.deb` |
-| Arch Linux x64 | `framely-0.3.0-1-x86_64.pkg.tar.zst` |
-| 其他 Linux x64 | `framely-0.3.0-linux-amd64-portable.tar.gz` |
+| Windows x64 | `framely-0.4.0-windows-amd64-setup.exe` 或 `framely-0.4.0-windows-amd64-portable.zip` |
+| macOS 15+ Apple Silicon | `framely-0.4.0-darwin-arm64.dmg` |
+| macOS 15+ Intel | `framely-0.4.0-darwin-amd64.dmg` |
+| Ubuntu/Debian x64 | `framely-0.4.0-linux-amd64.deb` |
+| Arch Linux x64 | `framely-0.4.0-1-x86_64.pkg.tar.zst` |
+| 其他 Linux x64 | `framely-0.4.0-linux-amd64-portable.tar.gz` |
 
-Ubuntu/Debian 使用 `sudo apt install ./framely-0.3.0-linux-amd64.deb`；Arch 使用 `sudo pacman -U ./framely-0.3.0-1-x86_64.pkg.tar.zst`。Linux 便携包解压后运行 `./screenpin`，或执行 `./install.sh` 安装到当前用户目录。Release 中的 `SHA256SUMS` 可用于校验下载文件。
+Ubuntu/Debian 使用 `sudo apt install ./framely-0.4.0-linux-amd64.deb`；Arch 使用 `sudo pacman -U ./framely-0.4.0-1-x86_64.pkg.tar.zst`。Linux 便携包解压后运行 `./screenpin`，或执行 `./install.sh` 安装到当前用户目录。Release 中的 `SHA256SUMS` 可用于校验下载文件。
 
 | 平台 | 使用条件 |
 | --- | --- |
@@ -45,7 +45,7 @@ Ubuntu/Debian 使用 `sudo apt install ./framely-0.3.0-linux-amd64.deb`；Arch �
 | Windows | 长截图使用 Windows Graphics Capture，要求 Windows 10 1903+；浮动控制窗口排除采集需要 Windows 10 2004+。 |
 | macOS | 支持截图、标注、贴图和 OCR，暂不支持长截图。 |
 
-Windows/macOS 包暂未配置正式开发者签名与公证。更多平台限制见 [v0.3.0 发布说明](docs/releases/v0.3.0.md)。
+Windows/macOS 包暂未配置正式开发者签名与公证。更多平台限制见 [v0.4.0 发布说明](docs/releases/v0.4.0.md)。
 
 ## 快速使用
 

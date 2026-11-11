@@ -159,7 +159,7 @@ SDK 默认生成的 Linux 安装入口名为 `screenpin.desktop`。ScreenPin 历
 ```bash
 cd packaging/arch-native
 makepkg --syncdeps --cleanbuild
-sudo pacman -U ./framely-0.3.0-1-x86_64.pkg.tar.zst
+sudo pacman -U ./framely-0.4.0-1-x86_64.pkg.tar.zst
 ```
 
 该配方从当前工作区构建，支持 x86_64 和 aarch64，并排除本地凭据、代理状态和编译产物。Arch 包名为 `framely`，提供 `screenpin` 命令，替换并与 `screenpin-native`、旧版 `screenpin` 包互斥。配置仍沿用 `screenpin/config.json`，安装前请从托盘退出旧实例。
