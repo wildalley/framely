@@ -9,10 +9,28 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+import time
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 DESKTOP_ID = "io.screenpin.desktop.desktop"
+
+
+def run_hdiutil(*args, attempts=5):
+    """Run hdiutil, retrying the transient busy errors seen on CI runners.
+
+    Right after `hdiutil create`, diskimages-helper may still hold the image,
+    and `hdiutil verify` then fails with EAGAIN ("Resource temporarily
+    unavailable") even though the image is fine.
+    """
+    for attempt in range(1, attempts + 1):
+        result = subprocess.run(["hdiutil", *args])
+        if result.returncode == 0:
+            return
+        if attempt == attempts:
+            raise subprocess.CalledProcessError(result.returncode, result.args)
+        print(f"hdiutil {args[0]} failed with {result.returncode}; retry {attempt}/{attempts - 1}", flush=True)
+        time.sleep(5 * attempt)
 
 
 def verify_ocr_resources(resources):
@@ -139,8 +157,8 @@ def main():
             subprocess.run(["ditto", "--noclone", str(app), str(image_root / app.name)], check=True)
             (image_root / "Applications").symlink_to("/Applications")
             dmg = out / f"{prefix}.dmg"
-            subprocess.run(["hdiutil", "create", "-ov", "-volname", "Framely", "-srcfolder", str(image_root), "-format", "UDZO", str(dmg)], check=True)
-            subprocess.run(["hdiutil", "verify", str(dmg)], check=True)
+            run_hdiutil("create", "-ov", "-volname", "Framely", "-srcfolder", str(image_root), "-format", "UDZO", str(dmg))
+            run_hdiutil("verify", str(dmg))
     elif goos == "windows":
         shutil.copy2(bundle / f"screenpin-setup-{version}-{arch}.exe", out / f"{prefix}-setup.exe")
         with zipfile.ZipFile(out / f"{prefix}-portable.zip", "w", zipfile.ZIP_DEFLATED) as archive:
