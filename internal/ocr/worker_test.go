@@ -30,6 +30,10 @@ func TestMain(m *testing.M) {
 		serveTestWorker()
 		os.Exit(0)
 	}
+	if os.Getenv("SCREENPIN_OCR_HELPER_TEST") == "translate" {
+		translateTestWorker()
+		os.Exit(0)
+	}
 	code := m.Run()
 	Close()
 	os.Exit(code)

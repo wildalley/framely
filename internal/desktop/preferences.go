@@ -42,6 +42,7 @@ type settingsWindow struct {
 	trStored    map[string]bool // provider → a key is stored
 	trTesting   bool
 	trResult    string
+	models      map[string]*modelState // direction → offline model
 }
 
 func (s *application) showSettings(notice string) {

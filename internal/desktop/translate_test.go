@@ -3,6 +3,8 @@ package desktop
 import (
 	"context"
 	"errors"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
@@ -168,4 +170,41 @@ func TestTranslationPreview(t *testing.T) {
 	v.startTranslate()
 	tt.Frame()
 	saveShortcutPreview(t, tt, "ocr-translate")
+}
+
+func TestOfflineSettingsListTheModelsWithoutAKey(t *testing.T) {
+	v := &settingsWindow{app: &application{ctx: context.Background()}, ctx: context.Background(), draft: config.Default()}
+	v.draft.TranslateProvider = string(translate.Offline)
+	v.trStored = map[string]bool{}
+	// Set the models' states here rather than read the real data folder.
+	v.models = map[string]*modelState{"en-zh": {installed: true}, "zh-en": {downloading: true, percent: 42}}
+	v.tab = 4
+	tt := ui.NewTester(v.view, 660, 640)
+	if r, ok := tt.Find("API Key"); ok && r.W > 0 {
+		t.Fatal("the offline model asks for a key")
+	}
+	for _, label := range []string{"删除", "取消", "下载中 42%"} {
+		if !tt.HasText(label) {
+			if r, ok := tt.Find(label); !ok || r.W <= 0 {
+				t.Fatalf("offline settings lack %q: %v", label, tt.Texts())
+			}
+		}
+	}
+	v.models["zh-en"] = &modelState{}
+	tt.Frame()
+	if r, ok := tt.Find("下载"); !ok || r.W <= 0 {
+		t.Fatal("a missing model offers no download")
+	}
+	saveShortcutPreview(t, tt, "settings-translate-offline")
+}
+
+func TestOfflineTranslationAsksForTheMissingModel(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the models folder follows XDG_DATA_HOME on Linux")
+	}
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	_, err := translateOffline(context.Background(), "en-zh", []string{"Hello"})
+	if err == nil || !strings.Contains(err.Error(), "下载「英 → 中」") {
+		t.Fatal(err)
+	}
 }

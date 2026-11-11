@@ -4,6 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -11,6 +15,7 @@ import (
 	"github.com/egoist/mygo/ui"
 	"github.com/wildalley/framely/internal/brand"
 	"github.com/wildalley/framely/internal/config"
+	"github.com/wildalley/framely/internal/ocr"
 	"github.com/wildalley/framely/internal/translate"
 )
 
@@ -70,6 +75,9 @@ func translateWith(ctx context.Context, cfg config.Config, text, target string) 
 	if p == translate.None {
 		return translate.Result{}, translate.ErrNotConfigured
 	}
+	if p == translate.Offline {
+		return translate.Translate(ctx, translate.Options{Provider: p, Target: target, Offline: translateOffline}, text)
+	}
 	c, err := loadCredentials(p)
 	if err != nil {
 		return translate.Result{}, err
@@ -77,6 +85,45 @@ func translateWith(ctx context.Context, cfg config.Config, text, target string) 
 	return translate.Translate(ctx, translate.Options{
 		Provider: p, ID: c.ID, Key: c.Key, BaseURL: cfg.TranslateBaseURL, Model: cfg.TranslateModel, Target: target,
 	}, text)
+}
+
+// modelsRoot is where downloaded translation models are kept: the user's
+// data folder, not the cache, which cleaners empty.
+func modelsRoot() (string, error) {
+	if runtime.GOOS == "linux" {
+		data := os.Getenv("XDG_DATA_HOME")
+		if data == "" {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return "", err
+			}
+			data = filepath.Join(home, ".local", "share")
+		}
+		return filepath.Join(data, brand.Name, "models"), nil
+	}
+	dir, err := mygo.App.Path(mygo.PathUserData)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "models"), nil
+}
+
+// translateOffline runs a downloaded model through the text worker.
+var translateOffline = func(ctx context.Context, direction string, lines []string) ([]string, error) {
+	root, err := modelsRoot()
+	if err != nil {
+		return nil, err
+	}
+	for _, m := range translate.Models {
+		if m.Direction != direction {
+			continue
+		}
+		if !translate.Installed(root, m) {
+			return nil, fmt.Errorf("请先在「设置与快捷键 › 翻译」下载「%s」离线模型", m.Label)
+		}
+		return ocr.Translate(ctx, filepath.Join(root, direction), direction, lines)
+	}
+	return nil, fmt.Errorf("没有 %s 离线模型", direction)
 }
 
 // storeCredentials merges what was typed into the stored keys: a blank
@@ -147,6 +194,9 @@ func (v *settingsWindow) translateSettings(c *ui.Context) {
 	if provider == translate.None {
 		return
 	}
+	if provider == translate.Offline {
+		v.offlineModels(c)
+	}
 	if provider.NeedsID() {
 		label := "App ID"
 		if provider == translate.Tencent {
@@ -160,14 +210,9 @@ func (v *settingsWindow) translateSettings(c *ui.Context) {
 			ui.TextInput(c.Key("translate-id"), &v.trID).Label(label).Placeholder(placeholder).FillWidth().Disabled(v.saving)
 		})
 	}
-	keyLabel := map[translate.Provider]string{translate.DeepL: "API Key", translate.Baidu: "密钥", translate.Tencent: "SecretKey", translate.OpenAI: "API Key"}[provider]
-	field(keyLabel, func() {
-		placeholder := "粘贴" + keyLabel
-		if v.trStored[string(provider)] {
-			placeholder = "已保存，留空不修改"
-		}
-		ui.TextInput(c.Key("translate-key"), &v.trKey).Password().Label(keyLabel).Placeholder(placeholder).FillWidth().Disabled(v.saving)
-	})
+	if provider != translate.Offline {
+		v.keyField(c, provider, field)
+	}
 	if provider == translate.OpenAI {
 		field("接口地址", func() {
 			ui.TextInput(c.Key("translate-base"), &v.draft.TranslateBaseURL).Label("接口地址").Placeholder("https://api.openai.com/v1").FillWidth().Disabled(v.saving)
@@ -232,6 +277,141 @@ func (v *settingsWindow) testTranslation() {
 				return
 			}
 			v.trResult = "可用：" + result.Text
+		})
+	})
+}
+
+func (v *settingsWindow) keyField(c *ui.Context, provider translate.Provider, field func(string, func())) {
+	keyLabel := map[translate.Provider]string{translate.DeepL: "API Key", translate.Baidu: "密钥", translate.Tencent: "SecretKey", translate.OpenAI: "API Key"}[provider]
+	field(keyLabel, func() {
+		placeholder := "粘贴" + keyLabel
+		if v.trStored[string(provider)] {
+			placeholder = "已保存，留空不修改"
+		}
+		ui.TextInput(c.Key("translate-key"), &v.trKey).Password().Label(keyLabel).Placeholder(placeholder).FillWidth().Disabled(v.saving)
+	})
+}
+
+// modelState is an offline model's place in settings: installed, or being
+// downloaded with its progress, or the last error.
+type modelState struct {
+	installed   bool
+	downloading bool
+	percent     int
+	cancel      context.CancelFunc
+	err         string
+}
+
+// offlineModels lists the downloadable models with what can be done to
+// each. Nothing downloads until the user clicks; closing settings cancels
+// a download and keeps no partial file.
+func (v *settingsWindow) offlineModels(c *ui.Context) {
+	t := c.Theme()
+	if v.models == nil {
+		v.models = map[string]*modelState{}
+		for _, m := range translate.Models {
+			v.models[m.Direction] = &modelState{}
+		}
+		v.app.worker(func() {
+			root, err := modelsRoot()
+			installed := map[string]bool{}
+			for _, m := range translate.Models {
+				installed[m.Direction] = err == nil && translate.Installed(root, m)
+			}
+			v.later(func() {
+				for direction, ok := range installed {
+					v.models[direction].installed = ok
+				}
+			})
+		})
+	}
+	ui.Text(c, "在本机翻译，不联网。模型按需下载，下载时校验完整性；中英互译各一个方向，可只下载需要的。").FontSize(12).TextColor(t.TextMuted).MaxLines(3)
+	ui.Column(c.Key("offline-models")).FillWidth().Gap(6).Padding(10).Radius(8).Background(t.Surface).Children(func() {
+		for _, m := range translate.Models {
+			state := v.models[m.Direction]
+			ui.Row(c.Key("model-" + m.Direction)).FillWidth().Gap(10).AlignItems(ui.Center).MinHeight(32).Children(func() {
+				ui.Text(c, m.Label).FontWeight(600).Width(56)
+				status := fmt.Sprintf("约 %d MB · 未下载", m.Size()>>20)
+				color := t.TextMuted
+				switch {
+				case state.downloading:
+					status = fmt.Sprintf("下载中 %d%%", state.percent)
+				case state.installed:
+					status = fmt.Sprintf("约 %d MB · 已安装", m.Size()>>20)
+				case state.err != "":
+					status, color = state.err, t.Danger
+				}
+				ui.Text(c, status).FontSize(12).TextColor(color).MaxLines(2).Grow(1).MinWidth(0).Selectable()
+				switch {
+				case state.downloading:
+					ui.Progress(c, float64(state.percent)/100).Width(90)
+					if ui.Button(c.Key("model-cancel-"+m.Direction), "取消").Clicked() && state.cancel != nil {
+						state.cancel()
+					}
+				case state.installed:
+					if ui.Button(c.Key("model-remove-"+m.Direction), "删除").Clicked() {
+						v.removeModel(m)
+					}
+				default:
+					if ui.Button(c.Key("model-download-"+m.Direction), "下载").Clicked() {
+						v.downloadModel(m)
+					}
+				}
+			})
+		}
+	})
+}
+
+// downloadModels runs model downloads; tests replace it.
+var downloadModel = func(ctx context.Context, m translate.Model, progress func(done, total int64)) error {
+	root, err := modelsRoot()
+	if err != nil {
+		return err
+	}
+	return translate.Download(ctx, nil, root, m, progress)
+}
+
+func (v *settingsWindow) downloadModel(m translate.Model) {
+	state := v.models[m.Direction]
+	ctx, cancel := context.WithCancel(v.ctx)
+	state.downloading, state.percent, state.cancel, state.err = true, 0, cancel, ""
+	v.app.worker(func() {
+		shown := -1
+		err := downloadModel(ctx, m, func(done, total int64) {
+			// Only whole percents reach the window.
+			if percent := int(done * 100 / max(1, total)); percent != shown {
+				shown = percent
+				v.later(func() { state.percent = percent })
+			}
+		})
+		cancel()
+		v.later(func() {
+			state.downloading, state.cancel = false, nil
+			switch {
+			case err == nil:
+				state.installed = true
+			case errors.Is(err, context.Canceled):
+				state.err = ""
+			default:
+				state.err = err.Error()
+			}
+		})
+	})
+}
+
+func (v *settingsWindow) removeModel(m translate.Model) {
+	state := v.models[m.Direction]
+	v.app.worker(func() {
+		root, err := modelsRoot()
+		if err == nil {
+			err = translate.Remove(root, m)
+		}
+		v.later(func() {
+			if err != nil {
+				state.err = "删除失败：" + err.Error()
+				return
+			}
+			state.installed = false
 		})
 	})
 }

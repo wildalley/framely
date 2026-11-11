@@ -23,11 +23,12 @@ const (
 	DeepL   Provider = "deepl"
 	Baidu   Provider = "baidu"
 	Tencent Provider = "tencent"
-	OpenAI  Provider = "openai" // any OpenAI-compatible chat completions API
+	OpenAI  Provider = "openai"  // any OpenAI-compatible chat completions API
+	Offline Provider = "offline" // a downloaded model, on this computer
 )
 
 // Providers are the services offered, in the order settings lists them.
-var Providers = []Provider{DeepL, Baidu, Tencent, OpenAI}
+var Providers = []Provider{Offline, DeepL, Baidu, Tencent, OpenAI}
 
 // Label is the provider's name as settings shows it.
 func (p Provider) Label() string {
@@ -40,6 +41,8 @@ func (p Provider) Label() string {
 		return "腾讯翻译君"
 	case OpenAI:
 		return "大模型（OpenAI 兼容）"
+	case Offline:
+		return "离线模型（本机）"
 	}
 	return "未启用"
 }
@@ -65,6 +68,9 @@ type Options struct {
 	BaseURL  string // OpenAI-compatible API root, as https://api.openai.com/v1
 	Model    string // OpenAI-compatible model
 	Target   string // Auto, Chinese or English
+	// Offline runs a downloaded model on lines for the direction ("en-zh"
+	// or "zh-en"), returning a line for each.
+	Offline func(ctx context.Context, direction string, lines []string) ([]string, error)
 	// Endpoint replaces the provider's URL, for tests.
 	Endpoint string
 	Client   *http.Client
@@ -90,6 +96,13 @@ func Translate(ctx context.Context, o Options, text string) (Result, error) {
 	if n := utf8.RuneCountInString(text); n > MaxRunes {
 		return Result{}, fmt.Errorf("文字过长（%d 字），一次最多翻译 %d 字", n, MaxRunes)
 	}
+	target := o.Target
+	if target == Auto {
+		target = Detect(text)
+	}
+	if o.Provider == Offline {
+		return offline(ctx, o, text, target)
+	}
 	if o.Provider == None || strings.TrimSpace(o.Key) == "" || o.Provider.NeedsID() && strings.TrimSpace(o.ID) == "" {
 		return Result{}, ErrNotConfigured
 	}
@@ -101,10 +114,6 @@ func Translate(ctx context.Context, o Options, text string) (Result, error) {
 	}
 	if o.now == nil {
 		o.now = time.Now
-	}
-	target := o.Target
-	if target == Auto {
-		target = Detect(text)
 	}
 	var translate func(context.Context, Options, string, string) (string, error)
 	limit := 0
@@ -127,6 +136,23 @@ func Translate(ctx context.Context, o Options, text string) (Result, error) {
 			return Result{}, err
 		}
 		out = append(out, strings.TrimSpace(got))
+	}
+	return Result{Text: strings.Join(out, "\n"), Target: target}, nil
+}
+
+// offline translates line by line with a downloaded model.
+func offline(ctx context.Context, o Options, text, target string) (Result, error) {
+	m, ok := ModelFor(target)
+	if !ok || o.Offline == nil {
+		return Result{}, ErrNotConfigured
+	}
+	lines := strings.Split(text, "\n")
+	out, err := o.Offline(ctx, m.Direction, lines)
+	if err != nil {
+		return Result{}, err
+	}
+	if len(out) != len(lines) {
+		return Result{}, errors.New("离线翻译结果行数不符")
 	}
 	return Result{Text: strings.Join(out, "\n"), Target: target}, nil
 }

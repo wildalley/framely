@@ -24,6 +24,8 @@ subprocess.run([
     "protocol": 2, "rapidocr": importlib.metadata.version("rapidocr"),
     "onnxruntime": importlib.metadata.version("onnxruntime"), "models": "PP-OCRv6-small",
     "offline": True,
+    # 1: the worker translates offline with --translate and a downloaded model.
+    "translate": 1,
     "worker_sha256": hashlib.sha256((root / "workers/ocr/worker.py").read_bytes()).hexdigest(),
     "dependency_locks": {name: hashlib.sha256((root / "workers/ocr" / name).read_bytes()).hexdigest()
                          for name in ("requirements.lock", "rapidocr.lock")},

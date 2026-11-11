@@ -11,6 +11,8 @@ shapely==2.2.0
 six==1.17.0
 PyYAML==6.0.3
 pillow==13.0.0
+# Tokenizer for the downloadable offline translation models (OPUS-MT).
+sentencepiece==0.2.1
 tqdm==4.70.1
 omegaconf==2.4.0
 requests==2.34.2

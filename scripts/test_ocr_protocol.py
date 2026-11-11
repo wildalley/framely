@@ -70,5 +70,23 @@ class ProtocolTests(unittest.TestCase):
             worker.send(io.BytesIO(), {"confidence": float("nan")})
 
 
+class TranslateTests(unittest.TestCase):
+    def test_chinese_output_loses_sentencepiece_spaces(self):
+        self.assertEqual(worker.tidy_chinese("框架 支持本地识别、 选字和全文编辑 。"), "框架支持本地识别、选字和全文编辑。")
+        self.assertEqual(worker.tidy_chinese("单击 Save 以保留, 好吗?"), "单击Save以保留，好吗？")
+        self.assertEqual(worker.tidy_chinese("Windows 10 / Linux"), "Windows 10 / Linux")
+
+    def test_requests_are_bounded_lists_of_strings(self):
+        self.assertEqual(worker.read_translate_request(io.BytesIO('{"lines": ["a", "", "中文"]}'.encode())), ["a", "", "中文"])
+        for data in [b"[]", b'{"lines": "a"}', b'{"lines": [1]}', json.dumps({"lines": ["a"] * 2001}).encode(),
+                     b'{"lines": ["' + b"a" * (256 * 1024) + b'"]}']:
+            with self.subTest(data=data[:40]), self.assertRaises(ValueError):
+                worker.read_translate_request(io.BytesIO(data))
+
+    def test_english_to_chinese_asks_for_simplified_chinese(self):
+        self.assertEqual(worker.TARGET_TAGS, {"en-zh": ">>cmn_Hans<<"})
+        self.assertEqual(worker.TRANSLATE_DIRECTIONS, {"en-zh", "zh-en"})
+
+
 if __name__ == "__main__":
     unittest.main()

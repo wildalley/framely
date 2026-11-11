@@ -60,6 +60,7 @@ type ocrWindow struct {
 	run, later    func(func())
 	openSettings  func()
 	provider      string // the service's name, empty when none is set
+	offline       bool   // the service is a model on this computer
 	autoTranslate bool   // switch to the translation once text is recognized
 	target        string // translate.Auto, Chinese or English
 	tr            ocrTranslation
@@ -92,6 +93,7 @@ func (s *application) openOCR() *ocrWindow {
 		v.provider = ""
 	}
 	v.target = s.cfg.TranslateTarget
+	v.offline = s.cfg.TranslateProvider == string(translate.Offline)
 	cfg := s.cfg
 	v.translator = func(ctx context.Context, text, target string) (translate.Result, error) {
 		return translateWith(ctx, cfg, text, target)
@@ -327,7 +329,9 @@ func (v *ocrWindow) view(c *ui.Context) {
 	}
 	ui.Column(c).Fill().Padding(16).Gap(10).Children(func() {
 		subtitle := "离线识别 · 不上传图片"
-		if v.tab == 2 && v.provider != "" {
+		if v.tab == 2 && v.offline {
+			subtitle = "本机离线翻译 · 不联网"
+		} else if v.tab == 2 && v.provider != "" {
 			subtitle = "译文由 " + v.provider + " 生成 · 只发送文字，不发送图片"
 		}
 		panelHeader(c, "提取文字", subtitle, func() {
