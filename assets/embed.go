@@ -10,7 +10,7 @@ import (
 //go:embed tray-icon.png
 var TrayIcon []byte
 
-// TrayTemplate is black line art that macOS tints for the menu bar and
+// TrayTemplate is black silhouette that macOS tints for the menu bar and
 // Windows shows light on a dark taskbar.
 //
 //go:embed tray-template.png
@@ -21,7 +21,7 @@ var TrayTemplate []byte
 //go:embed tray-recording.png
 var TrayRecording []byte
 
-// Mark is the product glyph (viewfinder and glint) for in-app headers.
+// Mark is the product glyph (folded paper F) for in-app headers.
 //
 //go:embed mark.svg
 var Mark []byte

@@ -4,6 +4,10 @@
 
 跨平台截图、标注、贴图、长截图、录屏与离线文字识别工具，使用 Go + MyGo 构建。原名 ScreenPin，v0.2.3 之后改名；可执行文件仍为 `screenpin`，配置与授权在升级后保留。启动后驻留托盘，每次截图、粘贴或打开图片都会创建独立窗口；关闭窗口后释放该图片和编辑历史。
 
+Framely is an open-source screenshot, annotation, pinning and offline OCR app built with MyGo native UI for Windows, Linux and macOS. Scrolling capture is available on Windows/Linux; region recording and GIF export are included in the latest source preview.
+
+![Framely 原生截图编辑器，使用生成的示例内容](docs/images/framely.png)
+
 [下载 Release](https://github.com/wildalley/screenpin/releases/latest) · [更新日志](CHANGELOG.md) · [开发与构建](docs/NATIVE.md) · [OCR 流程](docs/OCR_WORKFLOW.md)
 
 ## 功能
@@ -11,12 +15,12 @@
 - **截图与贴图**：区域截图、粘贴和导入图片；多窗口独立标注、缩放、置顶和关闭。
 - **标注编辑**：画笔、荧光笔、矩形、椭圆、箭头、文字和马赛克；调整颜色、粗细、透明度和圆角，支持撤销与重做。
 - **滚动长截图**：Linux 与 Windows 支持框选后连续拼接、暂停、撤回和完成；采集组件只传输选区像素，自动滚动以桌面授权能力为准。
-- **区域录屏（未发布）**：30/60 fps 无声 MP4，框选即录，自动保存到「视频/Framely」（可修改）；录制区域旁的浮动控制条和托盘都显示计时，可暂停、继续与结束。录完或从托盘「视频转 GIF…」按起点、时长、宽度和帧率导出 GIF，显示进度。平台实测范围见 [录屏说明](docs/RECORDING.md)。
+- **区域录屏（未发布）**：30/60 fps 无声 MP4，可沿用本次截图选区，也可一键录制上次区域；记住帧率和分辨率，自动保存到「视频/Framely」（可修改）；录制区域旁的浮动控制条和托盘都显示计时，可暂停、继续与结束。录完或从托盘「视频转 GIF…」按起点、时长、宽度和帧率导出 GIF，显示进度。平台实测范围见 [录屏说明](docs/RECORDING.md)。
 - **离线 OCR**：内置中英文模型，无需安装 Python；从托盘“框选取字…”或 `screenpin --ocr` 直接识别，长图逐块显示结果。
 - **“大爆炸”式选词**：中文分词、单字模式、点击或拖动选词、Shift 连选、反选和全文编辑，按原文顺序组合复制。
 - **图片导出**：复制到剪贴板，或保存为 PNG、JPEG、WebP；PNG/WebP 支持透明度，JPEG 使用白色背景。
 
-截图和 OCR 在本机处理，不上传图片，不调用云端识别 API，也不在运行时下载模型。连续 OCR 会复用模型，空闲 45 秒后回收进程。内存与性能测量范围见 [优化检查记录](docs/AUDIT_2026-11-10.md)。
+截图和 OCR 在本机处理，不上传图片，不调用云端识别 API，也不在运行时下载模型。连续 OCR 会复用模型，空闲 45 秒后回收进程。内存与性能测量范围见 [资源与性能检查](docs/AUDIT_2026-11-11.md)。
 
 ## 下载与安装
 
@@ -43,11 +47,11 @@ Windows/macOS 包暂未配置正式开发者签名与公证。更多平台限制
 
 ## 快速使用
 
-1. 启动 Framely，从托盘截图、粘贴图片或打开文件。
+1. 启动 Framely，从托盘或截图快捷键框选，松开即进入图片工具栏；直接点击「长截图」「录屏」沿用当前选区，点击「识别文字」识别当前图片。无需额外选择功能。
 2. 默认全局截图键：Windows **Win+Shift+S**、macOS **⌘+⇧+S**、Linux **Super+Shift+S**。设置页以独立键帽显示；Wayland 点击“配置系统快捷键”，以系统实际分配为准；已有配置保留原来的快捷键。
 3. 在图片窗口标注后，按 `Ctrl/Cmd+C` 复制、`Ctrl/Cmd+S` 保存、`Ctrl/Cmd+W` 关闭。
 4. 长截图从托盘或图片工具栏进入，也可在图片窗口按 `Ctrl/Cmd+Shift+L`；可在设置中配置独立的全局长截图键（推荐 `Super+Shift+L`），再次按下完成；截图快捷键也可用于完成。
-5. 录屏从托盘、图片工具栏「录屏与 GIF」或 `screenpin --record` 进入，录完可转 GIF。
+5. 录屏可从截图工具栏直接沿用本次选区；托盘「录制上次区域」或录屏快捷键可跳过重复选区，录制中再次按快捷键结束保存。「录屏设置…」可调整参数或重新选区。选区、帧率和分辨率在重启后保留。录完可转 GIF。
 6. OCR 从托盘“框选取字…”进入，或在图片窗口按 `Ctrl/Cmd+Shift+O` 识别整图。
 
 ```bash
@@ -55,13 +59,17 @@ screenpin                    # 启动或唤起托盘实例
 screenpin --capture          # 截图
 screenpin --scroll           # 长截图（Linux / Windows）
 screenpin --ocr              # 直接框选取字
-screenpin --record           # 打开录屏；录制中再次调用结束保存（未发布）
+screenpin --record           # 开始录屏（沿用上次区域）；录制中再次调用结束保存（未发布）
 screenpin ./example.png      # 打开图片
 ```
 
 Linux Wayland 的截图、屏幕共享与快捷键授权由系统门户分别管理。niri 等桌面的设置方式、权限问题及全部快捷键见 [使用说明](docs/NATIVE.md)。
 
 配置位于 Linux 的 `~/.config/screenpin/config.json`（或 `$XDG_CONFIG_HOME` 下）、Windows 的 `%APPDATA%\screenpin\config.json`、macOS 的 `~/Library/Application Support/screenpin/config.json`。建议通过设置面板修改。
+
+## 图标与品牌
+
+新版使用“折叠画面”F 标记：深青底、暖白纸片与橙色折角。应用、托盘及界面标记都有可编辑 SVG 母版，多尺寸 PNG 可用 `python3 scripts/render-icons.py` 重新生成（需要 librsvg 的 `rsvg-convert`）。设计来源及提示词见 [品牌说明](docs/BRAND.md)。
 
 ## 开发与构建
 

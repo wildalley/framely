@@ -50,7 +50,7 @@ const (
 	videoTabGIF    = 1
 )
 
-func (s *application) RecordWithActivation(string) {
+func (s *application) RecordWithActivation(token string) {
 	if s.ctx.Err() != nil || s.settings != nil && s.settings.recording {
 		return
 	}
@@ -58,7 +58,31 @@ func (s *application) RecordWithActivation(string) {
 		s.video.command("finish")
 		return
 	}
-	s.showVideo()
+	if s.captureBusy || s.video != nil && (s.video.busy || s.video.exporting) {
+		return
+	}
+	s.openVideo(videoTabRecord)
+	if s.video != nil {
+		s.video.startRecording(true, token, nil)
+	}
+}
+
+// showVideoForSelection reports whether the screenshot was handed to a new
+// recording, so only that accepted handoff closes the screenshot window.
+func (s *application) showVideoForSelection(selection *editor.ScreenSelection) bool {
+	if selection == nil {
+		s.showVideo()
+		return false
+	}
+	if s.captureBusy || s.video != nil && (s.video.busy || s.video.running || s.video.exporting) {
+		return false
+	}
+	s.openVideo(videoTabRecord)
+	if s.video != nil {
+		s.video.startRecording(true, "", selection)
+		return s.video.busy
+	}
+	return false
 }
 
 // recordDir is where recordings and GIFs go without a dialog.
@@ -167,7 +191,8 @@ func (s *application) openVideo(tab int) {
 }
 
 func newVideoWindow(s *application, ctx context.Context, cancel context.CancelFunc) *videoWindow {
-	return &videoWindow{app: s, ctx: ctx, cancel: cancel, fps: "60", quality: "1080p", gifFPS: "15", gifWidth: "960", gifStart: "0", gifDuration: "10", commands: make(chan string, 4), traySecond: -1}
+	setup := s.recordingSetup.normalized()
+	return &videoWindow{app: s, ctx: ctx, cancel: cancel, fps: setup.FPS, quality: setup.Quality, gifFPS: "15", gifWidth: "960", gifStart: "0", gifDuration: "10", commands: make(chan string, 4), traySecond: -1}
 }
 
 func (v *videoWindow) later(fn func()) {
@@ -200,7 +225,7 @@ func (v *videoWindow) trayStatus() string {
 	case v.running:
 		return "● 正在录屏 · " + clock(v.status.ElapsedMS)
 	case v.busy:
-		return "正在准备录屏：框选区域…"
+		return "正在准备录屏…"
 	case v.exporting:
 		return fmt.Sprintf("正在导出 GIF · %d%%", int(v.gifProgress*100))
 	}
@@ -287,7 +312,14 @@ func (v *videoWindow) view(c *ui.Context) {
 				if ui.Button(c, "关闭").Disabled(v.exporting).Clicked() {
 					v.win.Close()
 				}
-				if ui.PrimaryButton(c, "选择区域并开始…").Disabled(v.exporting).Clicked() {
+				label := "选择区域并开始…"
+				if v.app.recordingSetup.Selection != nil {
+					label = "录制上次区域"
+					if ui.Button(c, "重新选区…").Disabled(v.exporting).Clicked() {
+						v.startRecording(false, "", nil)
+					}
+				}
+				if ui.PrimaryButton(c, label).Disabled(v.exporting).Clicked() {
 					v.start()
 				}
 			}
@@ -321,7 +353,10 @@ func (v *videoWindow) recordView(c *ui.Context) {
 				}
 			})
 		})
-		ui.Text(c, "框选区域后立即开始，结束后自动保存。录制中可从托盘查看时长、暂停或结束。").FontSize(12).TextColor(muted)
+		if selection := v.app.recordingSetup.Selection; selection != nil {
+			ui.Text(c, fmt.Sprintf("上次区域 %d × %d · 将沿用同一显示器上的位置", selection.Region.Dx(), selection.Region.Dy())).FontSize(12).TextColor(muted)
+		}
+		ui.Text(c, "首次框选后自动记住区域，再次录制无需重选。结束后自动保存，也可从托盘暂停或结束。").FontSize(12).TextColor(muted)
 	}
 	if v.running || v.status.Finished {
 		ui.Text(c, clock(v.status.ElapsedMS)).FontSize(32).Font("monospace")
@@ -566,11 +601,24 @@ func (v *videoWindow) command(command string) {
 	default:
 	}
 }
-func (v *videoWindow) start() {
-	if v.busy || v.running || v.app.captureBusy {
+
+// Preserve screen coordinates, including negative origins, so the portal can
+// restore the grant for the display under the mouse instead of a global grant.
+func recordingStreamOptions(display mygo.Display, recording capture.RecordingOptions) capture.StreamOptions {
+	b := display.Bounds
+	return capture.StreamOptions{
+		DisplayBounds: image.Rect(b.X, b.Y, b.X+b.Width, b.Y+b.Height),
+		Recording:     &recording,
+	}
+}
+
+func (v *videoWindow) start() { v.startRecording(true, "", nil) }
+
+func (v *videoWindow) startRecording(reuse bool, token string, selected *editor.ScreenSelection) {
+	if v.busy || v.running || v.exporting || v.app.captureBusy {
 		return
 	}
-	if _, err := components.FindProtocol("screenpin-record", components.FrameProtocol); err != nil {
+	if _, err := components.Find("screenpin-record"); err != nil {
 		v.notice = err.Error()
 		return
 	}
@@ -582,7 +630,17 @@ func (v *videoWindow) start() {
 	fps, _ := strconv.Atoi(v.fps)
 	edge := map[string]int{"720p": 1280, "1080p": 1920, "1440p": 2560, "4K": 3840}[v.quality]
 	v.busy = true
-	v.notice = "框选要录制的区域，松开即开始。"
+	v.notice = "正在连接共享来源…"
+	setup := v.app.recordingSetup
+	if selected != nil {
+		setup.Selection = selected
+	}
+	var selection *editor.ScreenSelection
+	if reuse && setup.Selection != nil {
+		copy := *setup.Selection
+		selection = &copy
+	}
+	setup.FPS, setup.Quality = v.fps, v.quality
 	ask, dir := v.app.cfg.AskRecordPath, v.app.recordDir()
 	v.app.captureBusy = true
 	v.app.refreshTray()
@@ -610,6 +668,15 @@ func (v *videoWindow) start() {
 				v.win.Invalidate()
 			}
 		})
+		// The first protocol probe may launch a helper and wait up to five
+		// seconds. Keep it off the UI thread so cancel and tray clicks work.
+		if _, err := components.FindProtocol("screenpin-record", components.FrameProtocol); err != nil {
+			v.report(err)
+			return
+		}
+		if ctx.Err() != nil {
+			return
+		}
 		path, err := recording.NextPath(dir, "录屏", ".mp4", time.Now())
 		if ask {
 			if err == nil {
@@ -642,6 +709,14 @@ func (v *videoWindow) start() {
 		mygo.RunOnMain(func() {
 			displays = mygo.Screen.Displays()
 			display = mygo.Screen.DisplayNearestPoint(mygo.Screen.CursorScreenPoint())
+			if selection != nil {
+				for _, d := range displays {
+					if d.Bounds == selection.Display {
+						display = d
+						break
+					}
+				}
+			}
 			for _, w := range mygo.Windows() {
 				if w.IsVisible() {
 					hidden = append(hidden, w)
@@ -649,7 +724,7 @@ func (v *videoWindow) start() {
 				}
 			}
 		})
-		options := capture.StreamOptions{Recording: &capture.RecordingOptions{Path: staged, FPS: fps, MaxEdge: edge}}
+		options := recordingStreamOptions(display, capture.RecordingOptions{Path: staged, FPS: fps, MaxEdge: edge})
 		monitors, err := capture.StreamMonitors(ctx)
 		if err != nil {
 			v.report(err)
@@ -661,9 +736,19 @@ func (v *videoWindow) start() {
 				break
 			}
 		}
+		// Native Windows monitor enumeration matches the desktop display order.
+		if runtime.GOOS == "windows" {
+			for i, d := range displays {
+				if d.ID == display.ID && i < len(monitors) {
+					options.Monitor = monitors[i].ID
+					break
+				}
+			}
+		}
 		if runtime.GOOS == "darwin" {
 			options.Monitor = int(display.ID)
 		}
+		log.Printf(brand.Name+": recording requested display: id=%d bounds=%v", display.ID, options.DisplayBounds)
 		source, err := capture.OpenStream(ctx, options)
 		if err != nil {
 			v.report(err)
@@ -693,13 +778,23 @@ func (v *videoWindow) start() {
 		if screen == nil && capture.StreamSourceType(source) == 1 && len(displays) == 1 {
 			screen = &displays[0]
 		}
-		var region image.Rectangle
-		if screen != nil {
-			region, _, err = editor.PickScreenRegion(ctx, first, []mygo.Display{*screen}, "", image.Pt(64, 64), "框选录屏区域，松开开始 · Enter 全屏 · Esc 取消")
-		} else {
-			region, err = editor.SelectVideoRegion(ctx, first)
-		}
 		size := first.Bounds().Size()
+		region, reused := reuseRecordingRegion(selection, screen, size)
+		if !reused {
+			v.later(func() {
+				v.notice = "框选要录制的区域，松开即开始。"
+				if selection != nil {
+					v.notice = "共享来源或显示器已变化，请重新框选录屏区域。"
+				}
+			})
+			if screen != nil {
+				region, _, err = editor.PickScreenRegion(ctx, first, []mygo.Display{*screen}, token, image.Pt(64, 64), "框选录屏区域，松开开始 · Enter 全屏 · Esc 取消")
+			} else {
+				region, err = editor.SelectVideoRegion(ctx, first)
+			}
+		} else {
+			log.Printf(brand.Name+": recording reused selection: display=%v region=%v", screen.Bounds, region)
+		}
 		first = nil
 		if err == nil {
 			err = capture.SetStreamRegion(ctx, source, region, size)
@@ -714,7 +809,15 @@ func (v *videoWindow) start() {
 			return
 		}
 		keep = true // Once recording begins, interrupted video must remain recoverable.
+		setup.Selection = nil
+		if screen != nil {
+			setup.Selection = &editor.ScreenSelection{Display: screen.Bounds, Region: region, Size: size}
+		}
+		if err := saveRecordingSetup(setup); err != nil {
+			log.Printf(brand.Name+": recording setup could not be remembered: %v", err)
+		}
 		v.later(func() {
+			v.app.recordingSetup = setup
 			v.running = true
 			v.busy = false
 			v.paused = false

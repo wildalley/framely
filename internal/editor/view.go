@@ -358,13 +358,26 @@ func (a *App) bar(c *ui.Context) {
 		if iconButton(c, "scroll", iconScroll, "长截图", a.busy || a.OnScroll == nil).Tooltip(scrollLabel).Clicked() {
 			a.OnScroll()
 		}
-		// Recording and GIF conversion sit with the other capture modes.
-		iconButton(c, "record", iconRecord, "录屏与 GIF", a.busy || a.OnRecord == nil).Menu(a.recordMenu)
+		recordHint := "录制屏幕区域"
+		if a.selection != nil {
+			recordHint = "录屏：沿用本次选区"
+		}
+		if iconButton(c, "record", iconRecord, "录屏", a.busy || a.OnRecord == nil).Tooltip(recordHint).Clicked() {
+			a.OnRecord()
+		}
 		ocrLabel := "识别文字"
 		if a.ocrRunning {
-			ocrLabel = "文字识别中…"
+			ocrLabel = "取消文字识别"
 		}
-		iconButton(c, "ocr", iconOCR, ocrLabel, a.OnOCRResult == nil || a.busy).Menu(a.ocrMenu)
+		if iconButton(c, "ocr", iconOCR, ocrLabel, a.OnOCRResult == nil || a.busy).Tooltip("直接识别当前图片；右键可选择框选识别").Clicked() {
+			if a.ocrRunning {
+				if a.ocrCancel != nil {
+					a.ocrCancel()
+				}
+			} else {
+				a.recognize(false)
+			}
+		}
 		if width < 760 {
 			ui.Spacer(c).Grow(1).MinWidth(0)
 		} else {
@@ -473,21 +486,15 @@ func (a *App) imageMenu(m *ui.Menu) {
 	m.Item(fmt.Sprintf("%d × %d px", a.image.Width, a.image.Height)).Disabled(true)
 }
 
-func (a *App) recordMenu(m *ui.Menu) {
-	if m.Item("录制屏幕区域…").Disabled(a.busy || a.OnRecord == nil).Chosen() {
-		a.OnRecord()
-	}
-	if m.Item("视频转 GIF…").Disabled(a.OnGIF == nil).Chosen() {
-		a.OnGIF()
-	}
-}
-
 func (a *App) contextMenu(m *ui.Menu) {
 	if m.Item("长截图…").Disabled(a.busy || a.OnScroll == nil).Chosen() {
 		a.OnScroll()
 	}
 	if m.Item("录屏…").Disabled(a.busy || a.OnRecord == nil).Chosen() {
 		a.OnRecord()
+	}
+	if m.Item("视频转 GIF…").Disabled(a.OnGIF == nil).Chosen() {
+		a.OnGIF()
 	}
 	m.Separator()
 	if m.Item("识别图片文字").Disabled(a.ocrRunning || a.OnOCRResult == nil).Chosen() {

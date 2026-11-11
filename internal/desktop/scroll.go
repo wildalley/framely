@@ -48,6 +48,8 @@ type scrollWindow struct {
 	monitorName                              string
 	notice, setupError                       string
 	preview                                  *ui.Bitmap
+	previewBuffers                           [2]*image.RGBA
+	previewNext                              int
 	previewSize                              image.Point
 	height                                   int
 	canUndo                                  bool
@@ -167,6 +169,8 @@ func (v *scrollWindow) release() {
 	}
 	v.restore()
 	v.preview = nil
+	v.previewBuffers = [2]*image.RGBA{}
+	v.previewNext = 0
 	v.previewSize = image.Point{}
 	v.monitors = nil
 	if v.app.scroll == v {
@@ -758,7 +762,6 @@ func (v *scrollWindow) publish(c *scrollshot.Controller, show bool) {
 			v.win.Show()
 			v.win.Focus()
 		}
-		v.app.refreshTray()
 	})
 }
 
@@ -767,7 +770,17 @@ const previewWidth, previewHeight = 720, 820
 func (v *scrollWindow) setPreview(preview *image.RGBA) {
 	// Fixed texture dimensions let Bitmap.Update reuse the GPU allocation
 	// even when the stitched image's aspect ratio changes on every segment.
-	pixels := image.NewRGBA(image.Rect(0, 0, previewWidth, previewHeight))
+	// Bitmap.Update retains the supplied pixels. Alternate two fixed buffers
+	// so preparing the next preview never edits the bitmap currently displayed.
+	index := v.previewNext
+	pixels := v.previewBuffers[index]
+	if pixels == nil {
+		pixels = image.NewRGBA(image.Rect(0, 0, previewWidth, previewHeight))
+		v.previewBuffers[index] = pixels
+	} else {
+		clear(pixels.Pix)
+	}
+	v.previewNext = 1 - index
 	v.previewSize = preview.Bounds().Size()
 	draw.Draw(pixels, image.Rectangle{Max: v.previewSize}, preview, preview.Rect.Min, draw.Src)
 	if v.preview == nil {

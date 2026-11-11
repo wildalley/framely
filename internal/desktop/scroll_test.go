@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
+	"weak"
 
 	"github.com/egoist/mygo/ui"
 	"github.com/wildalley/screenpin/internal/capture"
@@ -62,6 +64,38 @@ func TestLongScreenshotPreviewReusesBitmapWithChangingAspectRatio(t *testing.T) 
 	if got.RGBAAt(10, 100).G == 255 && got.RGBAAt(10, 100).R == 0 || got.RGBAAt(100, 100).G < 240 || got.RGBAAt(100, 100).R > 20 {
 		t.Fatal("preview left pixels outside the contained image")
 	}
+}
+
+func BenchmarkLongScreenshotPreviewUpdate(b *testing.B) {
+	v := &scrollWindow{}
+	preview := image.NewRGBA(image.Rect(0, 0, previewWidth, previewHeight))
+	v.setPreview(preview)
+	v.setPreview(preview)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		v.setPreview(preview)
+	}
+}
+
+func TestLongScreenshotPreviewBuffersAreReleasedAfterClose(t *testing.T) {
+	s := &application{ctx: context.Background(), settings: &settingsWindow{}}
+	ctx, cancel := context.WithCancel(s.ctx)
+	v := &scrollWindow{app: s, ctx: ctx, cancel: cancel}
+	s.scroll, s.operations = v, 1
+	frame := image.NewRGBA(image.Rect(0, 0, 300, 200))
+	for i := 0; i < 80; i++ {
+		v.setPreview(frame)
+	}
+	pointers := [2]weak.Pointer[uint8]{weak.Make(&v.previewBuffers[0].Pix[0]), weak.Make(&v.previewBuffers[1].Pix[0])}
+	v.release()
+	runtime.GC()
+	for _, pointer := range pointers {
+		if pointer.Value() != nil {
+			t.Fatal("closed long screenshot retained a preview buffer")
+		}
+	}
+	runtime.KeepAlive(v)
 }
 
 func TestLongScreenshotActionsRemainVisibleAtMinimumWindowSize(t *testing.T) {

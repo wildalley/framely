@@ -146,7 +146,7 @@ func (v *settingsWindow) view(c *ui.Context) {
 						}
 						ui.Text(c, "录屏快捷键").FontWeight(600)
 						ui.Column(c.Key("record-shortcut")).Gap(8).Children(func() { v.shortcutEntry(c, false, true) })
-						ui.Text(c, "留空不绑定。打开录屏，再次按下结束。").FontSize(12).TextColor(c.Theme().TextMuted)
+						ui.Text(c, "留空不绑定。开始录屏并沿用上次区域，再次按下结束。").FontSize(12).TextColor(c.Theme().TextMuted)
 					}
 
 				})

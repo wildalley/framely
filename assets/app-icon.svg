@@ -1,16 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <title>Framely — folded frame</title>
   <defs>
-    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#FFFFFF"/>
-      <stop offset="1" stop-color="#EEF6FB"/>
-    </linearGradient>
-    <linearGradient id="ink" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#38BDF8"/>
-      <stop offset="1" stop-color="#0284C7"/>
+    <linearGradient id="paper" x1="0" y1="0" x2="0.8" y2="1">
+      <stop stop-color="#FFF9ED"/>
+      <stop offset="1" stop-color="#F3E5CF"/>
     </linearGradient>
   </defs>
-  <rect x="8" y="8" width="496" height="496" rx="112" fill="url(#tile)"/>
-  <rect x="8.5" y="8.5" width="495" height="495" rx="111.5" fill="none" stroke="#0F172A" stroke-opacity="0.08" stroke-width="1"/>
-  <path d="M124 204V166a42 42 0 0 1 42-42h38M308 124h38a42 42 0 0 1 42 42v38M388 308v38a42 42 0 0 1-42 42h-38M204 388h-38a42 42 0 0 1-42-42v-38" fill="none" stroke="url(#ink)" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="256" cy="256" r="46" fill="url(#ink)"/>
+  <rect x="24" y="24" width="464" height="464" rx="100" fill="#073D41"/>
+  <path d="M144 250L230 231L302 255Q310 258 305 266L277 311Q274 316 266 316H210V350Q210 355 205 360L166 393Q156 402 148 394Q144 390 144 381Z" fill="#D4C4A9"/>
+  <path d="M144 262L233 239L301 259Q309 262 304 270L277 311Q274 316 266 316H210V350Q210 355 205 360L166 393Q156 402 148 394Q144 390 144 381Z" fill="url(#paper)"/>
+  <path d="M204 122H373Q392 122 384 140L343 207Q337 218 324 220L143 253Q128 257 128 264V204Q128 195 137 186L194 129Q199 122 204 122Z" fill="url(#paper)"/>
+  <path d="M204 122V170Q204 187 187 187H146Q135 187 128 200Q130 191 137 184L194 128Q199 122 204 122Z" fill="#ED782F"/>
 </svg>

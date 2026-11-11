@@ -10,14 +10,44 @@ import (
 
 type shortcutKey struct{ text, name string }
 
+// Tray text uses readable modifier names, while settings render keycaps. Both
+// share the same parser for portal descriptions without changing the binding.
+func shortcutText(description, platform string) string {
+	var chords []string
+	for _, chord := range strings.Split(description, " / ") {
+		keys, ok := shortcutKeys(chord, platform)
+		if !ok {
+			chords = append(chords, strings.TrimSpace(chord))
+			continue
+		}
+		var parts []string
+		for _, key := range keys {
+			part := key.text
+			if platform != "darwin" {
+				switch key.name {
+				case "Shift":
+					part = "Shift"
+				case "Enter / Return":
+					part = "Enter"
+				case "Tab":
+					part = "Tab"
+				}
+			}
+			parts = append(parts, part)
+		}
+		chords = append(chords, strings.Join(parts, "+"))
+	}
+	return strings.Join(chords, " / ")
+}
+
 // Display only: portal descriptions are human readable, not accelerators.
 // Recognize known forms and preserve everything else. Never save or register
 // the result of this conversion as a shortcut.
 func shortcutKeys(description, platform string) ([]shortcutKey, bool) {
 	value := strings.TrimSpace(strings.TrimSuffix(description, "（niri）"))
-	for _, prefix := range []string{"Press ", "按 "} {
-		if strings.HasPrefix(value, prefix+"<") {
-			value = strings.TrimPrefix(value, prefix)
+	for _, prefix := range []string{"Press", "按"} {
+		if rest, ok := strings.CutPrefix(value, prefix); ok && strings.HasPrefix(strings.TrimSpace(rest), "<") {
+			value = strings.TrimSpace(rest)
 			break
 		}
 	}

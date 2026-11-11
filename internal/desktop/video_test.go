@@ -3,12 +3,29 @@ package desktop
 import (
 	"context"
 	"fmt"
+	"image"
 	"testing"
 
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	"github.com/wildalley/screenpin/internal/capture"
 	"github.com/wildalley/screenpin/internal/config"
 )
+
+func TestRecordingStreamOptionsPreserveDisplayCoordinates(t *testing.T) {
+	recording := capture.RecordingOptions{Path: "/tmp/record.mp4", FPS: 60, MaxEdge: 1920}
+	for _, bounds := range []mygo.Rectangle{
+		{X: -1920, Y: 0, Width: 1920, Height: 1080},
+		{X: 0, Y: -1440, Width: 2560, Height: 1440},
+		{X: 0, Y: 0, Width: 1920, Height: 1080},
+	} {
+		options := recordingStreamOptions(mygo.Display{Bounds: bounds}, recording)
+		want := image.Rect(bounds.X, bounds.Y, bounds.X+bounds.Width, bounds.Y+bounds.Height)
+		if options.DisplayBounds != want || options.Recording == nil || *options.Recording != recording {
+			t.Fatalf("recording lost display or encoder options: %+v", options)
+		}
+	}
+}
 
 func TestVideoControlsAtMinimumSize(t *testing.T) {
 	for _, size := range [][2]int{{400, 340}, {480, 460}} {
@@ -75,7 +92,7 @@ func TestVideoTrayStatusShowsRecordingNotCapture(t *testing.T) {
 		t.Fatal("idle window reports activity")
 	}
 	v.busy = true
-	if got := v.trayStatus(); got != "正在准备录屏：框选区域…" {
+	if got := v.trayStatus(); got != "正在准备录屏…" {
 		t.Fatal(got)
 	}
 	v.busy, v.running = false, true

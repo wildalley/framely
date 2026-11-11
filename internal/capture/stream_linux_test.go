@@ -68,6 +68,7 @@ type capturePortal struct {
 	sourcePersist, devicePersist     uint32
 	sourceRestore, deviceRestore     string
 	newRestore                       string
+	cursorMode                       uint32
 	starts                           []captureStart
 	startCount, remoteOpened         int
 	sourceRestores, deviceRestores   []string
@@ -104,6 +105,7 @@ func (p *capturePortal) CreateSession(sender dbus.Sender, options map[string]dbu
 func (p *capturePortal) SelectSources(sender dbus.Sender, _ dbus.ObjectPath, options map[string]dbus.Variant) (dbus.ObjectPath, *dbus.Error) {
 	p.mu.Lock()
 	p.selectedSources = options["types"].Value().(uint32)
+	p.cursorMode, _ = options["cursor_mode"].Value().(uint32)
 	p.sourcePersist, _ = options["persist_mode"].Value().(uint32)
 	p.sourceRestore, _ = options["restore_token"].Value().(string)
 	p.sourceRestores = append(p.sourceRestores, p.sourceRestore)
@@ -197,6 +199,9 @@ func captureService(t *testing.T) *capturePortal {
 	executable, _ := os.Executable()
 	dir := t.TempDir()
 	if err := os.Symlink(executable, filepath.Join(dir, "screenpin-capture")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(executable, filepath.Join(dir, "screenpin-record")); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("SCREENPIN_COMPONENTS_DIR", dir)
@@ -396,9 +401,13 @@ func TestDisplayRestoreTokensAreSeparateAndSingleUse(t *testing.T) {
 }
 
 func TestPortalRestoresOnlyRequestedDisplay(t *testing.T) {
-	for _, automatic := range []bool{false, true} {
+	for _, mode := range []struct {
+		name                 string
+		automatic, recording bool
+	}{{name: "screen"}, {name: "pointer", automatic: true}, {name: "recording", recording: true}} {
+		automatic := mode.automatic
 		for _, granted := range []bool{false, true} {
-			t.Run(fmt.Sprintf("automatic_%t/granted_%t", automatic, granted), func(t *testing.T) {
+			t.Run(fmt.Sprintf("%s/granted_%t", mode.name, granted), func(t *testing.T) {
 				p := captureService(t)
 				left, right := image.Rect(-1280, 0, 0, 720), image.Rect(0, 0, 1920, 1080)
 				iface := screenCast
@@ -420,7 +429,11 @@ func TestPortalRestoresOnlyRequestedDisplay(t *testing.T) {
 				p.mu.Unlock()
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
-				source, err := OpenStream(ctx, StreamOptions{Automatic: automatic, DisplayBounds: right})
+				options := StreamOptions{Automatic: automatic, DisplayBounds: right}
+				if mode.recording {
+					options.Recording = &RecordingOptions{Path: filepath.Join(t.TempDir(), "record.mp4"), FPS: 60, MaxEdge: 1920}
+				}
+				source, err := OpenStream(ctx, options)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -449,9 +462,13 @@ func TestPortalRestoresOnlyRequestedDisplay(t *testing.T) {
 }
 
 func TestPortalWrongRestoredDisplayRetriesChooserAndPreservesGrant(t *testing.T) {
-	for _, automatic := range []bool{false, true} {
+	for _, mode := range []struct {
+		name                 string
+		automatic, recording bool
+	}{{name: "screen"}, {name: "pointer", automatic: true}, {name: "recording", recording: true}} {
+		automatic := mode.automatic
 		for _, cancelRetry := range []bool{false, true} {
-			t.Run(fmt.Sprintf("automatic_%t/cancel_%t", automatic, cancelRetry), func(t *testing.T) {
+			t.Run(fmt.Sprintf("%s/cancel_%t", mode.name, cancelRetry), func(t *testing.T) {
 				p := captureService(t)
 				left, right := image.Rect(-1280, 0, 0, 720), image.Rect(0, 0, 1920, 1080)
 				iface := screenCast
@@ -473,7 +490,11 @@ func TestPortalWrongRestoredDisplayRetriesChooserAndPreservesGrant(t *testing.T)
 				p.mu.Unlock()
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
-				source, err := OpenStream(ctx, StreamOptions{Automatic: automatic, DisplayBounds: right})
+				options := StreamOptions{Automatic: automatic, DisplayBounds: right}
+				if mode.recording {
+					options.Recording = &RecordingOptions{Path: filepath.Join(t.TempDir(), "record.mp4"), FPS: 60, MaxEdge: 1920}
+				}
+				source, err := OpenStream(ctx, options)
 				if cancelRetry {
 					if source != nil || !errors.Is(err, portal.ErrCancelled) {
 						t.Fatal("chooser cancellation not returned", err)
@@ -488,6 +509,9 @@ func TestPortalWrongRestoredDisplayRetriesChooserAndPreservesGrant(t *testing.T)
 					source.Close()
 				}
 				p.mu.Lock()
+				if mode.recording && !cancelRetry && p.cursorMode != 2 {
+					t.Error("recording did not request the embedded cursor")
+				}
 				restores := p.sourceRestores
 				if automatic {
 					restores = p.deviceRestores

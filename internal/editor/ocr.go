@@ -5,7 +5,6 @@ import (
 	"errors"
 	"image"
 
-	"github.com/egoist/mygo/ui"
 	"github.com/wildalley/screenpin/internal/capture"
 	"github.com/wildalley/screenpin/internal/ocr"
 	"github.com/wildalley/screenpin/internal/render"
@@ -75,18 +74,4 @@ func (a *App) recognize(region bool) {
 			}
 		})
 	}()
-}
-
-func (a *App) ocrMenu(m *ui.Menu) {
-	if m.Item("识别整张图片").Disabled(a.ocrRunning).Chosen() {
-		a.recognize(false)
-	}
-	if m.Item("框选识别文字").Disabled(a.ocrRunning).Chosen() {
-		a.recognize(true)
-	}
-	if a.ocrRunning && m.Item("取消文字识别").Chosen() {
-		if a.ocrCancel != nil {
-			a.ocrCancel()
-		}
-	}
 }

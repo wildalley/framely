@@ -126,31 +126,33 @@ func TestCaptureActionsStayVisibleAndKeepTheirTargetsAcrossLayouts(t *testing.T)
 	for _, width := range []int{320, 420, 759, 760, 1100} {
 		for _, dark := range []bool{false, true} {
 			a, _ := textApp()
-			capture, scroll, settings := 0, 0, 0
+			capture, scroll, record, settings := 0, 0, 0, 0
 			a.OnCapture = func() { capture++ }
 			a.OnScroll = func() { scroll++ }
+			a.OnRecord = func() { record++ }
 			a.OnSettings = func() { settings++ }
 			tt := ui.NewTester(a.view, width, 300)
 			tt.SetDark(dark)
-			for _, label := range []string{"新截图", "长截图", "识别文字", "设置与快捷键", "复制", "关闭图片"} {
+			for _, label := range []string{"新截图", "长截图", "录屏", "识别文字", "设置与快捷键", "复制", "关闭图片"} {
 				r, ok := tt.Find(label)
 				if !ok || r.X < 0 || r.Y < 0 || r.X+r.W > float32(width)+.5 || r.Y+r.H > 300.5 {
 					t.Fatalf("width=%d dark=%v %s: %+v found=%v", width, dark, label, r, ok)
 				}
 			}
-			for _, label := range []string{"新截图", "长截图", "设置与快捷键"} {
+			for _, label := range []string{"新截图", "长截图", "录屏", "设置与快捷键"} {
 				if err := tt.Click(label); err != nil {
 					t.Fatal(err)
 				}
 			}
-			if capture != 1 || scroll != 1 || settings != 1 {
-				t.Fatalf("callbacks: %d %d %d", capture, scroll, settings)
+			if capture != 1 || scroll != 1 || record != 1 || settings != 1 || len(tt.Menu()) != 0 {
+				t.Fatalf("direct callbacks: capture=%d scroll=%d record=%d settings=%d menu=%v", capture, scroll, record, settings, tt.Menu())
 			}
 			a.busy = true
 			tt.Frame()
 			_ = tt.Click("长截图")
+			_ = tt.Click("录屏")
 			_ = tt.Click("新截图")
-			if capture != 1 || scroll != 1 {
+			if capture != 1 || scroll != 1 || record != 1 {
 				t.Fatal("busy image launched another capture")
 			}
 			a.release()

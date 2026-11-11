@@ -48,6 +48,24 @@ func TestShortcutKeycapsRespectPlatformAndLiteralKeys(t *testing.T) {
 	}
 }
 
+func TestTrayShortcutTextUsesActualAssignmentWithoutPortalSyntax(t *testing.T) {
+	for _, tc := range []struct{ input, platform, want string }{
+		{"按<shift><super>s", "linux", "Super+Shift+S"},
+		{"按 <Shift><Super>s", "linux", "Super+Shift+S"},
+		{"Press <Control><Alt>Return", "linux", "Ctrl+Alt+Enter"},
+		{"Super+Shift+R", "windows", "Win+Shift+R"},
+		{"Super+Shift+R", "darwin", "⌘+⇧+R"},
+		{"Super+Shift+L（niri）", "linux", "Super+Shift+L"},
+		{"Double tap Super", "linux", "Double tap Super"},
+		{"按 <Unknown>s", "linux", "按 <Unknown>s"},
+		{"Ctrl+1 / Ctrl+Num1", "linux", "Ctrl+1 / Ctrl+Num1"},
+	} {
+		if got := shortcutText(tc.input, tc.platform); got != tc.want {
+			t.Errorf("%q/%s: %q, want %q", tc.input, tc.platform, got, tc.want)
+		}
+	}
+}
+
 func TestShortcutKeycapsKeepSymbolsNamedAndLongChordsVisible(t *testing.T) {
 	for _, platform := range []string{"windows", "darwin", "linux"} {
 		for _, dark := range []bool{false, true} {

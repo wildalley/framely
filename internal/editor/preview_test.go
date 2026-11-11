@@ -10,7 +10,10 @@ import (
 	"testing"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/wildalley/screenpin/internal/capture"
 	"github.com/wildalley/screenpin/internal/config"
+	"github.com/wildalley/screenpin/internal/doc"
+	"github.com/wildalley/screenpin/internal/ocr"
 )
 
 // Renders the image window for visual review; set SCREENPIN_UI_SCREENSHOTS.
@@ -25,6 +28,17 @@ func TestImageWindowPreview(t *testing.T) {
 			pixels.SetRGBA(x, y, color.RGBA{uint8(235 - y/12), uint8(238 - x/40), 245, 255})
 		}
 	}
+	demo := os.Getenv("SCREENPIN_PREVIEW_IMAGE")
+	if demo != "" {
+		data, err := os.ReadFile(demo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pixels, err = capture.Decode(data)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	for _, width := range []int{1000, 520} {
 		for _, dark := range []bool{false, true} {
 			picture, err := PictureFromPixels(pixels, "preview")
@@ -34,6 +48,13 @@ func TestImageWindowPreview(t *testing.T) {
 			a := New(config.Default())
 			a.loadPicture(picture, nil)
 			picture.Close()
+			if demo != "" {
+				a.OnCapture, a.OnScroll, a.OnRecord, a.OnSettings = func() {}, func() {}, func() {}, func() {}
+				a.OnOCRResult = func(ocr.Result) {}
+				rectangle := doc.New(doc.ToolRectangle, doc.Point{X: 600, Y: 320}, doc.Style{Color: "#ED782F", StrokeWidth: 4, Opacity: 1, CornerRatio: .05})
+				rectangle.Width, rectangle.Height = 400, 245
+				a.history.Commit([]doc.Annotation{rectangle})
+			}
 			tt := ui.NewTester(a.view, width, 640)
 			tt.SetDark(dark)
 			f, err := os.Create(filepath.Join(out, fmt.Sprintf("editor-%d-dark-%t.png", width, dark)))

@@ -52,6 +52,7 @@ type application struct {
 	openingDialog             bool
 	scroll                    *scrollWindow
 	video                     *videoWindow
+	recordingSetup            recordingSetup
 	operations                int
 }
 
@@ -152,6 +153,7 @@ func (s *application) dispatch(fn func()) {
 func (s *application) ready(launch Launch) {
 	cfg, repaired := config.Load()
 	s.cfg, s.readyDone = cfg, true
+	s.recordingSetup = loadRecordingSetup()
 	s.shortcutDescription = "注册中…"
 	s.shortcutPending = true
 	s.shortcuts = shortcuts.New(s.CaptureWithActivation, s.ScrollWithActivation, s.RecordWithActivation, s.shortcutsChanged)
@@ -248,7 +250,12 @@ func (s *application) showPicture(picture editor.Picture, target *mygo.Rectangle
 		}
 	}
 	image.OnSettings = func() { s.showSettings("") }
-	image.OnRecord = s.showVideo
+	image.OnRecord = func() {
+		selection := image.ScreenSelection()
+		if s.showVideoForSelection(selection) {
+			image.Close()
+		}
+	}
 	image.OnGIF = s.showGIF
 	image.OnOCRResult = s.showOCR
 	image.OnOCRStart = s.startOCR
@@ -524,7 +531,7 @@ func (s *application) trayItems() []*mygo.MenuItem {
 		{ID: "record-status", Label: "", Hidden: true, Disabled: true},
 		s.captureItem,
 		{ID: "scroll-capture", Label: "长截图…", Disabled: !capture.ScrollingSupported(), Click: func(*mygo.MenuItem, *mygo.Window) { s.showScroll() }},
-		{ID: "record-video", Label: "录屏…", Click: func(*mygo.MenuItem, *mygo.Window) { s.showVideo() }},
+		{ID: "record-start", Label: "开始录屏…", Click: func(*mygo.MenuItem, *mygo.Window) { s.RecordWithActivation("") }},
 		{ID: "record-pause", Label: "暂停录屏", Hidden: true, Click: func(*mygo.MenuItem, *mygo.Window) {
 			if s.video != nil {
 				if s.video.paused {
@@ -539,6 +546,7 @@ func (s *application) trayItems() []*mygo.MenuItem {
 				s.video.command("finish")
 			}
 		}},
+		{ID: "record-video", Label: "录屏设置…", Click: func(*mygo.MenuItem, *mygo.Window) { s.showVideo() }},
 		{ID: "video-gif", Label: "视频转 GIF…", Click: func(*mygo.MenuItem, *mygo.Window) { s.showGIF() }},
 		{ID: "ocr-capture", Label: "框选取字…", Click: func(*mygo.MenuItem, *mygo.Window) { s.CaptureText() }},
 		mygo.Separator(),
@@ -582,10 +590,18 @@ func (s *application) refreshTray() {
 	status.SetLabel(videoStatus)
 	videoActive := s.video != nil && (s.video.running || s.video.busy)
 	record := s.menu.ItemByID("record-video")
-	record.SetLabel("录屏…")
-	if s.recordShortcutDescription != "" {
-		record.SetLabel("录屏（" + s.recordShortcutDescription + "）")
+	record.SetLabel("录屏设置…")
+	start := s.menu.ItemByID("record-start")
+	startLabel := "开始录屏…"
+	if s.recordingSetup.Selection != nil {
+		startLabel = "录制上次区域"
 	}
+	if s.recordShortcutDescription != "" {
+		startLabel += "（" + shortcutText(s.recordShortcutDescription, runtime.GOOS) + "）"
+	}
+	start.SetLabel(startLabel)
+	start.SetVisible(!videoActive)
+	start.SetEnabled(!s.captureBusy && (s.video == nil || !s.video.exporting))
 	if videoActive {
 		record.SetLabel("显示录屏窗口")
 	}
@@ -604,7 +620,9 @@ func (s *application) refreshTray() {
 	}
 	label := "截图"
 	if !s.shortcutPending && s.shortcutError == "" {
-		label += "（" + s.shortcutDescription + "）"
+		if key := shortcutText(s.shortcutDescription, runtime.GOOS); key != "" && key != "未绑定" {
+			label += "（" + key + "）"
+		}
 	}
 	if s.captureBusy {
 		label = "正在截图…"
@@ -632,21 +650,18 @@ func (s *application) refreshTray() {
 	scroll.SetEnabled(capture.ScrollingSupported() && (!s.captureBusy || s.scroll != nil))
 	scroll.SetLabel("长截图…")
 	if s.scrollShortcutDescription != "" {
-		scroll.SetLabel("长截图（" + s.scrollShortcutDescription + "）")
+		scroll.SetLabel("长截图（" + shortcutText(s.scrollShortcutDescription, runtime.GOOS) + "）")
 	}
 	if longActive {
 		scroll.SetLabel("查看长截图…")
 	}
 	tip := brand.Name
-	if !s.shortcutPending && s.shortcutError == "" {
-		tip = fmt.Sprintf("%s · 截图 %s", brand.Name, s.shortcutDescription)
-	}
 	if videoStatus != "" {
 		tip = brand.Name + " — " + videoStatus
+	} else if longActive {
+		tip = brand.Name + " — 正在进行长截图"
 	} else if s.captureBusy {
 		tip = brand.Name + " — 正在截图…"
-	} else if s.scroll != nil && s.scroll.running {
-		tip = brand.Name + " — 正在进行长截图"
 	}
 	s.tray.SetToolTip(tip)
 	s.setTrayRecording(videoActive && s.video.running)
@@ -658,7 +673,9 @@ func (s *application) refreshTray() {
 		}
 		s.tray.SetTitle(title)
 	}
-	s.tray.SetMenu(s.menu)
+	// NewTray installs the menu once. MenuItem setters update native items
+	// in place; replacing the menu here interrupts clicks and allocates another
+	// native menu every time a capture publishes progress.
 }
 
 // refreshTrayClock updates the recording status line, tooltip and macOS
