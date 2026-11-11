@@ -12,8 +12,8 @@ import (
 	"weak"
 
 	"github.com/egoist/mygo/ui"
-	"github.com/wildalley/screenpin/internal/ocr"
-	"github.com/wildalley/screenpin/internal/ocrtext"
+	"github.com/wildalley/framely/internal/ocr"
+	"github.com/wildalley/framely/internal/ocrtext"
 )
 
 func TestOCRWordsSelectRangeCopyAndEdit(t *testing.T) {

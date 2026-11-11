@@ -15,7 +15,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/wildalley/screenpin/internal/components"
+	"github.com/wildalley/framely/internal/components"
 )
 
 type GIFOptions struct {

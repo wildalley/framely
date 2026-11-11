@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wildalley/screenpin/internal/components"
+	"github.com/wildalley/framely/internal/components"
 )
 
 func TestGIFRejectsNonfiniteAndUnboundedInputs(t *testing.T) {

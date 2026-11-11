@@ -6,7 +6,7 @@ import (
 	"image/color"
 	"testing"
 
-	"github.com/wildalley/screenpin/internal/doc"
+	"github.com/wildalley/framely/internal/doc"
 )
 
 func TestRoundedScreenshotClipsPixelsAndAnnotationsAndPreservesExportAlpha(t *testing.T) {

@@ -1,4 +1,4 @@
-module github.com/wildalley/screenpin
+module github.com/wildalley/framely
 
 go 1.27.3
 

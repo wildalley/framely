@@ -2,13 +2,13 @@
 
 # Framely · 取景
 
-跨平台截图、标注、贴图、长截图、录屏与离线文字识别工具，使用 Go + MyGo 构建。原名 ScreenPin，v0.2.3 之后改名；可执行文件仍为 `screenpin`，配置与授权在升级后保留。启动后驻留托盘，每次截图、粘贴或打开图片都会创建独立窗口；关闭窗口后释放该图片和编辑历史。
+跨平台截图、标注、贴图、长截图、录屏与离线文字识别工具，使用 Go + MyGo 构建。原名 ScreenPin，v0.2.3 之后改名，GitHub 仓库也已从 `wildalley/screenpin` 改为 `wildalley/framely`（旧链接自动跳转）；可执行文件仍为 `screenpin`，配置与授权在升级后保留。启动后驻留托盘，每次截图、粘贴或打开图片都会创建独立窗口；关闭窗口后释放该图片和编辑历史。
 
 Framely is an open-source screenshot, annotation, pinning and offline OCR app built with MyGo native UI for Windows, Linux and macOS. Scrolling capture is available on Windows/Linux; region recording and GIF export are available in v0.3.0.
 
 ![Framely 原生截图编辑器，使用生成的示例内容](docs/images/framely.png)
 
-[下载 Release](https://github.com/wildalley/screenpin/releases/latest) · [更新日志](CHANGELOG.md) · [开发与构建](docs/NATIVE.md) · [OCR 流程](docs/OCR_WORKFLOW.md)
+[下载 Release](https://github.com/wildalley/framely/releases/latest) · [更新日志](CHANGELOG.md) · [开发与构建](docs/NATIVE.md) · [OCR 流程](docs/OCR_WORKFLOW.md)
 
 ## 功能
 
@@ -24,7 +24,7 @@ Framely is an open-source screenshot, annotation, pinning and offline OCR app bu
 
 ## 下载与安装
 
-当前版本为 **0.3.0**，使用 MyGo **0.8.3**。下载以 [Release 页面](https://github.com/wildalley/screenpin/releases) 为准。安装包使用 `framely-*` 名称，Arch 包名为 `framely`（自动替换 `screenpin-native`）；命令仍为 `screenpin`。完整包包含采集、录屏和离线 OCR 运行时，升级前请退出旧实例并完整替换配套文件。
+当前版本为 **0.3.0**，使用 MyGo **0.8.3**。下载以 [Release 页面](https://github.com/wildalley/framely/releases) 为准。安装包使用 `framely-*` 名称，Arch 包名为 `framely`（自动替换 `screenpin-native`）；命令仍为 `screenpin`。完整包包含采集、录屏和离线 OCR 运行时，升级前请退出旧实例并完整替换配套文件。
 
 | 平台 | 安装包或便携包 |
 | --- | --- |

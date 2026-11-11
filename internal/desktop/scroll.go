@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/wildalley/screenpin/internal/brand"
+	"github.com/wildalley/framely/internal/brand"
 	"image"
 	"image/draw"
 	"log"
@@ -14,10 +14,10 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
-	"github.com/wildalley/screenpin/internal/capture"
-	"github.com/wildalley/screenpin/internal/components"
-	"github.com/wildalley/screenpin/internal/editor"
-	"github.com/wildalley/screenpin/internal/scrollshot"
+	"github.com/wildalley/framely/internal/capture"
+	"github.com/wildalley/framely/internal/components"
+	"github.com/wildalley/framely/internal/editor"
+	"github.com/wildalley/framely/internal/scrollshot"
 )
 
 type scrollCommand struct {

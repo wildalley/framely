@@ -5,13 +5,13 @@ package capture
 import (
 	"context"
 	"errors"
-	"github.com/wildalley/screenpin/internal/brand"
+	"github.com/wildalley/framely/internal/brand"
 	"image"
 	"runtime"
 	"syscall"
 	"unsafe"
 
-	"github.com/wildalley/screenpin/internal/imagelimit"
+	"github.com/wildalley/framely/internal/imagelimit"
 )
 
 var (

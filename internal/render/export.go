@@ -13,7 +13,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 	"github.com/gen2brain/webp"
-	"github.com/wildalley/screenpin/internal/doc"
+	"github.com/wildalley/framely/internal/doc"
 )
 
 // Format is a format the editor exports to.

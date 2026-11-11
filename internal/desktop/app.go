@@ -15,15 +15,15 @@ import (
 	"time"
 
 	"github.com/egoist/mygo"
-	"github.com/wildalley/screenpin/assets"
-	"github.com/wildalley/screenpin/internal/brand"
-	"github.com/wildalley/screenpin/internal/capture"
-	"github.com/wildalley/screenpin/internal/config"
-	"github.com/wildalley/screenpin/internal/editor"
-	"github.com/wildalley/screenpin/internal/niribind"
-	"github.com/wildalley/screenpin/internal/ocr"
-	"github.com/wildalley/screenpin/internal/portal"
-	"github.com/wildalley/screenpin/internal/shortcuts"
+	"github.com/wildalley/framely/assets"
+	"github.com/wildalley/framely/internal/brand"
+	"github.com/wildalley/framely/internal/capture"
+	"github.com/wildalley/framely/internal/config"
+	"github.com/wildalley/framely/internal/editor"
+	"github.com/wildalley/framely/internal/niribind"
+	"github.com/wildalley/framely/internal/ocr"
+	"github.com/wildalley/framely/internal/portal"
+	"github.com/wildalley/framely/internal/shortcuts"
 )
 
 type application struct {

@@ -13,9 +13,9 @@ import (
 	"weak"
 
 	"github.com/egoist/mygo/ui"
-	"github.com/wildalley/screenpin/internal/capture"
-	"github.com/wildalley/screenpin/internal/portal"
-	"github.com/wildalley/screenpin/internal/scrollshot"
+	"github.com/wildalley/framely/internal/capture"
+	"github.com/wildalley/framely/internal/portal"
+	"github.com/wildalley/framely/internal/scrollshot"
 )
 
 func TestCancelledLongScreenshotDoesNotRetainAController(t *testing.T) {

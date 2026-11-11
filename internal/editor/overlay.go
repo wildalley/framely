@@ -4,15 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/wildalley/screenpin/internal/brand"
+	"github.com/wildalley/framely/internal/brand"
 	"image"
 	"math"
 	"runtime"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
-	"github.com/wildalley/screenpin/internal/capture"
-	"github.com/wildalley/screenpin/internal/doc"
+	"github.com/wildalley/framely/internal/capture"
+	"github.com/wildalley/framely/internal/doc"
 )
 
 // minRegion is the smallest drag, in DIPs, taken as a region rather than a

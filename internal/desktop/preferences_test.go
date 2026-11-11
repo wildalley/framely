@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	"github.com/egoist/mygo/ui"
-	"github.com/wildalley/screenpin/internal/capture"
-	"github.com/wildalley/screenpin/internal/config"
+	"github.com/wildalley/framely/internal/capture"
+	"github.com/wildalley/framely/internal/config"
 )
 
 func TestShortcutAuthorizationIsVisibleAndCannotBeSubmittedTwice(t *testing.T) {

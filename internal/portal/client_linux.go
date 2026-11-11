@@ -6,7 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/wildalley/screenpin/internal/brand"
+	"github.com/wildalley/framely/internal/brand"
 	"os"
 	"strings"
 	"sync"

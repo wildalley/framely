@@ -11,7 +11,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/wildalley/screenpin/internal/shortcutkey"
+	"github.com/wildalley/framely/internal/shortcutkey"
 )
 
 // DefaultShortcut is the global capture shortcut until the user records

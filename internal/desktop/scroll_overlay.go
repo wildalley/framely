@@ -2,7 +2,7 @@ package desktop
 
 import (
 	"fmt"
-	"github.com/wildalley/screenpin/internal/brand"
+	"github.com/wildalley/framely/internal/brand"
 	"image"
 	"log"
 	"time"

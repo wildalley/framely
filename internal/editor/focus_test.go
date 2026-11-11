@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	"github.com/egoist/mygo/ui"
-	"github.com/wildalley/screenpin/internal/config"
-	"github.com/wildalley/screenpin/internal/doc"
+	"github.com/wildalley/framely/internal/config"
+	"github.com/wildalley/framely/internal/doc"
 )
 
 func textApp() (*App, doc.Annotation) {

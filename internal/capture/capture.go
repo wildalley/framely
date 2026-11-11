@@ -10,9 +10,9 @@ import (
 	"image/draw"
 	"image/png"
 
-	"github.com/wildalley/screenpin/internal/imagelimit"
-	"github.com/wildalley/screenpin/internal/portal"
-	"github.com/wildalley/screenpin/internal/render"
+	"github.com/wildalley/framely/internal/imagelimit"
+	"github.com/wildalley/framely/internal/portal"
+	"github.com/wildalley/framely/internal/render"
 )
 
 // ErrCancelled is returned when the user backed out of the capture. It is

@@ -2,8 +2,8 @@ package desktop
 
 import (
 	"github.com/egoist/mygo/ui"
-	"github.com/wildalley/screenpin/assets"
-	"github.com/wildalley/screenpin/internal/brand"
+	"github.com/wildalley/framely/assets"
+	"github.com/wildalley/framely/internal/brand"
 )
 
 var markIcon = ui.MustParseSVG(assets.Mark)

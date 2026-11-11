@@ -2,7 +2,8 @@
 
 ## 未发布
 
-暂无。
+- GitHub 仓库改名为 `wildalley/framely`，Go 模块路径同步改为 `github.com/wildalley/framely`；旧仓库链接自动跳转。可执行文件、配置目录和应用 ID 不变。
+- 发布打包遇到 macOS `hdiutil` 暂时性占用错误时自动重试。
 
 ## v0.3.0 — 2026-11-11
 

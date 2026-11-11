@@ -12,7 +12,7 @@ import (
 	"strconv"
 
 	"github.com/egoist/mygo/ui"
-	"github.com/wildalley/screenpin/internal/doc"
+	"github.com/wildalley/framely/internal/doc"
 )
 
 // Scene is what Draw draws, in image pixels.

@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/egoist/mygo/ui"
-	"github.com/wildalley/screenpin/internal/shortcutkey"
+	"github.com/wildalley/framely/internal/shortcutkey"
 )
 
 type shortcutKey struct{ text, name string }

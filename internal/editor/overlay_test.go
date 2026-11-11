@@ -6,8 +6,8 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
-	"github.com/wildalley/screenpin/internal/capture"
-	"github.com/wildalley/screenpin/internal/doc"
+	"github.com/wildalley/framely/internal/capture"
+	"github.com/wildalley/framely/internal/doc"
 )
 
 func TestPhysicalDisplayAndSelectionOnMixedDPIMonitors(t *testing.T) {

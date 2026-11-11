@@ -3,7 +3,7 @@ package capture
 import (
 	"context"
 	"errors"
-	"github.com/wildalley/screenpin/internal/components"
+	"github.com/wildalley/framely/internal/components"
 	"os/exec"
 	"strconv"
 )

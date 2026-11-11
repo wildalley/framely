@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/egoist/mygo/ui"
-	"github.com/wildalley/screenpin/internal/doc"
+	"github.com/wildalley/framely/internal/doc"
 )
 
 func TestIconGlyphsAreCenteredInsideTheirButtons(t *testing.T) {

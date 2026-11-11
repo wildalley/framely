@@ -10,10 +10,10 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
-	"github.com/wildalley/screenpin/internal/brand"
-	"github.com/wildalley/screenpin/internal/capture"
-	"github.com/wildalley/screenpin/internal/editor"
-	"github.com/wildalley/screenpin/internal/niriipc"
+	"github.com/wildalley/framely/internal/brand"
+	"github.com/wildalley/framely/internal/capture"
+	"github.com/wildalley/framely/internal/editor"
+	"github.com/wildalley/framely/internal/niriipc"
 )
 
 // barBeside places a w×h bar next to region on a width×height display,

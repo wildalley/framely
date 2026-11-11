@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wildalley/screenpin/internal/config"
-	"github.com/wildalley/screenpin/internal/niribind"
+	"github.com/wildalley/framely/internal/config"
+	"github.com/wildalley/framely/internal/niribind"
 )
 
 func TestManagedNiriShortcutWorksWithoutCallingThePortal(t *testing.T) {

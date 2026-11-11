@@ -6,10 +6,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/wildalley/screenpin/internal/capture"
-	"github.com/wildalley/screenpin/internal/doc"
-	"github.com/wildalley/screenpin/internal/imagelimit"
-	"github.com/wildalley/screenpin/internal/render"
+	"github.com/wildalley/framely/internal/capture"
+	"github.com/wildalley/framely/internal/doc"
+	"github.com/wildalley/framely/internal/imagelimit"
+	"github.com/wildalley/framely/internal/render"
 )
 
 const maxImageSize = imagelimit.MaxEncodedBytes

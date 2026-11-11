@@ -7,7 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/wildalley/screenpin/internal/brand"
+	"github.com/wildalley/framely/internal/brand"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,7 +19,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/wildalley/screenpin/internal/shortcutkey"
+	"github.com/wildalley/framely/internal/shortcutkey"
 )
 
 const marker = "// ScreenPin: managed screenshot shortcut\n"

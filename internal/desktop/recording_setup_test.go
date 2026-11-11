@@ -8,7 +8,7 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
-	"github.com/wildalley/screenpin/internal/editor"
+	"github.com/wildalley/framely/internal/editor"
 )
 
 func testRecordingSelection() *editor.ScreenSelection {

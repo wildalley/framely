@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/wildalley/screenpin/internal/config"
+	"github.com/wildalley/framely/internal/config"
 )
 
 func TestNativeActionsReuseKeysAndSwapWithoutDoubleRegistration(t *testing.T) {

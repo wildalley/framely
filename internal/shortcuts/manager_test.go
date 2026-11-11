@@ -6,8 +6,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/wildalley/screenpin/internal/config"
-	"github.com/wildalley/screenpin/internal/portal"
+	"github.com/wildalley/framely/internal/config"
+	"github.com/wildalley/framely/internal/portal"
 )
 
 type testBinding struct {

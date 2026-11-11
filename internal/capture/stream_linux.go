@@ -6,7 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/wildalley/screenpin/internal/brand"
+	"github.com/wildalley/framely/internal/brand"
 	"image"
 	"log"
 	"os"
@@ -17,8 +17,8 @@ import (
 	"time"
 
 	"github.com/godbus/dbus/v5"
-	"github.com/wildalley/screenpin/internal/components"
-	"github.com/wildalley/screenpin/internal/portal"
+	"github.com/wildalley/framely/internal/components"
+	"github.com/wildalley/framely/internal/portal"
 )
 
 const screenCast = "org.freedesktop.portal.ScreenCast"

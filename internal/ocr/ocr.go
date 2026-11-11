@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wildalley/screenpin/internal/imagelimit"
+	"github.com/wildalley/framely/internal/imagelimit"
 )
 
 type Point struct {

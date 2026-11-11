@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/godbus/dbus/v5"
-	"github.com/wildalley/screenpin/internal/testutil"
+	"github.com/wildalley/framely/internal/testutil"
 )
 
 type fakeRequest struct{ closed *atomic.Int32 }

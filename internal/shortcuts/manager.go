@@ -8,8 +8,8 @@ import (
 	"runtime"
 	"sync"
 
-	"github.com/wildalley/screenpin/internal/config"
-	"github.com/wildalley/screenpin/internal/shortcutkey"
+	"github.com/wildalley/framely/internal/config"
+	"github.com/wildalley/framely/internal/shortcutkey"
 )
 
 type Binding interface {

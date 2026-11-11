@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"github.com/egoist/mygo"
-	"github.com/wildalley/screenpin/internal/doc"
-	"github.com/wildalley/screenpin/internal/render"
+	"github.com/wildalley/framely/internal/doc"
+	"github.com/wildalley/framely/internal/render"
 )
 
 func withExtension(path, ext string) string {

@@ -10,7 +10,7 @@ import (
 	"weak"
 
 	"github.com/egoist/mygo/ui"
-	"github.com/wildalley/screenpin/internal/config"
+	"github.com/wildalley/framely/internal/config"
 )
 
 // This deliberately uses the software renderer. Native GPU/OS allocations

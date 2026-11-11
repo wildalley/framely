@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/wildalley/screenpin/internal/imagelimit"
+	"github.com/wildalley/framely/internal/imagelimit"
 )
 
 // System runs macOS's own region selector and returns its PNG.

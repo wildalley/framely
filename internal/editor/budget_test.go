@@ -7,8 +7,8 @@ import (
 	"image/png"
 	"testing"
 
-	"github.com/wildalley/screenpin/internal/config"
-	"github.com/wildalley/screenpin/internal/imagelimit"
+	"github.com/wildalley/framely/internal/config"
+	"github.com/wildalley/framely/internal/imagelimit"
 )
 
 func TestPictureBudgetFollowsWindowAndPendingExport(t *testing.T) {

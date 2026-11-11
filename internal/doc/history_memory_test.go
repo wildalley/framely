@@ -5,7 +5,7 @@ import (
 	"testing"
 	"weak"
 
-	"github.com/wildalley/screenpin/internal/imagelimit"
+	"github.com/wildalley/framely/internal/imagelimit"
 )
 
 func abandonedStrokeHistory() (*History, weak.Pointer[Point]) {

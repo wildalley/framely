@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/godbus/dbus/v5"
-	"github.com/wildalley/screenpin/internal/imagelimit"
-	"github.com/wildalley/screenpin/internal/portal"
+	"github.com/wildalley/framely/internal/imagelimit"
+	"github.com/wildalley/framely/internal/portal"
 )
 
 var (

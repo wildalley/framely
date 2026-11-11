@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/egoist/mygo/ui"
-	"github.com/wildalley/screenpin/internal/config"
+	"github.com/wildalley/framely/internal/config"
 )
 
 func (v *settingsWindow) shortcutEntry(c *ui.Context, scroll, video bool) {

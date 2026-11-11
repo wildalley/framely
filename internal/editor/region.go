@@ -8,10 +8,10 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
-	"github.com/wildalley/screenpin/internal/brand"
-	"github.com/wildalley/screenpin/internal/capture"
-	"github.com/wildalley/screenpin/internal/doc"
-	"github.com/wildalley/screenpin/internal/render"
+	"github.com/wildalley/framely/internal/brand"
+	"github.com/wildalley/framely/internal/capture"
+	"github.com/wildalley/framely/internal/doc"
+	"github.com/wildalley/framely/internal/render"
 )
 
 type regionChoice struct {

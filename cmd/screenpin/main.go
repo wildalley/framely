@@ -4,10 +4,10 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"github.com/wildalley/screenpin/internal/brand"
+	"github.com/wildalley/framely/internal/brand"
 	"os"
 
-	"github.com/wildalley/screenpin/internal/desktop"
+	"github.com/wildalley/framely/internal/desktop"
 )
 
 const usage = `Framely 取景 — 截图、贴图、长截图、录屏与离线文字识别

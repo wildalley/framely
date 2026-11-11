@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/egoist/mygo/ui"
-	"github.com/wildalley/screenpin/internal/doc"
+	"github.com/wildalley/framely/internal/doc"
 )
 
 func panelTitle(c *ui.Context, title, hint string) {

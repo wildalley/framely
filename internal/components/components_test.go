@@ -13,7 +13,7 @@ func TestWorkingDirectoryCannotInjectAWorker(t *testing.T) {
 			root := t.TempDir()
 			t.Chdir(root)
 			t.Setenv("SCREENPIN_COMPONENTS_DIR", "")
-			if err := os.WriteFile("go.mod", []byte("module github.com/wildalley/screenpin"+ending+ending+"go 1.27.3"+ending), 0600); err != nil {
+			if err := os.WriteFile("go.mod", []byte("module github.com/wildalley/framely"+ending+ending+"go 1.27.3"+ending), 0600); err != nil {
 				t.Fatal(err)
 			}
 			name := "screenpin-test-component"

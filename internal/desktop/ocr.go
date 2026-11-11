@@ -4,15 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/wildalley/screenpin/internal/brand"
+	"github.com/wildalley/framely/internal/brand"
 	"image"
 	"strings"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
-	"github.com/wildalley/screenpin/internal/editor"
-	"github.com/wildalley/screenpin/internal/ocr"
-	"github.com/wildalley/screenpin/internal/ocrtext"
+	"github.com/wildalley/framely/internal/editor"
+	"github.com/wildalley/framely/internal/ocr"
+	"github.com/wildalley/framely/internal/ocrtext"
 )
 
 func (s *application) recognizePicture(picture editor.Picture) {

@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wildalley/screenpin/internal/imagelimit"
+	"github.com/wildalley/framely/internal/imagelimit"
 	_ "golang.org/x/image/webp" // decode WebP projects written by the web editor
 )
 

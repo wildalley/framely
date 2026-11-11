@@ -5,8 +5,8 @@ import (
 	"slices"
 
 	"github.com/egoist/mygo/ui"
-	"github.com/wildalley/screenpin/internal/doc"
-	"github.com/wildalley/screenpin/internal/render"
+	"github.com/wildalley/framely/internal/doc"
+	"github.com/wildalley/framely/internal/render"
 )
 
 type dragKind int

@@ -2,15 +2,15 @@ package desktop
 
 import (
 	"context"
-	"github.com/wildalley/screenpin/internal/brand"
+	"github.com/wildalley/framely/internal/brand"
 	"runtime"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
-	"github.com/wildalley/screenpin/internal/capture"
-	"github.com/wildalley/screenpin/internal/config"
-	"github.com/wildalley/screenpin/internal/editor"
-	"github.com/wildalley/screenpin/internal/niribind"
+	"github.com/wildalley/framely/internal/capture"
+	"github.com/wildalley/framely/internal/config"
+	"github.com/wildalley/framely/internal/editor"
+	"github.com/wildalley/framely/internal/niribind"
 )
 
 type settingsWindow struct {

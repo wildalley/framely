@@ -4,7 +4,7 @@ import (
 	"slices"
 	"unsafe"
 
-	"github.com/wildalley/screenpin/internal/imagelimit"
+	"github.com/wildalley/framely/internal/imagelimit"
 )
 
 // historyLimit is how many steps undo goes back.

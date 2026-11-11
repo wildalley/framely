@@ -6,7 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/wildalley/screenpin/internal/brand"
+	"github.com/wildalley/framely/internal/brand"
 	"os"
 	"strings"
 	"sync"
@@ -15,10 +15,10 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/godbus/dbus/v5"
-	"github.com/wildalley/screenpin/internal/config"
-	"github.com/wildalley/screenpin/internal/niribind"
-	"github.com/wildalley/screenpin/internal/portal"
-	"github.com/wildalley/screenpin/internal/shortcutkey"
+	"github.com/wildalley/framely/internal/config"
+	"github.com/wildalley/framely/internal/niribind"
+	"github.com/wildalley/framely/internal/portal"
+	"github.com/wildalley/framely/internal/shortcutkey"
 )
 
 const shortcutInterface = "org.freedesktop.portal.GlobalShortcuts"

@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/godbus/dbus/v5"
-	"github.com/wildalley/screenpin/internal/config"
-	"github.com/wildalley/screenpin/internal/portal"
-	"github.com/wildalley/screenpin/internal/testutil"
+	"github.com/wildalley/framely/internal/config"
+	"github.com/wildalley/framely/internal/portal"
+	"github.com/wildalley/framely/internal/testutil"
 )
 
 type pendingBind struct {

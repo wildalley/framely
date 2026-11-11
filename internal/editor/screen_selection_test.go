@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/egoist/mygo"
-	"github.com/wildalley/screenpin/internal/config"
+	"github.com/wildalley/framely/internal/config"
 )
 
 func TestFreshScreenshotSelectionCanStartScrollWithoutReselecting(t *testing.T) {

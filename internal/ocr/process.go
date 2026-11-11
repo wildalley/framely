@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/wildalley/screenpin/internal/components"
+	"github.com/wildalley/framely/internal/components"
 )
 
 var sharedWorker = workerPool{idleTimeout: 45 * time.Second}

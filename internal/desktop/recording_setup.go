@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 
 	"github.com/egoist/mygo"
-	"github.com/wildalley/screenpin/internal/config"
-	"github.com/wildalley/screenpin/internal/editor"
+	"github.com/wildalley/framely/internal/config"
+	"github.com/wildalley/framely/internal/editor"
 )
 
 // Keep recording history separate from the settings draft, so saving an open

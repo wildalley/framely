@@ -3,18 +3,18 @@ package editor
 
 import (
 	"context"
-	"github.com/wildalley/screenpin/internal/brand"
+	"github.com/wildalley/framely/internal/brand"
 	"image"
 	"math"
 	"strings"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
-	"github.com/wildalley/screenpin/internal/config"
-	"github.com/wildalley/screenpin/internal/doc"
-	"github.com/wildalley/screenpin/internal/imagelimit"
-	"github.com/wildalley/screenpin/internal/ocr"
-	"github.com/wildalley/screenpin/internal/render"
+	"github.com/wildalley/framely/internal/config"
+	"github.com/wildalley/framely/internal/doc"
+	"github.com/wildalley/framely/internal/imagelimit"
+	"github.com/wildalley/framely/internal/ocr"
+	"github.com/wildalley/framely/internal/render"
 )
 
 type Panel int

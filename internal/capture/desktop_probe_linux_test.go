@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wildalley/screenpin/internal/portal"
+	"github.com/wildalley/framely/internal/portal"
 )
 
 // This opt-in desktop probe deliberately displays the real system chooser.

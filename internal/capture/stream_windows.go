@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"syscall"
 
-	"github.com/wildalley/screenpin/internal/components"
+	"github.com/wildalley/framely/internal/components"
 )
 
 func StreamMonitors(ctx context.Context) ([]Monitor, error) {

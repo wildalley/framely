@@ -5,9 +5,9 @@ import (
 	"errors"
 	"image"
 
-	"github.com/wildalley/screenpin/internal/capture"
-	"github.com/wildalley/screenpin/internal/ocr"
-	"github.com/wildalley/screenpin/internal/render"
+	"github.com/wildalley/framely/internal/capture"
+	"github.com/wildalley/framely/internal/ocr"
+	"github.com/wildalley/framely/internal/render"
 )
 
 func (a *App) recognize(region bool) {

@@ -15,7 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/wildalley/screenpin/internal/imagelimit"
+	"github.com/wildalley/framely/internal/imagelimit"
 )
 
 var ErrAutomaticUnavailable = errors.New("当前桌面未提供指针控制接口，请使用手动滚动模式")

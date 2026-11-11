@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 
 	"github.com/egoist/mygo"
-	"github.com/wildalley/screenpin/internal/config"
+	"github.com/wildalley/framely/internal/config"
 )
 
 // A candidate may retain an unchanged key, or swap the two actions. Share
