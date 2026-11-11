@@ -214,7 +214,9 @@ func TestColorPickerPicksNoRegionAndCancelsAfterCopying(t *testing.T) {
 }
 
 func TestRepeatPickMapsTheLastRegionOntoANewDesktopImage(t *testing.T) {
+	lastPick.Lock()
 	lastPick.ok = false
+	lastPick.Unlock()
 	display := mygo.Display{Bounds: mygo.Rectangle{Width: 800, Height: 600}}
 	full := image.NewRGBA(image.Rect(0, 0, 1600, 1200))
 	if _, err := RepeatPick(full, []mygo.Display{display}); err == nil || HasLastPick() {

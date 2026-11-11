@@ -7,6 +7,7 @@ import (
 	"image"
 	"math"
 	"runtime"
+	"sync"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -105,11 +106,25 @@ type pickResult struct {
 }
 
 // lastPick is the region confirmed last, which R brings back on the same
-// display.
+// display. Pickers write it on the main thread; repeating reads it from a
+// capture's goroutine.
 var lastPick struct {
+	sync.Mutex
 	display mygo.Rectangle
 	rect    doc.Rect
 	ok      bool
+}
+
+func rememberPick(display mygo.Rectangle, r doc.Rect) {
+	lastPick.Lock()
+	defer lastPick.Unlock()
+	lastPick.display, lastPick.rect, lastPick.ok = display, r, true
+}
+
+func recallPick() (mygo.Rectangle, doc.Rect, bool) {
+	lastPick.Lock()
+	defer lastPick.Unlock()
+	return lastPick.display, lastPick.rect, lastPick.ok
 }
 
 // PickRegion shows the overlays for the PNG of the whole desktop and waits
@@ -242,21 +257,22 @@ func displayCrops(b image.Rectangle, displays []mygo.Display, given bool) []imag
 }
 
 // HasLastPick reports whether a region was confirmed in this session.
-func HasLastPick() bool { return lastPick.ok }
+func HasLastPick() bool { _, _, ok := recallPick(); return ok }
 
 // RepeatPick is the region confirmed last, on a new image of the whole
 // desktop, ready to open without picking again. It fails when that
 // display is gone.
 func RepeatPick(full *image.RGBA, displays []mygo.Display) (Pick, error) {
-	if !lastPick.ok {
+	display, rect, ok := recallPick()
+	if !ok {
 		return Pick{}, errors.New("还没有可重复的截图区域，请先截一次图")
 	}
 	crops := displayCrops(full.Bounds(), displays, true)
 	for i, d := range displays {
-		if d.Bounds != lastPick.display {
+		if d.Bounds != display {
 			continue
 		}
-		r, err := regionToCrop(lastPick.rect, float64(d.Bounds.Width), float64(d.Bounds.Height), crops[i])
+		r, err := regionToCrop(rect, float64(d.Bounds.Width), float64(d.Bounds.Height), crops[i])
 		if err != nil {
 			return Pick{}, err
 		}
@@ -368,7 +384,7 @@ func (s *pick) finish(v *pickView, region *doc.Rect, choice Pick) {
 		s.result <- pickResult{err: capture.ErrCancelled}
 		return
 	}
-	lastPick.display, lastPick.rect, lastPick.ok = v.display.Bounds, *region, true
+	rememberPick(v.display.Bounds, *region)
 	target := v.display.Bounds
 	choice.Region, choice.Target = r, &target
 	s.result <- pickResult{Pick: choice}
@@ -472,7 +488,21 @@ func (s *pick) confirm(v *pickView, choice Pick, w, h float64) {
 	s.finish(v, &r, choice)
 }
 
+// redrawOthers repaints the other displays' overlays: a display draws
+// only on its own events, so the magnifier or a region it showed would
+// stay there after the pointer or the region moved to another display.
+func (s *pick) redrawOthers(v *pickView) {
+	for _, o := range s.views {
+		if o != v && o.win != nil {
+			o.win.Invalidate()
+		}
+	}
+}
+
 func (s *pick) input(v *pickView, ev ui.InputEvent, w, h float64) bool {
+	if (ev.Kind == ui.InputPointerMove && s.hover != nil && s.hover != v) || ev.Kind == ui.InputPointerDown {
+		s.redrawOthers(v)
+	}
 	if s.opts.Color {
 		return s.colorInput(v, ev, w, h)
 	}
@@ -594,10 +624,10 @@ func (s *pick) key(v *pickView, ev ui.InputEvent, w, h float64) bool {
 	case ui.KeySpace:
 		s.space = true
 	case ui.KeyR:
-		if !lastPick.ok || lastPick.display != v.display.Bounds || s.dragging {
+		display, r, ok := recallPick()
+		if !ok || display != v.display.Bounds || s.dragging {
 			return false
 		}
-		r := lastPick.rect
 		if !s.opts.Actions {
 			s.finish(v, &r, Pick{})
 		} else {
