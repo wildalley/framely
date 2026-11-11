@@ -20,6 +20,7 @@ func TestLaunchArguments(t *testing.T) {
 		{"record", []string{"--record"}, Launch{Record: true}},
 		{"ocr", []string{"--ocr"}, Launch{OCR: true}},
 		{"color", []string{"--color"}, Launch{Color: true}},
+		{"translate", []string{"--translate"}, Launch{Translate: true}},
 		{"repeat", []string{"--repeat"}, Launch{Repeat: true}},
 		{"ocr-from-hidden", []string{"--hidden", "--ocr"}, Launch{Hidden: true, OCR: true}},
 		{"capture-from-hidden", []string{"--hidden", "--capture"}, Launch{Hidden: true, Capture: true}},
@@ -33,7 +34,7 @@ func TestLaunchArguments(t *testing.T) {
 			}
 		})
 	}
-	for _, args := range [][]string{{"--unknown"}, {"a.png", "b.png"}, {"--capture", "a.png"}, {"--scroll", "a.png"}, {"--capture", "--scroll"}, {"--ocr", "--capture"}, {"--ocr", "--scroll"}, {"--ocr", "a.png"}, {"--record", "--capture"}, {"--record", "--scroll"}, {"--record", "--ocr"}, {"--record", "a.png"}, {"--color", "--capture"}, {"--repeat", "--ocr"}, {"--color", "a.png"}} {
+	for _, args := range [][]string{{"--unknown"}, {"a.png", "b.png"}, {"--capture", "a.png"}, {"--scroll", "a.png"}, {"--capture", "--scroll"}, {"--ocr", "--capture"}, {"--ocr", "--scroll"}, {"--ocr", "a.png"}, {"--record", "--capture"}, {"--record", "--scroll"}, {"--record", "--ocr"}, {"--record", "a.png"}, {"--color", "--capture"}, {"--repeat", "--ocr"}, {"--color", "a.png"}, {"--translate", "--ocr"}} {
 		if _, err := ParseArgs(args); err == nil {
 			t.Errorf("accepted %v", args)
 		}

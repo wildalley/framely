@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -34,6 +35,14 @@ type Config struct {
 	RecordDir string `json:"recordDir,omitempty"`
 	// AskRecordPath shows a save dialog for every recording and GIF instead.
 	AskRecordPath bool `json:"askRecordPath,omitempty"`
+	// TranslateProvider is the translation service, empty for none. Its
+	// keys are in the system credential store, never in this file.
+	TranslateProvider string `json:"translateProvider,omitempty"`
+	// TranslateTarget is "zh", "en" or empty to choose by the text.
+	TranslateTarget string `json:"translateTarget,omitempty"`
+	// TranslateBaseURL and TranslateModel set an OpenAI-compatible service.
+	TranslateBaseURL string `json:"translateBaseURL,omitempty"`
+	TranslateModel   string `json:"translateModel,omitempty"`
 }
 
 // Default is the configuration of a first launch.
@@ -93,6 +102,12 @@ func (c Config) Validate() error {
 	}
 	if c.RecordDir != "" && !filepath.IsAbs(c.RecordDir) {
 		return errors.New("录屏保存位置必须是完整路径")
+	}
+	if c.TranslateBaseURL != "" {
+		u, err := url.Parse(c.TranslateBaseURL)
+		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+			return errors.New("大模型接口地址必须是完整的 http(s) 地址")
+		}
 	}
 	seen := map[string]bool{capture.Canonical(): true}
 	for _, action := range []struct{ key, name string }{{c.ScrollShortcut, "长截图"}, {c.RecordShortcut, "录屏"}} {

@@ -26,7 +26,7 @@ func actionPicker() (*pick, *pickView, *ui.Tester) {
 	}
 	v := &pickView{display: mygo.Display{Bounds: mygo.Rectangle{Width: 800, Height: 600}}, crop: full.Bounds()}
 	s := &pick{full: full, bitmap: ui.NewBitmap(full).Pixelated(), result: make(chan pickResult, 1),
-		opts: PickOptions{Minimum: image.Pt(4, 4), Actions: true, Scroll: true, Record: true, Text: true}}
+		opts: PickOptions{Minimum: image.Pt(4, 4), Actions: true, Scroll: true, Record: true, Text: true, Translate: true}}
 	tt := ui.NewTester(func(c *ui.Context) { s.view(c, v) }, 800, 600)
 	return s, v, tt
 }
@@ -89,6 +89,7 @@ func TestPickerActionsReportWhatToDo(t *testing.T) {
 		{"长截图", PickScroll, ""},
 		{"录屏", PickRecord, ""},
 		{"取字", PickText, ""},
+		{"翻译", PickTranslate, ""},
 		{"钉在屏幕上（双击选区）", PickPin, ""},
 		{"打开编辑窗口", PickEdit, ""},
 		{"箭头", PickEdit, doc.ToolArrow},

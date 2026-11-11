@@ -24,13 +24,14 @@ const minRegion = 4
 type PickAction int
 
 const (
-	PickEdit   PickAction = iota // open the image window
-	PickCopy                     // copy the region, no window
-	PickPin                      // open it pinned
-	PickSave                     // open it and ask where to save
-	PickScroll                   // start a long capture of the region
-	PickRecord                   // record the region
-	PickText                     // recognize the region's text
+	PickEdit      PickAction = iota // open the image window
+	PickCopy                        // copy the region, no window
+	PickPin                         // open it pinned
+	PickSave                        // open it and ask where to save
+	PickScroll                      // start a long capture of the region
+	PickRecord                      // record the region
+	PickText                        // recognize the region's text
+	PickTranslate                   // recognize and translate the region's text
 )
 
 // PickOptions sets what the picker offers. With Actions, a released region
@@ -42,6 +43,7 @@ type PickOptions struct {
 	Hint                 string
 	Actions              bool
 	Scroll, Record, Text bool
+	Translate            bool
 	// Color picks no region: a click or C copies the color under the
 	// pointer and closes, as a color picker.
 	Color bool
@@ -901,6 +903,9 @@ func (s *pick) actionBar(c *ui.Context, v *pickView, sel doc.Rect, w, h float32)
 			return
 		}
 		if s.opts.Text && text("pick-text", "取字", PickText) {
+			return
+		}
+		if s.opts.Translate && text("pick-translate", "翻译", PickTranslate) {
 			return
 		}
 		toolbarDivider(c, "pick-div-actions")

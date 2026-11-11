@@ -208,6 +208,8 @@ func (s *application) launch(launch Launch) {
 	switch {
 	case launch.OCR:
 		s.CaptureText()
+	case launch.Translate:
+		s.CaptureTranslation()
 	case launch.Color:
 		s.PickColor()
 	case launch.Repeat:
@@ -420,6 +422,9 @@ func (s *application) shortcutsChanged() {
 
 func (s *application) CaptureText() { s.captureWithActivation("", captureText) }
 
+// CaptureTranslation picks a region, recognizes its text and translates it.
+func (s *application) CaptureTranslation() { s.captureWithActivation("", captureTranslate) }
+
 // PickColor opens the picker as a color picker: a click copies #RRGGBB.
 func (s *application) PickColor() { s.captureWithActivation("", captureColor) }
 
@@ -430,10 +435,11 @@ func (s *application) RepeatCapture() { s.captureWithActivation("", captureRepea
 type captureMode int
 
 const (
-	captureRegion captureMode = iota // pick a region and what to do with it
-	captureText                      // pick a region and recognize its text
-	captureColor                     // copy a color from the screen
-	captureRepeat                    // take the last region again
+	captureRegion    captureMode = iota // pick a region and what to do with it
+	captureText                         // pick a region and recognize its text
+	captureTranslate                    // pick a region, recognize and translate it
+	captureColor                        // copy a color from the screen
+	captureRepeat                       // take the last region again
 )
 
 // ownPicker reports whether this system shows Framely's own picker, which
@@ -463,7 +469,7 @@ func desktopImage(ctx context.Context) (*image.RGBA, []mygo.Display, error) {
 }
 
 func (s *application) captureWithActivation(token string, mode captureMode) {
-	textOnly := mode == captureText
+	textOnly := mode == captureText || mode == captureTranslate
 	if s.ctx.Err() != nil {
 		return
 	}
@@ -500,13 +506,13 @@ func (s *application) captureWithActivation(token string, mode captureMode) {
 	}
 	present := s.presentPick
 	if textOnly {
-		present = func(p editor.Picture, _ *mygo.Rectangle, _ string) { s.recognizePicture(p) }
+		present = func(p editor.Picture, _ *mygo.Rectangle, _ string) { s.recognize(p, mode == captureTranslate) }
 	}
 	// Text capture confirms on release; a screenshot keeps the region
 	// adjustable and offers what to do with it.
 	opts := editor.PickOptions{Minimum: image.Pt(4, 4)}
 	if !textOnly {
-		opts.Actions, opts.Scroll, opts.Record, opts.Text = true, capture.ScrollingSupported(), true, true
+		opts.Actions, opts.Scroll, opts.Record, opts.Text, opts.Translate = true, capture.ScrollingSupported(), true, true, true
 	}
 	s.beginPicture(func(ctx context.Context) (editor.Picture, *mygo.Rectangle, string, error) {
 		if len(hidden) > 0 {
@@ -617,6 +623,8 @@ func (s *application) presentPick(picture editor.Picture, target *mygo.Rectangle
 		s.copyPicture(picture)
 	case editor.PickText:
 		s.recognizePicture(picture)
+	case editor.PickTranslate:
+		s.translatePicture(picture)
 	case editor.PickScroll:
 		selection := picture.Selection()
 		picture.Close()
@@ -680,6 +688,7 @@ func (s *application) trayItems() []*mygo.MenuItem {
 		mygo.Separator(),
 		// Text and color.
 		{ID: "ocr-capture", Label: "框选取字…", Click: func(*mygo.MenuItem, *mygo.Window) { s.CaptureText() }},
+		{ID: "translate-capture", Label: "框选翻译…", Click: func(*mygo.MenuItem, *mygo.Window) { s.CaptureTranslation() }},
 		{ID: "color-picker", Label: "取色器…", Disabled: !ownPicker(), Click: func(*mygo.MenuItem, *mygo.Window) { s.PickColor() }},
 		mygo.Separator(),
 		// Images and videos.
