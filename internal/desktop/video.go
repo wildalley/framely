@@ -618,7 +618,7 @@ func (v *videoWindow) startRecording(reuse bool, token string, selected *editor.
 	if v.busy || v.running || v.exporting || v.app.captureBusy {
 		return
 	}
-	if _, err := components.Find("screenpin-record"); err != nil {
+	if _, err := components.Find("framely-record"); err != nil {
 		v.notice = err.Error()
 		return
 	}
@@ -670,7 +670,7 @@ func (v *videoWindow) startRecording(reuse bool, token string, selected *editor.
 		})
 		// The first protocol probe may launch a helper and wait up to five
 		// seconds. Keep it off the UI thread so cancel and tray clicks work.
-		if _, err := components.FindProtocol("screenpin-record", components.FrameProtocol); err != nil {
+		if _, err := components.FindProtocol("framely-record", components.FrameProtocol); err != nil {
 			v.report(err)
 			return
 		}
@@ -992,7 +992,7 @@ func (v *videoWindow) report(err error) {
 func videoPreview(ctx context.Context, path string) image.Image {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	dir, err := os.MkdirTemp("", "screenpin-video-preview-")
+	dir, err := os.MkdirTemp("", "framely-video-preview-")
 	if err != nil {
 		return nil
 	}

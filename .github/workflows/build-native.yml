@@ -10,6 +10,10 @@ on:
         description: Check Ubuntu dependency installation without building applications
         type: boolean
         default: false
+      installers_only:
+        description: Check real installers and upgrades without building OCR or FFmpeg
+        type: boolean
+        default: false
   workflow_call:
 
 permissions:
@@ -52,8 +56,39 @@ jobs:
       - name: Verify Linux build dependencies
         run: bash scripts/install-ci-linux-deps.sh dbus libpipewire-0.3-dev libva-dev nasm pkg-config
 
+  installers:
+    if: inputs.installers_only
+    needs: preflight
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            platform: linux/amd64
+          - os: windows-latest
+            platform: windows/amd64
+          - os: macos-15
+            platform: darwin/arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+      - name: Test configuration and binding migration
+        run: go test ./internal/apppaths ./internal/config ./internal/niribind ./internal/components
+      - name: Build actual application and installer with no media or OCR compilation
+        run: go tool mygo build -platform ${{ matrix.platform }} -skip-notarize -skip-dmg
+      - name: Check fresh install, upgrade, reinstall and uninstall
+        run: python scripts/check-installers.py
+
   native:
-    if: ${{ !inputs.linux_deps_only }}
+    if: ${{ !inputs.linux_deps_only && !inputs.installers_only }}
     needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -90,7 +125,7 @@ jobs:
         run: go tool mygo build -platform linux/amd64,windows/amd64,darwin/arm64 -skip-installer -skip-dmg -skip-notarize
 
   components:
-    if: ${{ !inputs.linux_deps_only }}
+    if: ${{ !inputs.linux_deps_only && !inputs.installers_only }}
     needs: preflight
     timeout-minutes: 45
     strategy:
@@ -164,7 +199,7 @@ jobs:
         run: python scripts/package-release.py
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: screenpin-native-${{ matrix.folder }}-${{ github.sha }}
+          name: framely-native-${{ matrix.folder }}-${{ github.sha }}
           path: build/release/*
           if-no-files-found: error
           retention-days: 14
@@ -172,7 +207,7 @@ jobs:
 
   verify-artifacts:
     # Tagged releases validate the same assets in the publish job.
-    if: github.ref_type != 'tag' && !inputs.linux_deps_only
+    if: github.ref_type != 'tag' && !inputs.linux_deps_only && !inputs.installers_only
     needs: [components, arch-native]
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -182,7 +217,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          pattern: screenpin-native-*-${{ github.sha }}
+          pattern: framely-native-*-${{ github.sha }}
           path: release-assets
           merge-multiple: true
       - name: Verify every release asset after upload and download
@@ -191,7 +226,7 @@ jobs:
           RELEASE_TAG="v$version" python scripts/verify-release-assets.py release-assets
 
   arch-native:
-    if: ${{ !inputs.linux_deps_only }}
+    if: ${{ !inputs.linux_deps_only && !inputs.installers_only }}
     needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -222,7 +257,7 @@ jobs:
       - name: Upload native Arch preview package
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: screenpin-native-arch-${{ github.sha }}
+          name: framely-native-arch-${{ github.sha }}
           path: packaging/arch-native/*.pkg.tar.zst
           if-no-files-found: error
           retention-days: 14

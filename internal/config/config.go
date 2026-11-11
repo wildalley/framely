@@ -1,5 +1,4 @@
-// Package config keeps ScreenPin's settings in config.json, in the place
-// and format the previous version used, so they carry over.
+// Package config stores Framely settings and imports previous installations.
 package config
 
 import (
@@ -12,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/wildalley/framely/internal/apppaths"
 	"github.com/wildalley/framely/internal/shortcutkey"
 )
 
@@ -31,7 +31,7 @@ type Config struct {
 	HideAfterCopy   bool `json:"hideAfterCopy"`
 	AutomaticScroll bool `json:"automaticScroll"`
 	// RecordDir is where recordings and their GIFs are saved without asking;
-	// empty means the system Videos folder's ScreenPin subfolder.
+	// empty means the system Videos folder's Framely subfolder.
 	RecordDir string `json:"recordDir,omitempty"`
 	// AskRecordPath shows a save dialog for every recording and GIF instead.
 	AskRecordPath bool `json:"askRecordPath,omitempty"`
@@ -50,14 +50,10 @@ func Default() Config {
 	return Config{CaptureShortcut: DefaultShortcut, AutomaticScroll: runtime.GOOS == "windows"}
 }
 
-// Path is where the configuration is kept: ~/.config/screenpin/config.json
+// Path is where the configuration is kept: ~/.config/framely/config.json
 // on Linux, and the platform's configuration directory elsewhere.
 func Path() (string, error) {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, "screenpin", "config.json"), nil
+	return apppaths.ConfigFile("config.json")
 }
 
 // Load reads the configuration, or the default one when there is none or it

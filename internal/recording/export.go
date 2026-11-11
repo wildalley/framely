@@ -33,7 +33,7 @@ func (o GIFOptions) Validate() error {
 	return nil
 }
 func Stage(destination string) (string, error) {
-	f, err := os.CreateTemp(filepath.Dir(destination), ".screenpin-record-*.mp4")
+	f, err := os.CreateTemp(filepath.Dir(destination), ".framely-record-*.mp4")
 	if err != nil {
 		return "", err
 	}
@@ -111,11 +111,11 @@ func ExportGIF(ctx context.Context, source, destination string, o GIFOptions) er
 	if err := o.Validate(); err != nil {
 		return err
 	}
-	ffmpeg, err := components.Find("screenpin-ffmpeg")
+	ffmpeg, err := components.Find("framely-ffmpeg")
 	if err != nil {
 		return err
 	}
-	dir, err := os.MkdirTemp("", "screenpin-gif-")
+	dir, err := os.MkdirTemp("", "framely-gif-")
 	if err != nil {
 		return err
 	}
@@ -148,7 +148,7 @@ func ExportGIF(ctx context.Context, source, destination string, o GIFOptions) er
 	return Publish(temp, destination)
 }
 func Thumbnail(ctx context.Context, source, destination string) error {
-	ffmpeg, err := components.Find("screenpin-ffmpeg")
+	ffmpeg, err := components.Find("framely-ffmpeg")
 	if err != nil {
 		return err
 	}

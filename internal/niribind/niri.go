@@ -22,7 +22,8 @@ import (
 	"github.com/wildalley/framely/internal/shortcutkey"
 )
 
-const marker = "// ScreenPin: managed screenshot shortcut\n"
+const marker = "// Framely: managed screenshot shortcut\n"
+const legacyMarker = "// ScreenPin: managed screenshot shortcut\n"
 
 // Current reports a niri session, without starting or changing its services.
 func Current() bool {
@@ -54,6 +55,7 @@ type Plan struct {
 	RecordKey      string
 	Command        string
 	root, shortcut snapshot
+	legacy         snapshot
 	base, content  []byte
 	validate       func(context.Context, string) error
 }
@@ -120,15 +122,24 @@ func prepareShortcuts(path, command, key, scroll string, validator func(context.
 	if err != nil {
 		return nil, fmt.Errorf("无法读取 niri 配置: %w", err)
 	}
-	owned := filepath.Join(filepath.Dir(path), "screenpin-shortcut.kdl")
+	owned := filepath.Join(filepath.Dir(path), "framely-shortcut.kdl")
 	old, err := readSnapshot(owned, true)
 	if err != nil {
 		return nil, err
 	}
 	if old.exists && !bytes.HasPrefix(old.data, []byte(marker)) {
-		return nil, errors.New("screenpin-shortcut.kdl 已存在且不由 " + brand.Name + " 管理，请先为它改名")
+		return nil, errors.New("framely-shortcut.kdl 已存在且不由 " + brand.Name + " 管理，请先为它改名")
 	}
 	base := bytes.ReplaceAll(root.data, []byte(marker+"include "+strconv.Quote(owned)+"\n"), nil)
+	legacy, err := readSnapshot(filepath.Join(filepath.Dir(path), "screenpin-shortcut.kdl"), true)
+	if err != nil {
+		return nil, err
+	}
+	if legacy.exists && bytes.HasPrefix(legacy.data, []byte(legacyMarker)) {
+		base = bytes.ReplaceAll(base, []byte(legacyMarker+"include "+strconv.Quote(legacy.path)+"\n"), nil)
+	} else {
+		legacy = snapshot{}
+	}
 	modKey, err := compositorMod(path, base, map[string]bool{})
 	if err != nil {
 		return nil, err
@@ -167,7 +178,7 @@ func prepareShortcuts(path, command, key, scroll string, validator func(context.
 	}
 	content += "}\n"
 	return &Plan{ConfigPath: path, ShortcutPath: owned, Key: parsed.Canonical(), ScrollKey: scroll, RecordKey: record, Command: command,
-		root: root, shortcut: old, base: base, content: []byte(content), validate: validator}, nil
+		root: root, shortcut: old, legacy: legacy, base: base, content: []byte(content), validate: validator}, nil
 }
 
 func (p *Plan) main(include string) []byte {
@@ -209,9 +220,14 @@ func Installed() bool {
 	if err != nil {
 		return false
 	}
-	owned := filepath.Join(filepath.Dir(path), "screenpin-shortcut.kdl")
-	data, err := os.ReadFile(owned)
-	return err == nil && bytes.HasPrefix(data, []byte(marker)) && bytes.Contains(root, []byte(marker+"include "+strconv.Quote(owned)+"\n"))
+	for name, prefix := range map[string]string{"framely-shortcut.kdl": marker, "screenpin-shortcut.kdl": legacyMarker} {
+		owned := filepath.Join(filepath.Dir(path), name)
+		data, err := os.ReadFile(owned)
+		if err == nil && bytes.HasPrefix(data, []byte(prefix)) && bytes.Contains(root, []byte(prefix+"include "+strconv.Quote(owned)+"\n")) {
+			return true
+		}
+	}
+	return false
 }
 
 // Apply validates a staged include and complete config before touching the live
@@ -242,7 +258,7 @@ func (p *Plan) Apply(ctx context.Context, persist func() error) error {
 	if !p.unchanged() {
 		return errors.New("niri 配置已变化，请重新确认")
 	}
-	backup, err := os.MkdirTemp(filepath.Dir(p.ConfigPath), "screenpin-backup-"+time.Now().Format("20060102-150405")+"-")
+	backup, err := os.MkdirTemp(filepath.Dir(p.ConfigPath), "framely-backup-"+time.Now().Format("20060102-150405")+"-")
 	if err != nil {
 		return fmt.Errorf("无法备份 niri 配置: %w", err)
 	}
@@ -250,7 +266,12 @@ func (p *Plan) Apply(ctx context.Context, persist func() error) error {
 		return err
 	}
 	if p.shortcut.exists {
-		if err := os.WriteFile(filepath.Join(backup, "screenpin-shortcut.kdl"), p.shortcut.data, 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(backup, "framely-shortcut.kdl"), p.shortcut.data, 0o600); err != nil {
+			return err
+		}
+	}
+	if p.legacy.exists {
+		if err := os.WriteFile(filepath.Join(backup, "legacy-shortcut.kdl"), p.legacy.data, 0o600); err != nil {
 			return err
 		}
 	}
@@ -268,6 +289,9 @@ func (p *Plan) Apply(ctx context.Context, persist func() error) error {
 	if err != nil {
 		return errors.Join(err, p.root.restoreIf(main), p.shortcut.restoreIf(p.content))
 	}
+	if p.legacy.exists && p.legacy.unchanged() {
+		return os.Remove(p.legacy.path)
+	}
 	return nil
 }
 
@@ -275,8 +299,11 @@ func (p *Plan) unchanged() bool {
 	if !p.root.unchanged() || !p.shortcut.unchanged() {
 		return false
 	}
+	if p.legacy.exists && !p.legacy.unchanged() {
+		return false
+	}
 	// A shared include may change the Mod key while the dialog is open.
-	current, err := prepare(p.ConfigPath, p.Command, p.Key, p.validate)
+	current, err := prepareShortcuts(p.ConfigPath, p.Command, p.Key, p.ScrollKey, p.validate, p.RecordKey)
 	return err == nil && bytes.Equal(current.content, p.content)
 }
 
@@ -324,7 +351,7 @@ func (s snapshot) restoreIf(written []byte) error {
 }
 
 func tempFile(dir string, data []byte, mode os.FileMode) (path string, err error) {
-	f, err := os.CreateTemp(dir, ".screenpin-*.kdl")
+	f, err := os.CreateTemp(dir, ".framely-*.kdl")
 	if err != nil {
 		return "", err
 	}

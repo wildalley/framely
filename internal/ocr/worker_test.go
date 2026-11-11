@@ -45,7 +45,7 @@ func TestWorkerCancellationStopsChild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	name := "screenpin-ocr"
+	name := "framely-ocr"
 	if runtime.GOOS == "windows" {
 		name += ".exe"
 	}
@@ -79,7 +79,7 @@ func TestWorkerCancellationStopsChild(t *testing.T) {
 
 func TestQueuedOCRCanBeCancelledWithoutStartingAnotherWorker(t *testing.T) {
 	dir := t.TempDir()
-	name := "screenpin-ocr"
+	name := "framely-ocr"
 	if runtime.GOOS == "windows" {
 		name += ".exe"
 	}

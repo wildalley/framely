@@ -25,17 +25,17 @@ class PortableInstallerTests(unittest.TestCase):
             root = Path(directory)
             source = root / "portable app"
             source.mkdir()
-            for name in ("screenpin", "screenpin.png", package.DESKTOP_ID, "LICENSE"):
+            for name in ("framely", "framely.png", "framely.desktop", "LICENSE"):
                 (source / name).write_text(name, encoding="utf-8")
-            (source / "screenpin").chmod(0o755)
+            (source / "framely").chmod(0o755)
             (source / "workers").mkdir()
             (source / "workers/worker").touch()
             script = source / "install.sh"
             # Run the injected bootstrap with the same variables as the SDK.
             # The SDK continues by extracting the selected archive.
-            script.write_text(package.linux_portable_installer('''#!/bin/sh
+            script.write_text(package.portable_archive_fallback('''#!/bin/sh
 set -eu
-name=screenpin
+name=framely
 work="$1"
 archive="${2:-}"
 \tif [ -z "$archive" ]; then
@@ -45,12 +45,12 @@ tar -tzf "$archive"
 '''), encoding="utf-8")
             result = subprocess.check_output(["sh", str(script), str(root)], text=True)
             names = result.splitlines()
-            self.assertIn("screenpin", names)
-            self.assertIn(package.DESKTOP_ID, names)
+            self.assertIn("framely", names)
+            self.assertIn("framely.desktop", names)
             self.assertIn("workers/worker", names)
             self.assertNotIn("screenpin.desktop", names)
             # An explicit archive must still work without adjacent binaries.
-            (source / "screenpin").unlink()
+            (source / "framely").unlink()
             explicit = subprocess.check_output(["sh", str(script), str(root), str(root / "portable.tar.gz")], text=True)
             self.assertEqual(result, explicit)
 
@@ -60,7 +60,7 @@ class BundleResourceTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.resources = Path(self.temp.name)
-        self.worker = self.resources / "screenpin-ocr"
+        self.worker = self.resources / "framely-ocr"
         (self.worker / "licenses").mkdir(parents=True)
         (self.worker / "licenses/LICENSE.jieba").write_text("license", encoding="utf-8")
         self.manifest = {
@@ -106,18 +106,18 @@ class MediaResourceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             resources=Path(directory)
             files={}
-            for name in ("screenpin-record", "screenpin-ffmpeg"):
+            for name in ("framely-record", "framely-ffmpeg"):
                 data=(name.encode()*10000)
                 (resources/name).write_bytes(data)
                 files[name]=hashlib.sha256(data).hexdigest()
             (resources/"media-manifest.json").write_text(json.dumps({"protocol":1,"ffmpeg":"9.0.2","files":files}))
             licenses=resources/"media-licenses";licenses.mkdir()
-            for name in ("COPYING.FFmpeg.LGPLv2.1","README.txt","screenpin-media-source.tar.gz","ffmpeg-9.0.2.tar.xz"):
+            for name in ("COPYING.FFmpeg.LGPLv2.1","README.txt","framely-media-source.tar.gz","ffmpeg-9.0.2.tar.xz"):
                 (licenses/name).write_bytes(b"fixture")
             (licenses/"BUILD.json").write_text(json.dumps({"sha256":hashlib.sha256(b"fixture").hexdigest()}))
             with patch.object(package.subprocess,"check_output",side_effect=["2\n","ffmpeg version 9.0.2\n"]):
                 package.verify_media_resources(resources,"linux")
-            (resources/"screenpin-record").write_bytes(b"changed"*20000)
+            (resources/"framely-record").write_bytes(b"changed"*20000)
             with self.assertRaisesRegex(ValueError,"hash mismatch"):
                 package.verify_media_resources(resources,"linux")
 

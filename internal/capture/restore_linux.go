@@ -9,16 +9,14 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/wildalley/framely/internal/apppaths"
 )
 
 var restoreMu sync.Mutex
 
 func restorePath() (string, error) {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, "screenpin", "scroll-source.json"), nil
+	return apppaths.ConfigFile("scroll-source.json")
 }
 func restoreTokens(path string) map[string]string {
 	tokens := make(map[string]string)

@@ -198,10 +198,10 @@ func captureService(t *testing.T) *capturePortal {
 	}
 	executable, _ := os.Executable()
 	dir := t.TempDir()
-	if err := os.Symlink(executable, filepath.Join(dir, "screenpin-capture")); err != nil {
+	if err := os.Symlink(executable, filepath.Join(dir, "framely-capture")); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(executable, filepath.Join(dir, "screenpin-record")); err != nil {
+	if err := os.Symlink(executable, filepath.Join(dir, "framely-record")); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("SCREENPIN_COMPONENTS_DIR", dir)

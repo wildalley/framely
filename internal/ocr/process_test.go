@@ -56,7 +56,7 @@ func installTestWorker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	name := "screenpin-ocr"
+	name := "framely-ocr"
 	if runtime.GOOS == "windows" {
 		name += ".exe"
 	}

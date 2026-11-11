@@ -28,7 +28,7 @@ assert crop["frames"] == 60 and crop["repeated"] == 59 and crop["width"] == 64 a
 subprocess.run([str(binary), str(media.WORK / "nonexistent-directory/video.mp4"), "mpeg4", "failure"], check=True)
 if media.SYSTEM == "Linux":
     subprocess.run([str(binary), "/dev/full", "mpeg4", "failure"], check=True)
-ffmpeg = media.DEST / ("screenpin-ffmpeg.exe" if media.SYSTEM == "Windows" else "screenpin-ffmpeg")
+ffmpeg = media.DEST / ("framely-ffmpeg.exe" if media.SYSTEM == "Windows" else "framely-ffmpeg")
 # Decode into a small stream and count frames without retaining an entire clip.
 cmd = [str(ffmpeg), "-hide_banner", "-loglevel", "error", "-i", str(clip), "-vf", "scale=16:16", "-pix_fmt", "rgba", "-f", "rawvideo", "pipe:1"]
 process = subprocess.Popen(cmd, stdout=subprocess.PIPE)

@@ -78,9 +78,9 @@ func OpenStream(parent context.Context, options StreamOptions) (Stream, error) {
 var errRestoredOtherDisplay = errors.New("上次授权的来源位于另一显示器，请选择当前鼠标所在的显示器")
 
 func openPortalStream(parent context.Context, options StreamOptions, forceChoose bool) (Stream, error) {
-	name := "screenpin-capture"
+	name := "framely-capture"
 	if options.Recording != nil {
-		name = "screenpin-record"
+		name = "framely-record"
 	}
 	helper, err := components.FindProtocol(name, components.FrameProtocol)
 	if err != nil {

@@ -138,7 +138,7 @@ func (pool *workerPool) release(p *workerProcess, healthy bool) {
 }
 
 func (pool *workerPool) recognize(ctx context.Context, img *image.RGBA, progress func(Progress)) (Result, error) {
-	path, err := components.Find("screenpin-ocr")
+	path, err := components.Find("framely-ocr")
 	if err != nil {
 		return Result{}, err
 	}

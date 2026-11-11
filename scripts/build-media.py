@@ -139,22 +139,22 @@ def main():
         run([tool("make", env), "install"], cwd=ffmpeg, env=env)
         configure.write_text(json.dumps(options, indent=2) + "\n")
     suffix = ".exe" if SYSTEM == "Windows" else ""
-    shutil.copy2(PREFIX / "bin" / ("ffmpeg" + suffix), DEST / ("screenpin-ffmpeg" + suffix))
+    shutil.copy2(PREFIX / "bin" / ("ffmpeg" + suffix), DEST / ("framely-ffmpeg" + suffix))
     env["PKG_CONFIG_PATH"] = pkg_config_path()
     if SYSTEM == "Windows":
         # pkgconf from MSYS2 must resolve native Windows paths for cl/link.
         native_libs = shlex.split(subprocess.check_output([tool("pkg-config", env), "--msvc-syntax", "--static", "--libs", "libavformat", "libavcodec", "libavutil", "libswscale"], env=env, text=True)) + WINDOWS_MEDIA_LIBS
         run(["cl", "/nologo", "/O2", "/MT", "/std:c11", "/c", "/I" + str(PREFIX / "include"), "/Fo" + str(WORK / "recorder.obj"), ROOT / "workers/media/recorder.c"], env=env)
-        run(["cl", "/nologo", "/std:c++20", "/EHsc", "/O2", "/MT", "/utf-8", "/DSCREENPIN_RECORD", "/Fo" + str(WORK / "record-windows.obj"), "/Fe" + str(DEST / "screenpin-record.exe"), ROOT / "workers/capture/windows.cpp", WORK / "recorder.obj", "/link", *native_libs, "windowsapp.lib", "d3d11.lib", "dxgi.lib", "user32.lib", "shell32.lib"], env=env)
+        run(["cl", "/nologo", "/std:c++20", "/EHsc", "/O2", "/MT", "/utf-8", "/DSCREENPIN_RECORD", "/Fo" + str(WORK / "record-windows.obj"), "/Fe" + str(DEST / "framely-record.exe"), ROOT / "workers/capture/windows.cpp", WORK / "recorder.obj", "/link", *native_libs, "windowsapp.lib", "d3d11.lib", "dxgi.lib", "user32.lib", "shell32.lib"], env=env)
     else:
         libs = shlex.split(subprocess.check_output(["pkg-config", "--static", "--cflags", "--libs", "libavformat", "libavcodec", "libavutil", "libswscale"], env=env, text=True))
         if SYSTEM == "Linux":
             pipewire = subprocess.check_output(["pkg-config", "--cflags", "--libs", "libpipewire-0.3"], text=True).split()
-            run(["cc", "-O2", "-std=c11", "-DSCREENPIN_RECORD", ROOT / "workers/capture/pipewire.c", ROOT / "workers/media/recorder.c", "-o", DEST / "screenpin-record", *libs, *pipewire], env=env)
+            run(["cc", "-O2", "-std=c11", "-DSCREENPIN_RECORD", ROOT / "workers/capture/pipewire.c", ROOT / "workers/media/recorder.c", "-o", DEST / "framely-record", *libs, *pipewire], env=env)
         else:
             run(["clang", "-O2", "-std=c11", "-c", ROOT / "workers/media/recorder.c", "-o", WORK / "recorder.o", "-I" + str(PREFIX / "include")], env=env)
-            run(["clang", "-O2", "-fobjc-arc", "-fblocks", "-mmacosx-version-min=15.0", ROOT / "workers/media/macos.m", WORK / "recorder.o", "-o", DEST / "screenpin-record", "-framework", "Cocoa", "-framework", "ScreenCaptureKit", "-framework", "CoreMedia", "-framework", "CoreVideo", *libs], env=env)
-        run(["strip", DEST / "screenpin-record"])
+            run(["clang", "-O2", "-fobjc-arc", "-fblocks", "-mmacosx-version-min=15.0", ROOT / "workers/media/macos.m", WORK / "recorder.o", "-o", DEST / "framely-record", "-framework", "Cocoa", "-framework", "ScreenCaptureKit", "-framework", "CoreMedia", "-framework", "CoreVideo", *libs], env=env)
+        run(["strip", DEST / "framely-record"])
     licenses = DEST / "media-licenses"
     licenses.mkdir(exist_ok=True)
     shutil.copy2(ffmpeg / "COPYING.LGPLv2.1", licenses / "COPYING.FFmpeg.LGPLv2.1")
@@ -167,22 +167,22 @@ def main():
     shutil.copy2(WORK / "ffmpeg-9.0.2.tar.xz", licenses / "ffmpeg-9.0.2.tar.xz")
     if SYSTEM != "Darwin":
         shutil.copy2(WORK / "n13.0.19.0", licenses / "nv-codec-headers-n13.0.19.0.tar.gz")
-    with tarfile.open(licenses / "screenpin-media-source.tar.gz", "w:gz") as archive:
+    with tarfile.open(licenses / "framely-media-source.tar.gz", "w:gz") as archive:
         for name in ("LICENSE", "scripts/build-media.py", "workers/media", "workers/capture"):
             archive.add(ROOT / name, arcname=name)
     (licenses / "README.txt").write_text(
         "FFmpeg is statically linked under LGPL 2.1 or later (no GPL/nonfree codecs).\n"
         "Full corresponding sources, notices and build settings accompany this runtime.\n"
-        "Extract screenpin-media-source.tar.gz to a directory, copy the FFmpeg and NVIDIA\n"
+        "Extract framely-media-source.tar.gz to a directory, copy the FFmpeg and NVIDIA\n"
         "source archives into build/media/<os>-<arch>/ (rename NVIDIA archive to n13.0.19.0),\n"
         "and run python scripts/build-media.py. See BUILD.json for configuration.\n"
         "Native toolchain, Python 3.12+, make, bash, pkg-config, and optional nasm are required.\n"
         "Linux additionally needs PipeWire and VAAPI development libraries; macOS needs Xcode;\n"
         "Windows needs the x64 MSVC developer shell plus MSYS2 bash/make/pkgconf/nasm.\n"
         "The worker's source is MIT licensed. Modified components can replace the installed\n"
-        "screenpin-record and screenpin-ffmpeg directly; reverse engineering for debugging\n"
+        "framely-record and framely-ffmpeg directly; reverse engineering for debugging\n"
         "modifications to these LGPL components is permitted.\n", encoding="utf-8")
-    (DEST / "media-manifest.json").write_text(json.dumps({"protocol": 1, "ffmpeg": "9.0.2", "files": {name: hashlib.sha256((DEST / (name + suffix)).read_bytes()).hexdigest() for name in ("screenpin-record", "screenpin-ffmpeg")}}, indent=2) + "\n")
+    (DEST / "media-manifest.json").write_text(json.dumps({"protocol": 1, "ffmpeg": "9.0.2", "files": {name: hashlib.sha256((DEST / (name + suffix)).read_bytes()).hexdigest() for name in ("framely-record", "framely-ffmpeg")}}, indent=2) + "\n")
 
 if __name__ == "__main__":
     main()

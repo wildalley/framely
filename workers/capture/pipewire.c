@@ -349,7 +349,7 @@ int main(int argc,char **argv) {
     struct spa_hook core_listener;pw_core_add_listener(core,&core_listener,&core_events,&c);
     fprintf(stderr,"PipeWire authorized source node: %u\n",node);
     struct pw_properties *props=pw_properties_new(PW_KEY_MEDIA_TYPE,"Video",PW_KEY_MEDIA_CATEGORY,"Capture",PW_KEY_MEDIA_ROLE,"Screen",NULL);
-    c.stream=pw_stream_new(core,"ScreenPin screen capture",props);
+    c.stream=pw_stream_new(core,"Framely screen capture",props);
     if(!c.stream)return 1;
     struct spa_hook listener;pw_stream_add_listener(c.stream,&listener,&events,&c);
     uint8_t storage[1024];struct spa_pod_builder builder=SPA_POD_BUILDER_INIT(storage,sizeof(storage));

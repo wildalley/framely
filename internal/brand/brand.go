@@ -1,8 +1,7 @@
 // Package brand holds the product name and the shared visual theme.
 //
-// The executable, configuration directory, desktop/portal application ID
-// and niri markers keep their historical "screenpin" names so upgrades keep
-// settings and permissions; only what people read uses Name.
+// Installed files and configuration use Framely. The system application ID
+// stays stable so upgrades retain portal permissions and stored credentials.
 package brand
 
 import "github.com/egoist/mygo/ui"

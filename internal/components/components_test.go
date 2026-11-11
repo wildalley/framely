@@ -42,15 +42,15 @@ func TestWorkingDirectoryCannotInjectAWorker(t *testing.T) {
 func TestExplicitRootAndNamesAreValidated(t *testing.T) {
 	for _, root := range []string{".", "relative/workers"} {
 		t.Setenv("SCREENPIN_COMPONENTS_DIR", root)
-		if _, err := Find("screenpin-ocr"); err == nil {
+		if _, err := Find("framely-ocr"); err == nil {
 			t.Fatal("relative override accepted")
 		}
 	}
 	t.Setenv("SCREENPIN_COMPONENTS_DIR", t.TempDir())
-	if _, err := Find("screenpin-ocr"); err == nil {
+	if _, err := Find("framely-ocr"); err == nil {
 		t.Fatal("missing explicit worker fell back to installed OCR")
 	}
-	for _, name := range []string{"", ".", "..", "../screenpin-ocr", `..\screenpin-ocr`, "/screenpin-ocr"} {
+	for _, name := range []string{"", ".", "..", "../framely-ocr", `..\framely-ocr`, "/framely-ocr"} {
 		if _, err := Find(name); err == nil {
 			t.Fatalf("unsafe name %q", name)
 		}

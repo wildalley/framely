@@ -20,7 +20,7 @@ import (
 // mode: one process per request, which loads the model, translates the
 // lines and exits, so nothing stays resident. It returns a line for each.
 func Translate(ctx context.Context, modelDir, direction string, lines []string) ([]string, error) {
-	path, err := components.Find("screenpin-ocr")
+	path, err := components.Find("framely-ocr")
 	if err != nil {
 		return nil, err
 	}

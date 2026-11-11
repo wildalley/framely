@@ -57,17 +57,20 @@ package() {
     *) return 1 ;;
   esac
 
-  install -Dm755 "$_build_root/build/native/linux-$_go_arch/screenpin" "$pkgdir/usr/lib/screenpin/screenpin"
-  cp -a "$_build_root/build/native/linux-$_go_arch/workers" "$pkgdir/usr/lib/screenpin/workers"
+  install -Dm755 "$_build_root/build/native/linux-$_go_arch/framely" "$pkgdir/usr/lib/framely/framely"
+  cp -a "$_build_root/build/native/linux-$_go_arch/workers" "$pkgdir/usr/lib/framely/workers"
   install -dm755 "$pkgdir/usr/bin"
-  ln -s ../lib/screenpin/screenpin "$pkgdir/usr/bin/framely"
+  ln -s ../lib/framely/framely "$pkgdir/usr/bin/framely"
   # The previous command name keeps desktop shortcuts and niri bindings working.
-  ln -s ../lib/screenpin/screenpin "$pkgdir/usr/bin/screenpin"
+  ln -s framely "$pkgdir/usr/bin/screenpin"
+  # Old absolute bindings resolve to the new executable, never a second copy.
+  install -dm755 "$pkgdir/usr/lib/screenpin"
+  ln -s ../framely/framely "$pkgdir/usr/lib/screenpin/screenpin"
   # Keep the registered portal ID, so screenshot and shortcut permissions carry over.
   install -Dm644 "$startdir/io.screenpin.desktop.desktop" "$pkgdir/usr/share/applications/io.screenpin.desktop.desktop"
   local _size
   for _size in 32 64 128 256 512; do
-    install -Dm644 "$_build_root/assets/icons/${_size}x${_size}.png" "$pkgdir/usr/share/icons/hicolor/${_size}x${_size}/apps/screenpin.png"
+    install -Dm644 "$_build_root/assets/icons/${_size}x${_size}.png" "$pkgdir/usr/share/icons/hicolor/${_size}x${_size}/apps/framely.png"
   done
   install -Dm644 "$_build_root/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
   install -Dm644 "$_build_root/internal/ocrtext/LICENSE.jieba" "$pkgdir/usr/share/licenses/$pkgname/LICENSE.jieba"

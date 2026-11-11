@@ -15,12 +15,12 @@ destination = root / "resources" / f"{goos}-{arch}" / "workers"
 destination.mkdir(parents=True, exist_ok=True)
 subprocess.run([
     sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--onedir",
-    "--name", "screenpin-ocr", "--additional-hooks-dir", str(root / "workers/ocr/hooks"),
+    "--name", "framely-ocr", "--additional-hooks-dir", str(root / "workers/ocr/hooks"),
     "--exclude-module", "tkinter", "--exclude-module", "PyQt5",
     "--distpath", str(destination), "--workpath", str(root / "build" / "ocr-pyinstaller"),
     "--specpath", str(root / "build"), str(root / "workers" / "ocr" / "worker.py"),
 ], check=True)
-(destination / "screenpin-ocr" / "manifest.json").write_text(json.dumps({
+(destination / "framely-ocr" / "manifest.json").write_text(json.dumps({
     "protocol": 2, "rapidocr": importlib.metadata.version("rapidocr"),
     "onnxruntime": importlib.metadata.version("onnxruntime"), "models": "PP-OCRv6-small",
     "offline": True,
@@ -37,11 +37,11 @@ for distribution in importlib.metadata.distributions():
     name = re.sub(r"[-_.]+", "-", distribution.metadata["Name"]).lower()
     components.append({"type": "library", "name": name, "version": distribution.version,
                        "purl": f"pkg:pypi/{name}@{distribution.version}"})
-(destination / "screenpin-ocr" / "sbom.cdx.json").write_text(json.dumps({
+(destination / "framely-ocr" / "sbom.cdx.json").write_text(json.dumps({
     "bomFormat": "CycloneDX", "specVersion": "1.6", "version": 1,
     "components": sorted(components, key=lambda item: item["name"]),
 }, indent=2), encoding="utf-8")
-notices = destination / "screenpin-ocr" / "licenses"
+notices = destination / "framely-ocr" / "licenses"
 notices.mkdir(exist_ok=True)
 (notices / "LICENSE.jieba").write_bytes((root / "internal/ocrtext/LICENSE.jieba").read_bytes())
 for distribution in importlib.metadata.distributions():
@@ -54,7 +54,7 @@ for distribution in importlib.metadata.distributions():
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(source.read_bytes())
 (notices / "README.txt").write_text(
-    "ScreenPin OCR uses RapidOCR (Apache-2.0), PaddleOCR PP-OCR models (Apache-2.0), "
+    "Framely OCR uses RapidOCR (Apache-2.0), PaddleOCR PP-OCR models (Apache-2.0), "
     "ONNX Runtime (MIT), OpenCV (Apache-2.0), and the Python runtime and libraries.\n"
     "Dependency license texts are included in this directory and _internal.\n"
     "Model source: https://github.com/PaddlePaddle/PaddleOCR\n"

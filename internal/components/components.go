@@ -22,9 +22,13 @@ func Find(name string) (string, error) {
 	}
 	base := filepath.Dir(exe)
 	var roots []string
-	if override := os.Getenv("SCREENPIN_COMPONENTS_DIR"); override != "" {
+	override := os.Getenv("FRAMELY_COMPONENTS_DIR")
+	if override == "" {
+		override = os.Getenv("SCREENPIN_COMPONENTS_DIR") // compatibility for development scripts
+	}
+	if override != "" {
 		if !filepath.IsAbs(override) {
-			return "", fmt.Errorf("SCREENPIN_COMPONENTS_DIR 必须是绝对路径")
+			return "", fmt.Errorf("FRAMELY_COMPONENTS_DIR 必须是绝对路径")
 		}
 		// Explicit configuration is authoritative: missing or stale development
 		// components must not silently fall back to another installed runtime.
@@ -35,7 +39,7 @@ func Find(name string) (string, error) {
 		roots = append(roots, filepath.Join(base, "..", "Resources", "workers"))
 	}
 	if home, err := os.UserHomeDir(); err == nil {
-		roots = append(roots, filepath.Join(home, ".local", "share", "screenpin", "workers"))
+		roots = append(roots, filepath.Join(home, ".local", "share", "framely", "workers"))
 	}
 	return findIn(name, roots)
 }
@@ -45,7 +49,7 @@ func findIn(name string, roots []string) (string, error) {
 		name += ".exe"
 	}
 	for _, root := range roots {
-		for _, path := range []string{filepath.Join(root, name), filepath.Join(root, "screenpin-ocr", name)} {
+		for _, path := range []string{filepath.Join(root, name), filepath.Join(root, "framely-ocr", name)} {
 			if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() {
 				return filepath.Abs(path)
 			}

@@ -2,6 +2,7 @@
 import contextlib
 import io
 import json
+import os
 from pathlib import Path
 import runpy
 import shutil
@@ -33,10 +34,10 @@ class LocalInstallTests(unittest.TestCase):
                 expected = f"Framely {version} (mygo)"
                 bundle = root / "build/native/linux-amd64"
                 workers = bundle / "workers"
-                (workers / "screenpin-ocr").mkdir(parents=True)
-                (workers / "screenpin-capture").touch()
-                (workers / "screenpin-ocr/screenpin-ocr").touch()
-                source = bundle / "screenpin"
+                (workers / "framely-ocr").mkdir(parents=True)
+                (workers / "framely-capture").touch()
+                (workers / "framely-ocr/framely-ocr").touch()
+                source = bundle / "framely"
                 source.write_text(f"#!/bin/sh\nprintf '%s\\n' '{expected}'\n", encoding="utf-8")
                 source.chmod(0o755)
 
@@ -55,10 +56,14 @@ class LocalInstallTests(unittest.TestCase):
                 installed_workers = home / ".local/share/screenpin/workers"
                 installed_workers.mkdir(parents=True)
                 (installed_workers / "old-worker").touch()
+                autostart = home / '.config/autostart/io.screenpin.desktop.desktop'
+                autostart.parent.mkdir(parents=True)
+                autostart.write_text('[Desktop Entry]\nName=ScreenPin\nExec=old --hidden\nHidden=true\nX-GNOME-Autostart-enabled=false\n', encoding='utf-8')
 
                 process = Mock(pid=1234)
                 process.poll.return_value = None
                 with patch.object(sys, "argv", [str(script)]), \
+                        patch.dict(os.environ, {'XDG_CONFIG_HOME': str(home / '.config')}), \
                         patch.object(Path, "home", return_value=home), \
                         patch("platform.machine", return_value="x86_64"), \
                         patch("subprocess.check_output", return_value=expected + "\n"), \
@@ -68,18 +73,22 @@ class LocalInstallTests(unittest.TestCase):
                         patch("time.sleep"), contextlib.redirect_stdout(io.StringIO()):
                     runpy.run_path(str(script), run_name="__main__")
 
-                self.assertEqual(command.readlink(), Path("screenpin"))
+                self.assertFalse(command.is_symlink())
+                self.assertEqual(binary.readlink(), Path("framely"))
                 for executable in (command, binary):
                     self.assertEqual(subprocess.check_output([str(executable), "--version"], text=True).strip(), expected)
                 entry = (applications / "io.screenpin.desktop.desktop").read_text(encoding="utf-8")
                 self.assertIn(f'\nExec="{command}"\n', entry)
                 self.assertFalse(legacy.exists())
-                self.assertTrue((installed_workers / "screenpin-capture").is_file())
+                self.assertTrue((home / '.local/share/framely/workers/framely-capture').is_file())
                 self.assertFalse((installed_workers / "old-worker").exists())
                 self.assertEqual(launch.call_args.args[0], [str(command), "--scroll"])
                 backup, = (root / "build/local-install-backup").iterdir()
                 self.assertEqual((backup / "screenpin").read_text(encoding="utf-8"), "old executable")
-                self.assertTrue((backup / "workers/old-worker").is_file())
+                self.assertTrue((backup / "legacy-workers/old-worker").is_file())
+                self.assertIn(f'Exec="{command}" --hidden', autostart.read_text(encoding='utf-8'))
+                self.assertIn('Hidden=true', autostart.read_text(encoding='utf-8'))
+                self.assertIn('X-GNOME-Autostart-enabled=false', autostart.read_text(encoding='utf-8'))
                 if previous == "file":
                     self.assertEqual((backup / "framely").read_text(encoding="utf-8"), "old command")
                 elif previous in ("symlink", "broken-symlink"):

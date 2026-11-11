@@ -69,7 +69,7 @@ func TestPackagedMediaExports(t *testing.T) {
 	if os.Getenv("SCREENPIN_MEDIA_INTEGRATION") != "1" {
 		t.Skip("set SCREENPIN_MEDIA_INTEGRATION=1 with built media workers")
 	}
-	ffmpeg, err := components.Find("screenpin-ffmpeg")
+	ffmpeg, err := components.Find("framely-ffmpeg")
 	if err != nil {
 		t.Fatal(err)
 	}

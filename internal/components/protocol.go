@@ -10,8 +10,8 @@ import (
 	"time"
 )
 
-// FrameProtocol is the stream protocol of screenpin-capture and
-// screenpin-record that this build speaks.
+// FrameProtocol is the stream protocol of framely-capture and
+// framely-record that this build speaks.
 const FrameProtocol = "2"
 
 type protocolKey struct {

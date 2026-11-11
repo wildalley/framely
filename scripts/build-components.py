@@ -33,3 +33,13 @@ else:
     print("macOS: offline OCR bundled; scrolling capture is not yet supported")
 
 subprocess.run([sys.executable, "scripts/build-media.py"], check=True)
+
+# Retire generated artifacts from the old brand only after all new workers build.
+arch = {"AMD64": "amd64", "x86_64": "amd64", "arm64": "arm64", "aarch64": "arm64"}[platform.machine()]
+goos = {"Windows": "windows", "Linux": "linux", "Darwin": "darwin"}[system]
+workers = root / "resources" / f"{goos}-{arch}" / "workers"
+for artifact in workers.glob("screenpin-*"):
+    if artifact.is_dir():
+        shutil.rmtree(artifact)
+    else:
+        artifact.unlink()

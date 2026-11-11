@@ -23,7 +23,7 @@ func SystemContext(ctx context.Context, _ func() []byte) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	path := filepath.Join(os.TempDir(), "screenpin-"+strconv.FormatInt(time.Now().UnixNano(), 10)+".png")
+	path := filepath.Join(os.TempDir(), "framely-"+strconv.FormatInt(time.Now().UnixNano(), 10)+".png")
 	defer os.Remove(path)
 	err := exec.CommandContext(ctx, "screencapture", "-i", "-x", path).Run()
 	if ctx.Err() != nil {

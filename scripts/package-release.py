@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DESKTOP_ID = "io.screenpin.desktop.desktop"
 
 
-def linux_portable_installer(script):
+def portable_archive_fallback(script):
     # MyGo's installer expects an archive next to the script. Our release is
     # already extracted there, so feed it a temporary archive of that runtime.
     # Keep the SDK's installation, command links and uninstall behavior.
@@ -29,7 +29,21 @@ def linux_portable_installer(script):
 \t\ttar -czf "$archive" -C "$source_dir" "$name" "$name.png" "$name.desktop" workers LICENSE
 \tfi
 '''
-    script = script.replace(marker, fallback + marker)
+    return script.replace(marker, fallback + marker)
+
+
+def linux_portable_installer(script):
+    script = portable_archive_fallback(script)
+    hooks = {
+        '\tmv "$staging" "$app_dir"\n': '\tmv "$staging" "$app_dir"\n\tmigrate_legacy_install\n',
+        'ours() {\n': 'ours() {\n\tif legacy_command_link "$1"; then return 0; fi\n',
+        '\trm -rf "$app_dir"\n\tupdate_databases': '\tremove_legacy_install_link\n\trm -rf "$app_dir"\n\tupdate_databases',
+        'main "$@"\n': (ROOT / 'packaging/linux/migrate.sh').read_text(encoding='utf-8') + '\nmain "$@"\n',
+    }
+    for before, after in hooks.items():
+        if script.count(before) != 1:
+            raise ValueError("MyGo installer migration hook changed: " + before.strip())
+        script = script.replace(before, after, 1)
     return script.replace("$name.desktop", DESKTOP_ID).replace("${name}.desktop", DESKTOP_ID)
 
 
@@ -51,7 +65,7 @@ def run_hdiutil(*args, attempts=5):
 
 
 def verify_ocr_resources(resources):
-    worker = resources / "screenpin-ocr"
+    worker = resources / "framely-ocr"
     manifest = json.loads((worker / "manifest.json").read_text(encoding="utf-8"))
     if not manifest.get("offline") or manifest.get("protocol") != 2:
         raise ValueError("Offline OCR protocol 2 runtime is required")
@@ -78,7 +92,7 @@ def verify_media_resources(resources, goos):
     if manifest.get("protocol") != 1 or manifest.get("ffmpeg") != "9.0.2":
         raise ValueError("Missing or stale media runtime")
     suffix = ".exe" if goos == "windows" else ""
-    for name in ("screenpin-record", "screenpin-ffmpeg"):
+    for name in ("framely-record", "framely-ffmpeg"):
         path = resources / (name + suffix)
         if not path.is_file() or path.stat().st_size < 100_000:
             raise ValueError(f"Missing media component: {name}")
@@ -87,15 +101,15 @@ def verify_media_resources(resources, goos):
         if goos != "darwin" and hashlib.sha256(path.read_bytes()).hexdigest() != manifest.get("files", {}).get(name):
             raise ValueError(f"Media component hash mismatch: {name}")
     licenses = resources / "media-licenses"
-    for name in ("COPYING.FFmpeg.LGPLv2.1", "BUILD.json", "README.txt", "ffmpeg-9.0.2.tar.xz", "screenpin-media-source.tar.gz"):
+    for name in ("COPYING.FFmpeg.LGPLv2.1", "BUILD.json", "README.txt", "ffmpeg-9.0.2.tar.xz", "framely-media-source.tar.gz"):
         if not (licenses / name).is_file():
             raise ValueError(f"Missing media license/source: {name}")
     build = json.loads((licenses / "BUILD.json").read_text(encoding="utf-8"))
     if hashlib.sha256((licenses / "ffmpeg-9.0.2.tar.xz").read_bytes()).hexdigest() != build["sha256"]:
         raise ValueError("Media source checksum mismatch")
-    if subprocess.check_output([str(resources / ("screenpin-record"+suffix)), "--protocol-version"], text=True, timeout=10).strip() != "2":
+    if subprocess.check_output([str(resources / ("framely-record"+suffix)), "--protocol-version"], text=True, timeout=10).strip() != "2":
         raise ValueError("Media capture protocol mismatch")
-    version = subprocess.check_output([str(resources / ("screenpin-ffmpeg"+suffix)), "-version"], text=True, timeout=10)
+    version = subprocess.check_output([str(resources / ("framely-ffmpeg"+suffix)), "-version"], text=True, timeout=10)
     if "ffmpeg version 9.0.2" not in version or "--enable-gpl" in version or "--enable-nonfree" in version:
         raise ValueError("Unexpected FFmpeg build or license configuration")
 
@@ -118,6 +132,39 @@ def restore_hidden_resources(source, destination):
             shutil.copy2(item, target)
 
 
+def package_linux(bundle, resources, out, version, arch):
+    prefix = f"framely-{version}-linux-{arch}"
+    # The SDK uses slug.desktop; preserve ScreenPin's historical portal ID.
+    with tempfile.TemporaryDirectory(prefix="release-", dir=ROOT / "build") as tmp:
+        tmp = Path(tmp)
+        portable = tmp / "portable"
+        portable.mkdir()
+        for name in ["framely", "framely.png"]:
+            shutil.copy2(bundle / name, portable / name)
+        shutil.copytree(resources, portable / "workers", symlinks=True)
+        shutil.copy2(bundle / "framely.desktop", portable / DESKTOP_ID)
+        installer = linux_portable_installer((bundle / "install.sh").read_text(encoding="utf-8"))
+        (portable / "install.sh").write_text(installer, encoding="utf-8")
+        (portable / "install.sh").chmod(0o755)
+        shutil.copy2(ROOT / "LICENSE", portable / "LICENSE")
+        (portable / "README.txt").write_text("Framely " + version + "\nRun ./install.sh to install for the current user, then start Framely from the app menu or run framely.\nKeep the workers directory with the executable.\n")
+        with tarfile.open(out / f"{prefix}-portable.tar.gz", "w:gz") as archive:
+            for item in sorted(portable.iterdir()):
+                archive.add(item, arcname=item.name)
+        deb = tmp / "deb"
+        subprocess.run(["dpkg-deb", "--raw-extract", str(bundle / f"framely_{version}_{arch}.deb"), str(deb)], check=True)
+        desktop = deb / "usr/share/applications/framely.desktop"
+        desktop.rename(desktop.with_name(DESKTOP_ID))
+        sums = deb / "DEBIAN/md5sums"
+        sums.write_text(sums.read_text(encoding="utf-8").replace("usr/share/applications/framely.desktop", "usr/share/applications/" + DESKTOP_ID), encoding="utf-8")
+        control = deb / "DEBIAN/control"
+        control.write_text(control.read_text(encoding="utf-8").rstrip() + "\nProvides: screenpin\nConflicts: screenpin\nReplaces: screenpin\n", encoding="utf-8")
+        legacy = deb / "opt/screenpin"
+        legacy.mkdir()
+        (legacy / "screenpin").symlink_to("../framely/framely")
+        subprocess.run(["dpkg-deb", "--build", "--root-owner-group", str(deb), str(out / f"{prefix}.deb")], check=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--verify-only", action="store_true")
@@ -129,14 +176,14 @@ def main():
     arch = {"AMD64": "amd64", "x86_64": "amd64", "arm64": "arm64", "aarch64": "arm64"}[platform.machine()]
     bundle = ROOT / "build" / "native" / f"{goos}-{arch}"
     app = bundle / "Framely.app"
-    binary = app / "Contents/MacOS/Framely" if goos == "darwin" else bundle / ("Framely.exe" if goos == "windows" else "screenpin")
+    binary = app / "Contents/MacOS/Framely" if goos == "darwin" else bundle / ("Framely.exe" if goos == "windows" else "framely")
     resources = app / "Contents/Resources/workers" if goos == "darwin" else bundle / "workers"
     actual = subprocess.check_output([str(binary), "--version"], text=True).strip()
     if actual != f"Framely {version} (mygo)":
         raise ValueError(f"Unexpected application version: {actual}")
     verify_ocr_resources(resources)
     if goos != "darwin":
-        capture = resources / ("screenpin-capture.exe" if goos == "windows" else "screenpin-capture")
+        capture = resources / ("framely-capture.exe" if goos == "windows" else "framely-capture")
         if not capture.is_file():
             raise ValueError("Missing native capture worker")
         if subprocess.check_output([str(capture), "--protocol-version"], text=True, timeout=10).strip() != "2":
@@ -177,37 +224,14 @@ def main():
             run_hdiutil("create", "-ov", "-volname", "Framely", "-srcfolder", str(image_root), "-format", "UDZO", str(dmg))
             run_hdiutil("verify", str(dmg))
     elif goos == "windows":
-        shutil.copy2(bundle / f"screenpin-setup-{version}-{arch}.exe", out / f"{prefix}-setup.exe")
+        shutil.copy2(bundle / f"framely-setup-{version}-{arch}.exe", out / f"{prefix}-setup.exe")
         with zipfile.ZipFile(out / f"{prefix}-portable.zip", "w", zipfile.ZIP_DEFLATED) as archive:
             for item in [bundle / "Framely.exe", *resources.rglob("*")]:
                 if item.is_file():
                     archive.write(item, item.relative_to(bundle))
             archive.write(ROOT / "LICENSE", "LICENSE")
     else:
-        # The SDK uses slug.desktop; preserve ScreenPin's historical portal ID.
-        with tempfile.TemporaryDirectory(prefix="release-", dir=ROOT / "build") as tmp:
-            tmp = Path(tmp)
-            portable = tmp / "portable"
-            portable.mkdir()
-            for name in ["screenpin", "screenpin.png"]:
-                shutil.copy2(bundle / name, portable / name)
-            shutil.copytree(resources, portable / "workers", symlinks=True)
-            shutil.copy2(bundle / "screenpin.desktop", portable / DESKTOP_ID)
-            installer = linux_portable_installer((bundle / "install.sh").read_text(encoding="utf-8"))
-            (portable / "install.sh").write_text(installer, encoding="utf-8")
-            (portable / "install.sh").chmod(0o755)
-            shutil.copy2(ROOT / "LICENSE", portable / "LICENSE")
-            (portable / "README.txt").write_text("Framely " + version + "\nRun ./install.sh to install for the current user, then start Framely from the app menu or run framely.\nKeep the workers directory with the executable.\n")
-            with tarfile.open(out / f"{prefix}-portable.tar.gz", "w:gz") as archive:
-                for item in sorted(portable.iterdir()):
-                    archive.add(item, arcname=item.name)
-            deb = tmp / "deb"
-            subprocess.run(["dpkg-deb", "--raw-extract", str(bundle / f"screenpin_{version}_{arch}.deb"), str(deb)], check=True)
-            desktop = deb / "usr/share/applications/screenpin.desktop"
-            desktop.rename(desktop.with_name(DESKTOP_ID))
-            sums = deb / "DEBIAN/md5sums"
-            sums.write_text(sums.read_text(encoding="utf-8").replace("usr/share/applications/screenpin.desktop", "usr/share/applications/" + DESKTOP_ID), encoding="utf-8")
-            subprocess.run(["dpkg-deb", "--build", "--root-owner-group", str(deb), str(out / f"{prefix}.deb")], check=True)
+        package_linux(bundle, resources, out, version, arch)
     for item in sorted(out.iterdir()):
         if item.is_file():
             # Installers are hundreds of MB; hash incrementally instead of

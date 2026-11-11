@@ -102,7 +102,7 @@ func TestInstallValidatesStagesAndRollsBackFailedPersistence(t *testing.T) {
 				if info.Mode().Perm() != originalInfo.Mode().Perm() {
 					t.Fatal("config permissions changed")
 				}
-				backups, _ := filepath.Glob(filepath.Join(filepath.Dir(path), "screenpin-backup-*", "config.kdl"))
+				backups, _ := filepath.Glob(filepath.Join(filepath.Dir(path), "framely-backup-*", "config.kdl"))
 				if len(backups) != 1 {
 					t.Fatal("missing config backup")
 				}
@@ -167,7 +167,7 @@ func TestChangingTheKeyRestoresEarlierActionAndKeepsOneInclude(t *testing.T) {
 	if !bytes.HasPrefix(got, before) || bytes.Count(got, []byte(marker)) != 1 {
 		t.Fatal("repeated changes duplicated the include or changed original actions")
 	}
-	leaf, _ := os.ReadFile(filepath.Join(filepath.Dir(path), "screenpin-shortcut.kdl"))
+	leaf, _ := os.ReadFile(filepath.Join(filepath.Dir(path), "framely-shortcut.kdl"))
 	if bytes.Contains(leaf, []byte("Shift+S")) || !bytes.Contains(leaf, []byte("Ctrl+Alt+A")) {
 		t.Fatal("changing keys kept the old override")
 	}

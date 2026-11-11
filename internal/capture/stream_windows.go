@@ -15,7 +15,7 @@ import (
 )
 
 func StreamMonitors(ctx context.Context) ([]Monitor, error) {
-	helper, err := components.Find("screenpin-capture")
+	helper, err := components.Find("framely-capture")
 	if err != nil {
 		return nil, err
 	}
@@ -32,9 +32,9 @@ func StreamMonitors(ctx context.Context) ([]Monitor, error) {
 func AutomaticScrollAvailable(context.Context) bool { return true }
 
 func OpenStream(parent context.Context, options StreamOptions) (Stream, error) {
-	name := "screenpin-capture"
+	name := "framely-capture"
 	if options.Recording != nil {
-		name = "screenpin-record"
+		name = "framely-record"
 	}
 	helper, err := components.FindProtocol(name, components.FrameProtocol)
 	if err != nil {

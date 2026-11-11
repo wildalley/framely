@@ -1,6 +1,6 @@
 {
   "name": "Framely",
-  "slug": "screenpin",
+  "slug": "framely",
   "identifier": "io.screenpin.desktop",
   "version": "0.4.1",
   "main": "./cmd/framely",
@@ -12,6 +12,10 @@
     "comment": "Framely (取景): screenshots, pins, scrolling capture, recording and offline OCR",
     "categories": ["Graphics", "Utility"],
     "depends": ["libayatana-appindicator3-1", "xdg-desktop-portal", "libpipewire-0.3-0", "libva2", "libva-drm2"]
+  },
+  "windows": {
+    "installDirName": "Framely",
+    "installerInclude": "packaging/windows/migrate.nsh"
   },
   "macos": {
     "minimumSystemVersion": "15.0",
