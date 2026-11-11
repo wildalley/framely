@@ -180,7 +180,7 @@ def main():
             (portable / "install.sh").write_text(installer, encoding="utf-8")
             (portable / "install.sh").chmod(0o755)
             shutil.copy2(ROOT / "LICENSE", portable / "LICENSE")
-            (portable / "README.txt").write_text("Framely (formerly ScreenPin) " + version + "\nRun ./screenpin, or ./install.sh to install for the current user.\nKeep the workers directory with the executable.\n")
+            (portable / "README.txt").write_text("Framely " + version + "\nRun ./install.sh to install for the current user, then start Framely from the app menu or run framely.\nKeep the workers directory with the executable.\n")
             with tarfile.open(out / f"{prefix}-portable.tar.gz", "w:gz") as archive:
                 for item in sorted(portable.iterdir()):
                     archive.add(item, arcname=item.name)

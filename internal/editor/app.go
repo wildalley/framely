@@ -299,7 +299,7 @@ func safeFileName(s string) string {
 		return r
 	}, s))
 	if s == "" {
-		return "screenpin"
+		return brand.Name
 	}
 	return s
 }
