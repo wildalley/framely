@@ -5,7 +5,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/egoist/mygo/plugins/glass"
 	"github.com/egoist/mygo/ui"
 	"github.com/wildalley/framely/internal/brand"
 	"github.com/wildalley/framely/internal/doc"
@@ -103,7 +102,7 @@ func (a *App) propertyColors(c *ui.Context, style doc.Style, expanded bool) {
 	})
 }
 
-// styleStrip floats over the top-left of the canvas on glass while the
+// styleStrip floats over the top-left of the canvas while the
 // current tool or the selected annotation has a style to change, and hides
 // while drawing. The whole image's corners and the full set of options stay
 // in the appearance popover.
@@ -121,8 +120,9 @@ func (a *App) styleStrip(c *ui.Context, stageWidth float32) {
 		cellWidth = 80
 	}
 	ui.Row(c.Key("properties")).Label("快捷属性").Absolute().Top(10).Left(10).MaxWidth(stageWidth-20).
-		Height(propertyGroupHeight+16).Padding(8, 12).Gap(8).AlignItems(ui.End).Radius(16).
-		Material(glass.Glass{}).Disabled(a.busy).Children(func() {
+		Height(propertyGroupHeight+16).Padding(8, 12).Gap(8).AlignItems(ui.End).Radius(12).
+		Background(c.Theme().Background).Border(1, c.Theme().Border).
+		Shadow(0, 6, 18, 0, ui.RGBA(7, 61, 65, .14)).Disabled(a.busy).Children(func() {
 		ui.Text(c, toolName(target)).FontSize(12).FontWeight(600).Height(28).MaxLines(1).Shrink(0)
 		a.propertyColors(c, *style, stageWidth >= 560)
 		index := 0
