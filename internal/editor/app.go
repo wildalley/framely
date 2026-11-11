@@ -274,6 +274,12 @@ func (a *App) fitWindow(center bool) {
 }
 
 func (a *App) wantedSize() (int, int) {
+	if a.pinned {
+		area := a.workArea()
+		w := min(max(pinMinSize, int(math.Round(float64(a.image.Width)*a.zoom))), area.Width)
+		h := min(max(pinMinSize, int(math.Round(float64(a.image.Height)*a.zoom))), area.Height)
+		return w, h
+	}
 	w := int(math.Round(float64(a.image.Width)*a.zoom)) + railWidth
 	h := int(math.Round(float64(a.image.Height)*a.zoom)) + topBarHeight
 	if a.panel == PanelStyle {

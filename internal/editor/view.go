@@ -95,6 +95,10 @@ func (a *App) view(c *ui.Context) {
 			a.win.Update(func() { a.accept(func() { a.fitWindow(false) }) })
 		}
 	}
+	if a.pinned {
+		a.pinnedView(c)
+		return
+	}
 	ww, wh := c.Size()
 	stageW, stageH := max(1, ww-railWidth), max(1, wh-topBarHeight)
 	z := math.Min(a.zoom, math.Min(float64(stageW)/float64(a.image.Width), float64(stageH)/float64(a.image.Height)))
@@ -189,8 +193,8 @@ func (a *App) shortcuts(c *ui.Context) {
 		}
 		return
 	}
-	if a.image == nil {
-		return
+	if a.image == nil || a.pinned {
+		return // A pinned image has no tools.
 	}
 	for _, it := range toolItems {
 		if c.Shortcut(0, it.key) {
@@ -364,7 +368,7 @@ func (a *App) topBar(c *ui.Context, width float32) {
 			}
 			toolbarDivider(c, "div-actions")
 			pinned := a.pinned
-			if iconToggle(c, "pin", iconPin, "置顶", &pinned, false).Changed() {
+			if iconToggle(c, "pin", iconPin, "钉在屏幕上", &pinned, false).Tooltip("钉在屏幕上：只留图片，置于最前").Changed() {
 				a.TogglePin()
 			}
 			iconButton(c, "save", iconDownload, "保存图片 ("+commandKey()+"+S)", a.busy).Menu(a.imageMenu)
@@ -499,7 +503,7 @@ func (a *App) contextMenu(m *ui.Menu) {
 	if m.Item("保存图片").Disabled(a.busy).Chosen() {
 		a.Export()
 	}
-	if m.Item("置顶").Checked(a.pinned).Chosen() {
+	if m.Item("钉在屏幕上").Checked(a.pinned).Chosen() {
 		a.TogglePin()
 	}
 	m.Separator()

@@ -127,14 +127,6 @@ func (a *App) Copy() {
 	}()
 }
 
-func (a *App) TogglePin() {
-	if a.closed || a.win == nil {
-		return
-	}
-	a.pinned = !a.pinned
-	a.win.SetAlwaysOnTop(a.pinned)
-}
-
 func annotationSnapshot(list []doc.Annotation) []doc.Annotation {
 	copy := make([]doc.Annotation, len(list))
 	for i := range list {

@@ -74,6 +74,19 @@ func TestImageWindowPreview(t *testing.T) {
 				_ = png.Encode(f, tt.Image())
 				f.Close()
 			}
+			if demo != "" && width == 1000 {
+				// The same image pinned at half size, with the pointer on it.
+				a.pinned, a.selected, a.zoom = true, "", .5
+				pin := ui.NewTester(a.view, 600, 380)
+				pin.SetDark(dark)
+				pin.Move(300, 190)
+				f, err := os.Create(filepath.Join(out, fmt.Sprintf("pinned-dark-%t.png", dark)))
+				if err != nil {
+					t.Fatal(err)
+				}
+				_ = png.Encode(f, pin.Image())
+				f.Close()
+			}
 			a.Close()
 		}
 	}
