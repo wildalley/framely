@@ -3,6 +3,8 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -10,6 +12,47 @@ from unittest.mock import patch
 spec = importlib.util.spec_from_file_location("package_release", Path(__file__).with_name("package-release.py"))
 package = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(package)
+
+
+class PortableInstallerTests(unittest.TestCase):
+    def test_changed_sdk_installer_requires_review(self):
+        with self.assertRaisesRegex(ValueError, "archive handling changed"):
+            package.linux_portable_installer("#!/bin/sh\n")
+
+    @unittest.skipUnless(sys.platform == "linux", "Linux installer")
+    def test_extracted_runtime_and_explicit_archive(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "portable app"
+            source.mkdir()
+            for name in ("screenpin", "screenpin.png", package.DESKTOP_ID, "LICENSE"):
+                (source / name).write_text(name, encoding="utf-8")
+            (source / "screenpin").chmod(0o755)
+            (source / "workers").mkdir()
+            (source / "workers/worker").touch()
+            script = source / "install.sh"
+            # Run the injected bootstrap with the same variables as the SDK.
+            # The SDK continues by extracting the selected archive.
+            script.write_text(package.linux_portable_installer('''#!/bin/sh
+set -eu
+name=screenpin
+work="$1"
+archive="${2:-}"
+\tif [ -z "$archive" ]; then
+\t\texit 1
+\tfi
+tar -tzf "$archive"
+'''), encoding="utf-8")
+            result = subprocess.check_output(["sh", str(script), str(root)], text=True)
+            names = result.splitlines()
+            self.assertIn("screenpin", names)
+            self.assertIn(package.DESKTOP_ID, names)
+            self.assertIn("workers/worker", names)
+            self.assertNotIn("screenpin.desktop", names)
+            # An explicit archive must still work without adjacent binaries.
+            (source / "screenpin").unlink()
+            explicit = subprocess.check_output(["sh", str(script), str(root), str(root / "portable.tar.gz")], text=True)
+            self.assertEqual(result, explicit)
 
 
 class BundleResourceTests(unittest.TestCase):

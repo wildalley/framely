@@ -119,7 +119,7 @@ func (p *portalProvider) prepare(ctx context.Context, cfg config.Config, capture
 	})
 	if err != nil {
 		if errors.Is(err, portal.ErrFailed) {
-			return nil, fmt.Errorf("桌面无法创建全局快捷键会话，请检查当前桌面的门户支持；可在桌面设置中绑定 screenpin --capture: %w", err)
+			return nil, fmt.Errorf("桌面无法创建全局快捷键会话，请检查当前桌面的门户支持；可在桌面设置中绑定 framely --capture: %w", err)
 		}
 		return nil, err
 	}

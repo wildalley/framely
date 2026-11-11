@@ -3,12 +3,12 @@
   "slug": "screenpin",
   "identifier": "io.screenpin.desktop",
   "version": "0.4.0",
-  "main": "./cmd/screenpin",
+  "main": "./cmd/framely",
   "out": "build/native",
   "icon": "assets/app-icon.png",
   "linux": {
     "webview": false,
-    "command": "screenpin",
+    "command": ["framely", "screenpin"],
     "comment": "Framely (取景): screenshots, pins, scrolling capture, recording and offline OCR",
     "categories": ["Graphics", "Utility"],
     "depends": ["libayatana-appindicator3-1", "xdg-desktop-portal", "libpipewire-0.3-0", "libva2", "libva-drm2"]

@@ -23,7 +23,7 @@ type Launch struct {
 
 func ParseArgs(args []string) (Launch, error) {
 	var launch Launch
-	flags := flag.NewFlagSet("screenpin", flag.ContinueOnError)
+	flags := flag.NewFlagSet("framely", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	flags.BoolVar(&launch.Hidden, "hidden", false, "在托盘中启动")
 	flags.BoolVar(&launch.Capture, "capture", false, "截取屏幕或通知已有实例截图")

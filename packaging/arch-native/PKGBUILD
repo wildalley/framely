@@ -60,8 +60,10 @@ package() {
   install -Dm755 "$_build_root/build/native/linux-$_go_arch/screenpin" "$pkgdir/usr/lib/screenpin/screenpin"
   cp -a "$_build_root/build/native/linux-$_go_arch/workers" "$pkgdir/usr/lib/screenpin/workers"
   install -dm755 "$pkgdir/usr/bin"
+  ln -s ../lib/screenpin/screenpin "$pkgdir/usr/bin/framely"
+  # The previous command name keeps desktop shortcuts and niri bindings working.
   ln -s ../lib/screenpin/screenpin "$pkgdir/usr/bin/screenpin"
-  # Match the registered portal ID and preserve permissions from the Tauri app.
+  # Keep the registered portal ID, so screenshot and shortcut permissions carry over.
   install -Dm644 "$startdir/io.screenpin.desktop.desktop" "$pkgdir/usr/share/applications/io.screenpin.desktop.desktop"
   local _size
   for _size in 32 64 128 256 512; do

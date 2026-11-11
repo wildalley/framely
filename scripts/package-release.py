@@ -16,6 +16,23 @@ ROOT = Path(__file__).resolve().parents[1]
 DESKTOP_ID = "io.screenpin.desktop.desktop"
 
 
+def linux_portable_installer(script):
+    # MyGo's installer expects an archive next to the script. Our release is
+    # already extracted there, so feed it a temporary archive of that runtime.
+    # Keep the SDK's installation, command links and uninstall behavior.
+    marker = '\tif [ -z "$archive" ]; then\n'
+    if script.count(marker) != 1:
+        raise ValueError("MyGo installer archive handling changed; review portable installation")
+    fallback = '''\tsource_dir="$(dirname -- "$0")"
+\tif [ -z "$archive" ] && [ -x "$source_dir/$name" ]; then
+\t\tarchive="$work/portable.tar.gz"
+\t\ttar -czf "$archive" -C "$source_dir" "$name" "$name.png" "$name.desktop" workers LICENSE
+\tfi
+'''
+    script = script.replace(marker, fallback + marker)
+    return script.replace("$name.desktop", DESKTOP_ID).replace("${name}.desktop", DESKTOP_ID)
+
+
 def run_hdiutil(*args, attempts=5):
     """Run hdiutil, retrying the transient busy errors seen on CI runners.
 
@@ -176,11 +193,11 @@ def main():
                 shutil.copy2(bundle / name, portable / name)
             shutil.copytree(resources, portable / "workers", symlinks=True)
             shutil.copy2(bundle / "screenpin.desktop", portable / DESKTOP_ID)
-            installer = (bundle / "install.sh").read_text(encoding="utf-8").replace("$name.desktop", DESKTOP_ID).replace("${name}.desktop", DESKTOP_ID)
+            installer = linux_portable_installer((bundle / "install.sh").read_text(encoding="utf-8"))
             (portable / "install.sh").write_text(installer, encoding="utf-8")
             (portable / "install.sh").chmod(0o755)
             shutil.copy2(ROOT / "LICENSE", portable / "LICENSE")
-            (portable / "README.txt").write_text("Framely (formerly ScreenPin) " + version + "\nRun ./screenpin, or ./install.sh to install for the current user.\nKeep the workers directory with the executable.\n")
+            (portable / "README.txt").write_text("Framely " + version + "\nRun ./install.sh to install for the current user, then start Framely from the app menu or run framely.\nKeep the workers directory with the executable.\n")
             with tarfile.open(out / f"{prefix}-portable.tar.gz", "w:gz") as archive:
                 for item in sorted(portable.iterdir()):
                     archive.add(item, arcname=item.name)

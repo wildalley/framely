@@ -3,7 +3,7 @@ __pycache__/
 resources/linux-*/workers/
 resources/windows-*/workers/
 resources/darwin-*/workers/
-cmd/screenpin/mygo_windows_*.syso
+cmd/framely/mygo_windows_*.syso
 packaging/arch-native/pkg
 packaging/arch-native/src
 packaging/arch-native/*.pkg.tar.*
