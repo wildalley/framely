@@ -96,14 +96,24 @@ func (a *App) view(c *ui.Context) {
 		}
 	}
 	ww, wh := c.Size()
-	z := math.Min(a.zoom, math.Min(float64(max(1, ww))/float64(a.image.Width),
-		float64(max(1, wh-float32(toolbarHeight(ww))))/float64(a.image.Height)))
+	stageW, stageH := max(1, ww-railWidth), max(1, wh-topBarHeight)
+	z := math.Min(a.zoom, math.Min(float64(stageW)/float64(a.image.Width), float64(stageH)/float64(a.image.Height)))
 	a.displayZoom = z
-	ui.Column(c).Fill().Background(c.Theme().Surface).Children(func() {
-		ui.Column(c).Grow(1).AlignItems(ui.Center).Justify(ui.Center).Clip().Children(func() {
-			a.canvas(c, z)
+	ui.Column(c).Fill().Background(c.Theme().Background).Children(func() {
+		a.topBar(c, ww)
+		if a.closed || a.image == nil {
+			return // Closed from the top bar: the image is already released.
+		}
+		ui.Row(c.Key("body")).FillWidth().Grow(1).MinHeight(0).Children(func() {
+			styleAnchor := a.rail(c)
+			ui.Box(c.Key("stage")).Grow(1).FillHeight().MinWidth(0).Clip().Background(c.Theme().Surface).Children(func() {
+				ui.Column(c).Fill().AlignItems(ui.Center).Justify(ui.Center).Children(func() {
+					a.canvas(c, z)
+				})
+				a.styleStrip(c, stageW)
+			})
+			a.stylePopover(c, styleAnchor)
 		})
-		a.bar(c)
 	})
 }
 
@@ -291,162 +301,140 @@ func iconToggle(c *ui.Context, key string, svg *ui.SVG, label string, on *bool, 
 	return b.Children(func() { ui.Icon(c, svg).Size(18, 18).Shrink(0) })
 }
 
-// compactActionsWidth is where the action row tightens to fit all buttons.
-const compactActionsWidth = 420
-
-// toolSegmentWidth fits every tool, the history divider and undo/redo in the
-// rounded tool segment, so it hugs its buttons on wide windows and only
-// overflows when the window is narrower.
-var toolSegmentWidth = float32(len(toolItems)+2)*32 + float32(len(toolItems)+2)*2 + 7 + 6 + 4
+// The image window: a slim top bar of image actions, a vertical rail of
+// annotation tools and the canvas. Style controls float over the canvas
+// only while a tool or an annotation has a style to change.
+const (
+	topBarHeight = 44
+	railWidth    = 52
+)
 
 func toolbarDivider(c *ui.Context, key string) {
-	ui.Box(c.Key(key)).Width(1).Height(18).Margin(0, 4).Background(c.Theme().Border.Alpha(0.6)).Shrink(0)
+	ui.Box(c.Key(key)).Width(1).Height(18).Margin(0, 4).Background(c.Theme().Border).Shrink(0)
 }
 
-// Keep capture, OCR and image actions visible. Compact windows use two rows;
-// annotation tools alone may overflow, with native arrow-key navigation.
-func toolbarHeight(width float32) int {
-	if width < 760 {
-		return 2*barHeight + propertyHeight
-	}
-	return barHeight + propertyHeight
+// textAction is a labelled top-bar button; it takes the toolbar's look and
+// moves to its overflow menu when the window is narrow.
+func textAction(c *ui.Context, key, text, label, tip string, disabled bool) ui.Element {
+	return ui.Button(c.Key(key), text).Height(32).Padding(0, 10).Radius(8).FontSize(13).Shrink(0).
+		Label(label).Tooltip(tip).Disabled(disabled)
 }
 
-func (a *App) bar(c *ui.Context) {
-	var styleAnchor ui.Element
-	width, _ := c.Size()
-	tools := func() {
-		ui.Toolbar(c.Key("tools"), func() {
-			for _, it := range toolItems {
-				on := a.tool == it.tool
-				disabled := it.tool == doc.ToolMosaic && a.mosaic == nil
-				if iconToggle(c, "tool-"+string(it.tool), it.icon, it.label+" ("+it.char+")", &on, disabled).Changed() {
-					a.setTool(it.tool)
-				}
-			}
-			ui.Box(c.Key("div-history")).Width(1).Height(16).Margin(0, 3).Background(c.Theme().Border).Shrink(0)
-			if iconButton(c, "undo", iconUndo, "撤销 ("+commandKey()+"+Z)", !a.history.CanUndo()).Clicked() {
+func (a *App) topBar(c *ui.Context, width float32) {
+	ui.Row(c.Key("top-bar")).FillWidth().Height(topBarHeight).Padding(0, 6).Gap(4).AlignItems(ui.Center).
+		Background(c.Theme().Background).BorderWidth(0, 0, 1, 0).BorderColor(c.Theme().Border).DragWindow().Children(func() {
+		ui.Toolbar(c.Key("actions"), func() {
+			if iconButton(c, "undo", iconUndo, "撤销 ("+commandKey()+"+Z)", a.busy || !a.history.CanUndo()).Clicked() {
 				a.undo()
 			}
-			if iconButton(c, "redo", iconRedo, "重做 ("+commandKey()+"+Shift+Z)", !a.history.CanRedo()).Clicked() {
+			if iconButton(c, "redo", iconRedo, "重做 ("+commandKey()+"+Shift+Z)", a.busy || !a.history.CanRedo()).Clicked() {
 				a.redo()
 			}
-		}).Label("标注工具").Width(toolSegmentWidth).Shrink(1).MinWidth(0).Height(38).Padding(3).Gap(2).
-			Radius(11).Background(c.Theme().Surface).Disabled(a.busy)
-		ui.Spacer(c).Grow(1).MinWidth(0)
-		styleOpen := a.panel == PanelStyle
-		styleAnchor = iconToggle(c, "style", iconPalette, "样式", &styleOpen, a.busy)
-		if styleAnchor.Changed() {
-			if styleOpen {
-				if a.activeStyle() == nil {
-					a.appearanceTab = 1
-				} else {
-					a.appearanceTab = 0
-				}
+			if width >= 640 {
+				ui.Text(c, fmt.Sprintf("%d × %d · %d%%", a.image.Width, a.image.Height, int(math.Round(a.displayZoom*100)))).
+					FontSize(12).TextColor(c.Theme().TextMuted).MaxLines(1).Shrink(0).Margin(0, 6)
 			}
-			a.togglePanel(PanelStyle)
-		}
-	}
-	actions := func() {
-		if iconButton(c, "capture", iconCapture, "新截图", a.busy || a.OnCapture == nil).Clicked() {
-			a.OnCapture()
-		}
-		scrollLabel := "长截图 (" + commandKey() + "+Shift+L)"
-		if a.selection != nil {
-			scrollLabel = "长截图：沿用本次选区 (" + commandKey() + "+Shift+L)"
-		}
-		if iconButton(c, "scroll", iconScroll, "长截图", a.busy || a.OnScroll == nil).Tooltip(scrollLabel).Clicked() {
-			a.OnScroll()
-		}
-		recordHint := "录制屏幕区域"
-		if a.selection != nil {
-			recordHint = "录屏：沿用本次选区"
-		}
-		if iconButton(c, "record", iconRecord, "录屏", a.busy || a.OnRecord == nil).Tooltip(recordHint).Clicked() {
-			a.OnRecord()
-		}
-		ocrLabel := "识别文字"
-		if a.ocrRunning {
-			ocrLabel = "取消文字识别"
-		}
-		if iconButton(c, "ocr", iconOCR, ocrLabel, a.OnOCRResult == nil || a.busy).Tooltip("直接识别当前图片；右键可选择框选识别").Clicked() {
-			if a.ocrRunning {
-				if a.ocrCancel != nil {
-					a.ocrCancel()
-				}
-			} else {
-				a.recognize(false)
-			}
-		}
-		if width < 760 {
 			ui.Spacer(c).Grow(1).MinWidth(0)
-		} else {
+			if textAction(c, "capture", "新截图", "新截图", "新截图 ("+commandKey()+"+Shift+S)", a.busy || a.OnCapture == nil).Clicked() {
+				a.OnCapture()
+			}
+			scrollTip := "长截图 (" + commandKey() + "+Shift+L)"
+			if a.selection != nil {
+				scrollTip = "长截图：沿用本次选区 (" + commandKey() + "+Shift+L)"
+			}
+			if textAction(c, "scroll", "长截图", "长截图", scrollTip, a.busy || a.OnScroll == nil).Clicked() {
+				a.OnScroll()
+			}
+			recordTip := "录制屏幕区域"
+			if a.selection != nil {
+				recordTip = "录屏：沿用本次选区"
+			}
+			if textAction(c, "record", "录屏", "录屏", recordTip, a.busy || a.OnRecord == nil).Clicked() {
+				a.OnRecord()
+			}
+			ocrText, ocrLabel := "取字", "识别文字"
+			if a.ocrRunning {
+				ocrText, ocrLabel = "取消取字", "取消文字识别"
+			}
+			if textAction(c, "ocr", ocrText, ocrLabel, "识别当前图片中的文字 ("+commandKey()+"+Shift+O)；右键画布可框选识别", a.OnOCRResult == nil || a.busy).Clicked() {
+				if a.ocrRunning {
+					if a.ocrCancel != nil {
+						a.ocrCancel()
+					}
+				} else {
+					a.recognize(false)
+				}
+			}
 			toolbarDivider(c, "div-actions")
-		}
-		pinned := a.pinned
-		if iconToggle(c, "pin", iconPin, "置顶", &pinned, false).Changed() {
-			a.TogglePin()
-		}
-		iconButton(c, "save", iconDownload, "保存图片 ("+commandKey()+"+S)", a.busy).Menu(a.imageMenu)
-		var copy ui.Element
-		if width < compactActionsWidth {
-			// Every action must fit a 320px window whatever the font: show
-			// the copy glyph alone, keeping its name for assistive technology.
-			copy = ui.PrimaryButton(c.Key("copy-compact"), "").Size(32, 32).Padding(0).Radius(8).Center().Shrink(0).
-				Label("复制").Disabled(a.busy).Tooltip("复制图片 (" + commandKey() + "+C)").
-				Children(func() { ui.Icon(c, iconCopy).Size(18, 18).Shrink(0) })
-		} else {
-			copy = ui.PrimaryButton(c.Key("copy"), "复制").Height(32).Padding(0, 12).Radius(8).Shrink(0).Disabled(a.busy).
-				Tooltip("复制图片 (" + commandKey() + "+C)")
-		}
+			pinned := a.pinned
+			if iconToggle(c, "pin", iconPin, "置顶", &pinned, false).Changed() {
+				a.TogglePin()
+			}
+			iconButton(c, "save", iconDownload, "保存图片 ("+commandKey()+"+S)", a.busy).Menu(a.imageMenu)
+			if iconButton(c, "settings", iconSettings, "设置与快捷键", a.OnSettings == nil).Clicked() {
+				a.OnSettings()
+			}
+		}).Label("图片操作").Grow(1).MinWidth(0).Height(36).Padding(0).Gap(2)
+		copy := ui.PrimaryButton(c.Key("copy"), "复制").Height(32).Padding(0, 14).Radius(8).Shrink(0).Disabled(a.busy).
+			Tooltip("复制图片 (" + commandKey() + "+C)")
 		if copy.Clicked() {
 			a.Copy()
-		}
-		if width >= 760 {
-			toolbarDivider(c, "div-window")
-		}
-		if iconButton(c, "settings", iconSettings, "设置与快捷键", a.OnSettings == nil).Clicked() {
-			a.OnSettings()
 		}
 		if iconButton(c, "close", iconClose, "关闭图片", false).Clicked() {
 			a.Close()
 		}
-	}
-	row := func(key string, content func()) {
-		gap := float32(4)
-		if width < compactActionsWidth {
-			gap = 2
-		}
-		ui.Row(c.Key(key)).FillWidth().Height(barHeight).Gap(gap).Padding(4, 6).AlignItems(ui.Center).DragWindow().Children(content)
-	}
-	ui.Column(c.Key("bar")).FillWidth().Height(float32(toolbarHeight(width))).Background(c.Theme().Background).
-		BorderWidth(1, 0, 0, 0).BorderColor(c.Theme().Border).Children(func() {
-		if width < 760 {
-			row("annotation-row", tools)
-			a.propertyRow(c, width)
-			row("actions-row", actions)
-		} else {
-			row("combined-row", func() {
-				tools()
-				toolbarDivider(c, "div-tools")
-				actions()
-			})
-			a.propertyRow(c, width)
-		}
 	})
-	if a.closed {
+}
+
+// rail is the vertical tool bar. The tools scroll in short windows; the
+// style button stays at its foot and anchors the full appearance popover.
+func (a *App) rail(c *ui.Context) ui.Element {
+	var styleAnchor ui.Element
+	ui.Column(c.Key("rail")).Width(railWidth).FillHeight().Shrink(0).
+		Background(c.Theme().Background).BorderWidth(0, 1, 0, 0).BorderColor(c.Theme().Border).Children(func() {
+		ui.Scroll(c.Key("rail-tools")).FillWidth().Grow(1).MinHeight(0).Children(func() {
+			ui.Column(c.Key("tools")).Role(ui.RoleToolbar).FocusGroup(ui.Vertical).Label("标注工具").
+				FillWidth().Padding(8, 0).Gap(4).AlignItems(ui.Center).Disabled(a.busy).Children(func() {
+				for _, it := range toolItems {
+					on := a.tool == it.tool
+					disabled := it.tool == doc.ToolMosaic && a.mosaic == nil
+					if iconToggle(c, "tool-"+string(it.tool), it.icon, it.label+" ("+it.char+")", &on, disabled).Size(36, 36).Changed() {
+						a.setTool(it.tool)
+					}
+				}
+			})
+		})
+		ui.Column(c.Key("rail-foot")).FillWidth().Padding(4, 0, 8).AlignItems(ui.Center).Shrink(0).
+			BorderWidth(1, 0, 0, 0).BorderColor(c.Theme().Border).Children(func() {
+			styleOpen := a.panel == PanelStyle
+			styleAnchor = iconToggle(c, "style", iconPalette, "样式", &styleOpen, a.busy).Size(36, 36)
+			if styleAnchor.Changed() {
+				if styleOpen {
+					if a.activeStyle() == nil {
+						a.appearanceTab = 1
+					} else {
+						a.appearanceTab = 0
+					}
+				}
+				a.togglePanel(PanelStyle)
+			}
+		})
+	})
+	return styleAnchor
+}
+
+func (a *App) stylePopover(c *ui.Context, anchor ui.Element) {
+	if a.closed || a.panel != PanelStyle {
 		return
 	}
 	style := a.activeStyle()
-	if a.panel == PanelStyle {
-		open := true
-		panel := ui.Popover(c.Key("style-popover"), styleAnchor, &open, func() {
-			a.appearancePanel(c, style)
-		})
-		if panel.Dismissed() || !open {
-			a.finishEditing()
-			a.panel = PanelNone
-		}
+	open := true
+	panel := ui.Popover(c.Key("style-popover"), anchor, &open, func() {
+		a.appearancePanel(c, style)
+	})
+	if panel.Dismissed() || !open {
+		a.finishEditing()
+		a.panel = PanelNone
 	}
 }
 

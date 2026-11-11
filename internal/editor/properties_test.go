@@ -9,16 +9,15 @@ import (
 	"github.com/wildalley/framely/internal/doc"
 )
 
-func TestPropertyControlsShareTheSameVerticalCenter(t *testing.T) {
-	for _, width := range []int{320, 420, 760, 900} {
+func TestStyleStripControlsShareTheSameVerticalCenter(t *testing.T) {
+	for _, width := range []int{480, 760, 1100} {
 		for _, scale := range []float32{1, 1.5, 2} {
 			for _, dark := range []bool{false, true} {
 				a := rectangleApp()
-				a.propertyImage = true
 				tt := ui.NewTester(a.view, width, 400)
 				tt.SetScale(scale)
 				tt.SetDark(dark)
-				labels := []string{"属性目标", "截图圆角", "截图圆角增减", "快捷圆角 0%", "快捷圆角 50%", "快捷圆角 100%"}
+				labels := []string{"矩形圆角", "矩形圆角增减", "粗细", "不透明度"}
 				var center float32
 				for i, label := range labels {
 					r, ok := tt.Find(label)
@@ -48,8 +47,8 @@ func rectangleApp() *App {
 	return a
 }
 
-func TestInlinePropertiesFitTheSecondRowWithoutScrolling(t *testing.T) {
-	for _, width := range []int{320, 420, 600, 759, 760, 900, 1100} {
+func TestStyleStripFitsTheStage(t *testing.T) {
+	for _, width := range []int{480, 600, 759, 760, 900, 1100} {
 		for _, dark := range []bool{false, true} {
 			for _, scale := range []float32{1, 1.5, 2} {
 				a := rectangleApp()
@@ -57,19 +56,16 @@ func TestInlinePropertiesFitTheSecondRowWithoutScrolling(t *testing.T) {
 				tt.SetDark(dark)
 				tt.SetScale(scale)
 				row, ok := tt.Find("快捷属性")
-				if !ok {
-					t.Fatal("missing property row")
+				if !ok || row.X < railWidth || row.Y < topBarHeight {
+					t.Fatalf("width=%d the style strip is missing or outside the stage: %+v", width, row)
 				}
-				labels := []string{"属性目标", "颜色", "矩形圆角", "粗细", "不透明度"}
-				if width >= 900 {
-					labels[1] = "颜色 #e5484d"
-				}
-				if width >= 600 {
-					labels = append(labels, "截图圆角")
+				labels := []string{"颜色", "矩形圆角", "粗细", "不透明度"}
+				if width >= 560+railWidth {
+					labels[0] = "颜色 #e5484d"
 				}
 				for _, label := range labels {
 					r, ok := tt.Find(label)
-					if !ok || r.X < 0 || r.X+r.W > float32(width)+.5 || r.Y < row.Y || r.Y+r.H > row.Y+row.H+.5 {
+					if !ok || r.X < row.X || r.X+r.W > float32(width)+.5 || r.Y < row.Y || r.Y+r.H > row.Y+row.H+.5 {
 						t.Fatalf("width=%d scale=%g dark=%v %s=%+v row=%+v found=%v", width, scale, dark, label, r, row, ok)
 					}
 				}
@@ -115,34 +111,23 @@ func TestInlineNumberEditingIsOneUndoAndDoesNotTriggerCanvasCommands(t *testing.
 	if a.history.Present()[0].CornerRadius() != 5 || a.history.CanUndo() {
 		t.Fatal("typed numeric value was not one undo step")
 	}
-	if err := tt.Click("截图圆角"); err != nil {
-		t.Fatal(err)
-	}
-	tt.Key(ui.Cmd, ui.KeyA)
-	tt.Type("25")
-	_ = tt.Click("选择 (V)")
-	if a.history.ImageCornerRatio() != .25 || a.history.Present()[0].CornerRadius() != 5 {
-		t.Fatal("image corner control restyled the annotation")
-	}
 }
 
-func TestCompactPropertyTargetSwitchesBetweenRectangleAndImage(t *testing.T) {
+func TestStyleStripFollowsToolAndSelection(t *testing.T) {
 	a := rectangleApp()
 	defer a.release()
-	tt := ui.NewTester(a.view, 320, 400)
-	if err := tt.Click("属性目标"); err != nil {
-		t.Fatal(err)
+	tt := ui.NewTester(a.view, 760, 400)
+	if _, ok := tt.Find("快捷属性"); !ok {
+		t.Fatal("a selected rectangle shows no style strip")
 	}
-	if err := tt.Click("截图"); err != nil {
-		t.Fatal(err)
+	a.selected = ""
+	tt.Frame()
+	if r, ok := tt.Find("快捷属性"); ok && r.W > 0 {
+		t.Fatal("the style strip stays over the canvas with nothing to style")
 	}
-	if err := tt.Click("截图圆角"); err != nil {
-		t.Fatal(err)
-	}
-	tt.Key(ui.Cmd, ui.KeyA)
-	tt.Type("75")
-	_ = tt.Click("选择 (V)")
-	if a.history.ImageCornerRatio() != .75 || a.history.Present()[0].CornerRadius() != 5 {
-		t.Fatal("compact target selection changed the wrong object")
+	a.setTool(doc.ToolText)
+	tt.Frame()
+	if _, ok := tt.Find("字号"); !ok {
+		t.Fatal("the text tool shows no font size")
 	}
 }

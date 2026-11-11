@@ -63,6 +63,17 @@ func TestImageWindowPreview(t *testing.T) {
 			}
 			_ = png.Encode(f, tt.Image())
 			f.Close()
+			if present := a.history.Present(); len(present) > 0 {
+				// The same window with the annotation selected shows the style strip.
+				a.selected = present[0].ID
+				tt.Frame()
+				f, err := os.Create(filepath.Join(out, fmt.Sprintf("editor-%d-dark-%t-style.png", width, dark)))
+				if err != nil {
+					t.Fatal(err)
+				}
+				_ = png.Encode(f, tt.Image())
+				f.Close()
+			}
 			a.Close()
 		}
 	}

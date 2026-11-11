@@ -65,7 +65,7 @@ func TestIconGlyphsAreCenteredInsideTheirButtons(t *testing.T) {
 func TestSaveMenuSharesQualityAcrossJPEGAndWebP(t *testing.T) {
 	a, _ := textApp()
 	defer a.release()
-	tt := ui.NewTester(a.view, 320, 300)
+	tt := ui.NewTester(a.view, 900, 400)
 	label := "保存图片 (" + commandKey() + "+S)"
 	if err := tt.Click(label); err != nil {
 		t.Fatal(err)
@@ -86,33 +86,48 @@ func TestSaveMenuSharesQualityAcrossJPEGAndWebP(t *testing.T) {
 	}
 }
 
-func TestNarrowImageKeepsActionsAndOverflowTools(t *testing.T) {
-	a, _ := textApp()
-	defer a.release()
-	tt := ui.NewTester(a.view, 320, 300)
-	for _, label := range []string{"样式", "新截图", "长截图", "识别文字", "设置与快捷键", "置顶", "保存图片 (" + commandKey() + "+S)", "复制", "关闭图片"} {
-		r, ok := tt.Find(label)
-		if !ok || r.W <= 0 || r.X < 0 || r.X+r.W > 320 || r.Y < 0 || r.Y+r.H > 300 {
-			t.Fatalf("%q is unavailable in a narrow window: %+v", label, r)
+// visible reports whether label shows inside a width×height window.
+func visible(tt *ui.Tester, label string, width, height int) bool {
+	r, ok := tt.Find(label)
+	return ok && r.W > 0 && r.H > 0 && r.X >= 0 && r.Y >= 0 && r.X+r.W <= float32(width)+.5 && r.Y+r.H <= float32(height)+.5
+}
+
+// activate clicks label in the top bar, or chooses it from the bar's
+// overflow menu when the window is too narrow to show it.
+func activate(t *testing.T, tt *ui.Tester, label string, width, height int) {
+	t.Helper()
+	if visible(tt, label, width, height) {
+		if err := tt.Click(label); err != nil {
+			t.Fatal(err)
 		}
+		return
 	}
 	if err := tt.Click("More"); err != nil {
-		t.Fatal(err)
+		t.Fatalf("%s is neither shown nor in the overflow menu: %v", label, err)
 	}
-	if err := tt.ChooseMenuItem("文字 (T)"); err != nil {
-		t.Fatal(err)
+	if err := tt.ChooseMenuItem(label); err != nil {
+		t.Fatalf("%s: %v (menu %v)", label, err, tt.Menu())
 	}
-	if a.tool != doc.ToolText {
-		t.Fatal("an overflow item failed to activate its drawing tool")
+}
+
+func TestSmallestWindowKeepsToolsCopyAndClose(t *testing.T) {
+	a, _ := textApp()
+	defer a.release()
+	tt := ui.NewTester(a.view, minWidth, minHeight)
+	for _, label := range []string{"样式", "复制", "关闭图片", "选择 (V)", "撤销 (" + commandKey() + "+Z)"} {
+		if !visible(tt, label, minWidth, minHeight) {
+			r, _ := tt.Find(label)
+			t.Fatalf("%q is unavailable in the smallest window: %+v", label, r)
+		}
 	}
-	// The toolbar is one tab stop; its arrow keys move focus among controls.
+	// The rail is one tab stop; Up and Down move among its tools.
 	if err := tt.Click("选择 (V)"); err != nil {
 		t.Fatal(err)
 	}
-	tt.Key(0, ui.KeyRight)
+	tt.Key(0, ui.KeyDown)
 	tt.Key(0, ui.KeySpace)
 	if a.tool != doc.ToolRectangle {
-		t.Fatalf("toolbar arrow navigation did not choose the next tool: %s", a.tool)
+		t.Fatalf("rail arrow navigation did not choose the next tool: %s", a.tool)
 	}
 	if err := tt.Click("关闭图片"); err != nil {
 		t.Fatal(err)
@@ -122,8 +137,8 @@ func TestNarrowImageKeepsActionsAndOverflowTools(t *testing.T) {
 	}
 }
 
-func TestCaptureActionsStayVisibleAndKeepTheirTargetsAcrossLayouts(t *testing.T) {
-	for _, width := range []int{320, 420, 759, 760, 1100} {
+func TestCaptureActionsStayReachableAndKeepTheirTargetsAcrossLayouts(t *testing.T) {
+	for _, width := range []int{minWidth, 640, 760, 1100} {
 		for _, dark := range []bool{false, true} {
 			a, _ := textApp()
 			capture, scroll, record, settings := 0, 0, 0, 0
@@ -131,27 +146,26 @@ func TestCaptureActionsStayVisibleAndKeepTheirTargetsAcrossLayouts(t *testing.T)
 			a.OnScroll = func() { scroll++ }
 			a.OnRecord = func() { record++ }
 			a.OnSettings = func() { settings++ }
-			tt := ui.NewTester(a.view, width, 300)
+			tt := ui.NewTester(a.view, width, 400)
 			tt.SetDark(dark)
-			for _, label := range []string{"新截图", "长截图", "录屏", "识别文字", "设置与快捷键", "复制", "关闭图片"} {
-				r, ok := tt.Find(label)
-				if !ok || r.X < 0 || r.Y < 0 || r.X+r.W > float32(width)+.5 || r.Y+r.H > 300.5 {
-					t.Fatalf("width=%d dark=%v %s: %+v found=%v", width, dark, label, r, ok)
+			for _, label := range []string{"复制", "关闭图片"} {
+				if !visible(tt, label, width, 400) {
+					t.Fatalf("width=%d dark=%v %s is hidden", width, dark, label)
 				}
 			}
 			for _, label := range []string{"新截图", "长截图", "录屏", "设置与快捷键"} {
-				if err := tt.Click(label); err != nil {
-					t.Fatal(err)
-				}
+				activate(t, tt, label, width, 400)
 			}
-			if capture != 1 || scroll != 1 || record != 1 || settings != 1 || len(tt.Menu()) != 0 {
-				t.Fatalf("direct callbacks: capture=%d scroll=%d record=%d settings=%d menu=%v", capture, scroll, record, settings, tt.Menu())
+			if capture != 1 || scroll != 1 || record != 1 || settings != 1 {
+				t.Fatalf("width=%d callbacks: capture=%d scroll=%d record=%d settings=%d", width, capture, scroll, record, settings)
 			}
 			a.busy = true
 			tt.Frame()
-			_ = tt.Click("长截图")
-			_ = tt.Click("录屏")
-			_ = tt.Click("新截图")
+			for _, label := range []string{"长截图", "录屏", "新截图"} {
+				if visible(tt, label, width, 400) {
+					_ = tt.Click(label)
+				}
+			}
 			if capture != 1 || scroll != 1 || record != 1 {
 				t.Fatal("busy image launched another capture")
 			}

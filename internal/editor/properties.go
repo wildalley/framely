@@ -1,11 +1,11 @@
 package editor
 
 import (
-	"fmt"
 	"math"
 	"strconv"
 	"strings"
 
+	"github.com/egoist/mygo/plugins/glass"
 	"github.com/egoist/mygo/ui"
 	"github.com/wildalley/framely/internal/brand"
 	"github.com/wildalley/framely/internal/doc"
@@ -103,95 +103,43 @@ func (a *App) propertyColors(c *ui.Context, style doc.Style, expanded bool) {
 	})
 }
 
-func (a *App) propertyRow(c *ui.Context, width float32) {
-	ui.Row(c.Key("properties")).Label("快捷属性").FillWidth().Height(propertyHeight).Gap(6).Padding(4, 8).AlignItems(ui.End).
-		Background(c.Theme().Background).Disabled(a.busy).Children(func() {
-		style := a.activeStyle()
-		scope := "截图"
-		options := []string{"截图"}
-		if style != nil {
-			options = []string{toolName(a.styleTarget()), "截图"}
-			if !a.propertyImage {
-				scope = options[0]
-			}
+// styleStrip floats over the top-left of the canvas on glass while the
+// current tool or the selected annotation has a style to change, and hides
+// while drawing. The whole image's corners and the full set of options stay
+// in the appearance popover.
+func (a *App) styleStrip(c *ui.Context, stageWidth float32) {
+	style := a.activeStyle()
+	if style == nil || a.drag != nil {
+		return
+	}
+	target := a.styleTarget()
+	if target == doc.ToolMosaic {
+		return
+	}
+	cellWidth := 64.0
+	if stageWidth >= 520 {
+		cellWidth = 80
+	}
+	ui.Row(c.Key("properties")).Label("快捷属性").Absolute().Top(10).Left(10).MaxWidth(stageWidth-20).
+		Height(propertyGroupHeight+16).Padding(8, 12).Gap(8).AlignItems(ui.End).Radius(16).
+		Material(glass.Glass{}).Disabled(a.busy).Children(func() {
+		ui.Text(c, toolName(target)).FontSize(12).FontWeight(600).Height(28).MaxLines(1).Shrink(0)
+		a.propertyColors(c, *style, stageWidth >= 560)
+		index := 0
+		if target == doc.ToolRectangle {
+			a.propertyNumber(c, index, "inline-rect-corner", "矩形圆角", "圆角 %", style.CornerRatio*100, 0, 100, cellWidth, func(v float64, live bool) { a.changeStyle(func(s *doc.Style) { s.CornerRatio = v / 100 }, live) })
+			index++
 		}
-		scopeWidth := float32(64)
-		if len([]rune(scope)) > 2 {
-			scopeWidth = 80
-		}
-		ui.Column(c).Width(scopeWidth).Height(propertyGroupHeight).Shrink(0).Gap(2).Children(func() {
-			propertyCaption(c, "目标")
-			if ui.Select(c.Key("property-scope"), &scope, options).Label("属性目标").FillWidth().MinWidth(0).Height(28).FontSize(12).Padding(2, 4).Radius(7).Changed() {
-				a.finishEditing()
-				a.propertyImage = scope == "截图"
-			}
-		})
-		cellWidth := 64.0
-		if width >= 520 {
-			cellWidth = 80
-		}
-		if scope == "截图" {
-			a.propertyNumber(c, 0, "inline-image-corner", "截图圆角", "圆角 %", a.history.ImageCornerRatio()*100, 0, 100, cellWidth, func(v float64, _ bool) { a.history.SetImageCornerRatio(v / 100) })
-			{
-				presets := []int{0, 50, 100}
-				if width >= 520 {
-					presets = []int{0, 10, 25, 50, 75, 100}
-				}
-				ui.Column(c).Height(propertyGroupHeight).Shrink(0).Gap(2).Children(func() {
-					propertyCaption(c, "预设")
-					// A segmented control: the chosen preset is a raised white tab.
-					ui.Row(c).Height(28).AlignItems(ui.Center).Gap(1).Radius(8).Background(c.Theme().Surface).Padding(2).Children(func() {
-						for _, v := range presets {
-							on := math.Abs(a.history.ImageCornerRatio()*100-float64(v)) < .5
-							toggle := ui.Toggle(c.Key(fmt.Sprintf("inline-image-%d", v)), &on, fmt.Sprintf("%d%%", v)).
-								Label(fmt.Sprintf("快捷圆角 %d%%", v)).Height(24).Padding(0, 6).Radius(6).FontSize(11).
-								Border(0, ui.Transparent)
-							if on {
-								toggle.Background(c.Theme().Background).TextColor(brand.Ink(c)).FontWeight(600).
-									Shadow(0, 1, 2, 0, ui.RGBA(0, 0, 0, .12))
-							} else {
-								toggle.Background(ui.Transparent).TextColor(c.Theme().TextMuted)
-							}
-							if toggle.Changed() {
-								a.finishEditing()
-								a.history.SetImageCornerRatio(float64(v) / 100)
-							}
-						}
-					})
-				})
-			}
+		if target == doc.ToolText {
+			a.propertyNumber(c, index, "inline-font", "字号", "字号 px", style.FontSize, 12, 96, cellWidth, func(v float64, live bool) { a.changeStyle(func(s *doc.Style) { s.FontSize = v }, live) })
 		} else {
-			target := a.styleTarget()
-			if target != doc.ToolMosaic {
-				a.propertyColors(c, *style, width >= 900)
+			hi := 16.0
+			if target == doc.ToolHighlighter {
+				hi = 40
 			}
-			index := 0
-			if target == doc.ToolRectangle {
-				a.propertyNumber(c, index, "inline-rect-corner", "矩形圆角", "圆角 %", style.CornerRatio*100, 0, 100, cellWidth, func(v float64, live bool) { a.changeStyle(func(s *doc.Style) { s.CornerRatio = v / 100 }, live) })
-				index++
-			}
-			if target != doc.ToolMosaic {
-				if target == doc.ToolText {
-					a.propertyNumber(c, index, "inline-font", "字号", "字号 px", style.FontSize, 12, 96, cellWidth, func(v float64, live bool) { a.changeStyle(func(s *doc.Style) { s.FontSize = v }, live) })
-				} else {
-					hi := 16.0
-					if target == doc.ToolHighlighter {
-						hi = 40
-					}
-					a.propertyNumber(c, index, "inline-stroke", "粗细", "粗细 px", style.StrokeWidth, 1, hi, cellWidth, func(v float64, live bool) { a.changeStyle(func(s *doc.Style) { s.StrokeWidth = v }, live) })
-				}
-				index++
-				a.propertyNumber(c, index, "inline-opacity", "不透明度", "不透明 %", style.Opacity*100, 10, 100, cellWidth, func(v float64, live bool) { a.changeStyle(func(s *doc.Style) { s.Opacity = v / 100 }, live) })
-				index++
-			} else {
-				ui.Column(c).Height(propertyGroupHeight).Shrink(0).Gap(2).Children(func() {
-					propertyCaption(c, "说明")
-					ui.Row(c).Height(28).AlignItems(ui.Center).Children(func() { ui.Text(c, "保持不透明").FontSize(12).TextColor(c.Theme().TextMuted) })
-				})
-			}
-			if width >= 600 || target == doc.ToolMosaic {
-				a.propertyNumber(c, index, "inline-image-corner", "截图圆角", "截图圆角 %", a.history.ImageCornerRatio()*100, 0, 100, cellWidth, func(v float64, _ bool) { a.history.SetImageCornerRatio(v / 100) })
-			}
+			a.propertyNumber(c, index, "inline-stroke", "粗细", "粗细 px", style.StrokeWidth, 1, hi, cellWidth, func(v float64, live bool) { a.changeStyle(func(s *doc.Style) { s.StrokeWidth = v }, live) })
 		}
+		index++
+		a.propertyNumber(c, index, "inline-opacity", "不透明度", "不透明 %", style.Opacity*100, 10, 100, cellWidth, func(v float64, live bool) { a.changeStyle(func(s *doc.Style) { s.Opacity = v / 100 }, live) })
 	})
 }
