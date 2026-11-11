@@ -5,6 +5,11 @@ on:
     branches: [main, "refactor/mygo-*"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      linux_deps_only:
+        description: Check Ubuntu dependency installation without building applications
+        type: boolean
+        default: false
   workflow_call:
 
 permissions:
@@ -16,6 +21,8 @@ concurrency:
 
 jobs:
   preflight:
+    # The tag workflow validates release commits; avoid a duplicate main build.
+    if: github.event_name != 'push' || github.ref_type == 'tag' || !startsWith(github.event.head_commit.message, 'release:')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -29,7 +36,24 @@ jobs:
           RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
         run: python scripts/verify-release-assets.py
 
+  linux-deps:
+    if: inputs.linux_deps_only
+    needs: preflight
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify Linux build dependencies
+        run: bash scripts/install-ci-linux-deps.sh dbus libpipewire-0.3-dev libva-dev nasm pkg-config
+
   native:
+    if: ${{ !inputs.linux_deps_only }}
     needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -47,7 +71,8 @@ jobs:
           cache-dependency-path: go.sum
 
       - name: Install isolated D-Bus test service
-        run: sudo apt-get update && sudo apt-get install --yes dbus
+        timeout-minutes: 5
+        run: bash scripts/install-ci-linux-deps.sh dbus
 
       - name: Check formatting, tests and static analysis
         run: |
@@ -65,6 +90,7 @@ jobs:
         run: go tool mygo build -platform linux/amd64,windows/amd64,darwin/arm64 -skip-installer -skip-dmg -skip-notarize
 
   components:
+    if: ${{ !inputs.linux_deps_only }}
     needs: preflight
     timeout-minutes: 45
     strategy:
@@ -103,16 +129,7 @@ jobs:
       - name: Install Linux capture headers
         if: runner.os == 'Linux'
         timeout-minutes: 5
-        run: |
-          # The runner's Azure mirror can fail DNS resolution for every package.
-          # Use Ubuntu's official archives directly, retaining apt signature checks.
-          sudo sed -i \
-            -e 's|mirror+file:/etc/apt/apt-mirrors.txt|https://archive.ubuntu.com/ubuntu|g' \
-            -e 's|mirror+file:/etc/apt/apt-security-mirrors.txt|https://security.ubuntu.com/ubuntu|g' \
-            -e 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' \
-            /etc/apt/sources.list
-          sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
-          sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install --yes --no-install-recommends libpipewire-0.3-dev libva-dev nasm pkg-config
+        run: bash scripts/install-ci-linux-deps.sh libpipewire-0.3-dev libva-dev nasm pkg-config
       - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
         if: runner.os == 'Windows'
         with:
@@ -155,7 +172,7 @@ jobs:
 
   verify-artifacts:
     # Tagged releases validate the same assets in the publish job.
-    if: github.ref_type != 'tag'
+    if: github.ref_type != 'tag' && !inputs.linux_deps_only
     needs: [components, arch-native]
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -174,6 +191,7 @@ jobs:
           RELEASE_TAG="v$version" python scripts/verify-release-assets.py release-assets
 
   arch-native:
+    if: ${{ !inputs.linux_deps_only }}
     needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 30

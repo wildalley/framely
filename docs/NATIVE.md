@@ -124,6 +124,8 @@ WebP 编码使用 `github.com/gen2brain/webp`，无需 CGo；系统 libwebp 不�
 
 ## 构建
 
+仅排查 GitHub runner 的 Linux 依赖安装时，可运行 `gh workflow run build-native.yml --ref <分支> -f linux_deps_only=true`。该模式只检查 Ubuntu 软件源和依赖，跳过应用、OCR/媒体组件及安装包构建。
+
 先在目标 Windows/Linux/macOS 上构建组件（不能用 Linux 产物充当 Windows 组件）。构建机需要 `uv`；脚本创建隔离的 Python 3.12 环境并下载依赖，最终使用者无需 Python。Linux 需要 C 编译器、pkg-config、PipeWire 开发头文件；Windows 需要 Visual Studio 的 x64 Native Tools 环境和含 C++/WinRT 的 Windows SDK。
 
 ```bash
