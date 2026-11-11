@@ -62,6 +62,7 @@ def linux():
                 (old / 'user-file').write_text('keep', encoding='utf-8')
                 for name in ('framely', 'screenpin'):
                     (commands / name).symlink_to(old / 'screenpin')
+                (desktop.parent / 'screenpin.desktop').write_text(f'Exec="{old}/screenpin"\n', encoding='utf-8')
             elif previous == 'local':
                 (commands / 'screenpin').write_text('old executable', encoding='utf-8')
                 (commands / 'framely').symlink_to('screenpin')
@@ -84,6 +85,7 @@ def linux():
                 assert not (app / 'framely').is_symlink()
                 assert subprocess.check_output([str(commands / 'framely'), '--version'], text=True).strip() == f'Framely {version} (mygo)'
                 assert str(app / 'framely') in desktop.read_text(encoding='utf-8')
+                assert not (desktop.parent / 'screenpin.desktop').exists()
                 assert 'Hidden=true' in autostart.read_text(encoding='utf-8')
                 assert 'X-GNOME-Autostart-enabled=false' in autostart.read_text(encoding='utf-8')
                 assert str(app / 'framely') in autostart.read_text(encoding='utf-8')

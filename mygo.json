@@ -2,7 +2,7 @@
   "name": "Framely",
   "slug": "framely",
   "identifier": "io.screenpin.desktop",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "main": "./cmd/framely",
   "out": "build/native",
   "icon": "assets/app-icon.png",

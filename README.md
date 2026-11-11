@@ -26,18 +26,23 @@ Framely is an open-source screenshot, annotation, pinning, offline OCR and trans
 
 ## 下载与安装
 
-当前版本为 **0.4.1**，使用 MyGo **0.8.3**。下载以 [Release 页面](https://github.com/wildalley/framely/releases) 为准。安装包使用 `framely-*` 名称，Arch 包名为 `framely`（自动替换旧版包）；命令为 `framely`。完整包包含采集、录屏和离线 OCR 运行时，升级前请退出旧实例并完整替换配套文件。
+当前版本为 **0.4.2**，使用 MyGo **0.8.3**。下载以 [Release 页面](https://github.com/wildalley/framely/releases) 为准。安装包使用 `framely-*` 名称，Arch 包名为 `framely`（自动替换旧版包）；命令为 `framely`。完整包包含采集、录屏和离线 OCR 运行时，升级前请退出旧实例并完整替换配套文件。
 
 | 平台 | 安装包或便携包 |
 | --- | --- |
-| Windows x64 | `framely-0.4.1-windows-amd64-setup.exe` 或 `framely-0.4.1-windows-amd64-portable.zip` |
-| macOS 15+ Apple Silicon | `framely-0.4.1-darwin-arm64.dmg` |
-| macOS 15+ Intel | `framely-0.4.1-darwin-amd64.dmg` |
-| Ubuntu/Debian x64 | `framely-0.4.1-linux-amd64.deb` |
-| Arch Linux x64 | `framely-0.4.1-1-x86_64.pkg.tar.zst` |
-| 其他 Linux x64 | `framely-0.4.1-linux-amd64-portable.tar.gz` |
+| Windows x64 | `framely-0.4.2-windows-amd64-setup.exe` 或 `framely-0.4.2-windows-amd64-portable.zip` |
+| macOS 15+ Apple Silicon | `framely-0.4.2-darwin-arm64.dmg` |
+| macOS 15+ Intel | `framely-0.4.2-darwin-amd64.dmg` |
+| Ubuntu/Debian x64 | `framely-0.4.2-linux-amd64.deb` |
+| Arch Linux x64 | `framely-0.4.2-1-x86_64.pkg.tar.zst` |
+| 其他 Linux x64 | `framely-0.4.2-linux-amd64-portable.tar.gz` |
 
-Ubuntu/Debian 使用 `sudo apt install ./framely-0.4.1-linux-amd64.deb`；Arch 使用 `sudo pacman -U ./framely-0.4.1-1-x86_64.pkg.tar.zst`。Linux 便携包解压后执行 `./install.sh` 安装到当前用户目录，之后从应用菜单或 `framely` 启动。Release 中的 `SHA256SUMS` 可用于校验下载文件。
+Ubuntu/Debian 使用 `sudo apt install ./framely-0.4.2-linux-amd64.deb`；Arch 使用 `sudo pacman -U ./framely-0.4.2-1-x86_64.pkg.tar.zst`。Linux 便携包解压后执行 `./install.sh` 安装到当前用户目录，之后从应用菜单或 `framely` 启动。Release 中的 `SHA256SUMS` 可用于校验下载文件。
+
+安装后的实际程序路径：Windows 默认 `%LOCALAPPDATA%\Programs\Framely\Framely.exe`；Linux deb 为 `/opt/framely/framely`，Arch 为 `/usr/lib/framely/framely`，便携版为 `~/.local/framely.app/framely`；macOS 为 `/Applications/Framely.app`。组件统一使用 `framely-*` 名称。Windows 升级会迁移旧 `ScreenPin` 安装目录、快捷方式和自启动，用户指定的其他目录保持原位。Linux 便携安装会备份旧应用并更新命令入口。
+
+设置首次启动时迁移到 Linux 的 `~/.config/framely`（支持 `XDG_CONFIG_HOME`）、Windows 的 `%APPDATA%\Framely` 或 macOS 的 `~/Library/Application Support/Framely`。现有 Framely 设置优先，旧目录中其余内容保留为备份。旧 `screenpin` 命令/绝对路径保留为兼容链接；系统应用 ID 延续 `io.screenpin.desktop`，用于保留截图权限和系统密钥。
+
 
 | 平台 | 使用条件 |
 | --- | --- |
@@ -45,7 +50,7 @@ Ubuntu/Debian 使用 `sudo apt install ./framely-0.4.1-linux-amd64.deb`；Arch �
 | Windows | 长截图使用 Windows Graphics Capture，要求 Windows 10 1903+；浮动控制窗口排除采集需要 Windows 10 2004+。 |
 | macOS | 支持截图、标注、贴图和 OCR，暂不支持长截图。 |
 
-Windows/macOS 包暂未配置正式开发者签名与公证。更多平台限制见 [v0.4.1 发布说明](docs/releases/v0.4.1.md)。
+Windows/macOS 包暂未配置正式开发者签名与公证。更多平台限制见 [v0.4.2 发布说明](docs/releases/v0.4.2.md)。
 
 ## 快速使用
 

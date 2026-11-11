@@ -1,6 +1,6 @@
 # 原生版开发与构建
 
-Framely · 取景使用 Go + MyGo 实现托盘截图与贴图工具，命令为 `framely`。启动时只显示托盘；每张图片独立开窗，关闭就销毁图片、标注和撤销记录。没有主页、截图历史或工程保存流程。当前版本为 `0.4.1`，使用 MyGo `0.8.3`，发行包功能以实际发布说明为准。
+Framely · 取景使用 Go + MyGo 实现托盘截图与贴图工具，命令为 `framely`。启动时只显示托盘；每张图片独立开窗，关闭就销毁图片、标注和撤销记录。没有主页、截图历史或工程保存流程。当前版本为 `0.4.2`，使用 MyGo `0.8.3`，发行包功能以实际发布说明为准。
 
 ## 使用
 
@@ -161,7 +161,7 @@ Linux 安装入口使用固定的门户应用 ID 命名（见 `internal/capture`
 ```bash
 cd packaging/arch-native
 makepkg --syncdeps --cleanbuild
-sudo pacman -U ./framely-0.4.1-1-x86_64.pkg.tar.zst
+sudo pacman -U ./framely-0.4.2-1-x86_64.pkg.tar.zst
 ```
 
 该配方从当前工作区构建，支持 x86_64 和 aarch64，并排除本地凭据、代理状态和编译产物。Arch 包名为 `framely`，提供 `framely` 命令，并替换旧版包；已有设置保留。安装前请从托盘退出旧实例。
@@ -187,3 +187,9 @@ sudo pacman -U ./framely-0.4.1-1-x86_64.pkg.tar.zst
 Mac 发行构建使用 macOS 15 运行器，分别生成 arm64/amd64 DMG，执行 ad-hoc 签名并检查签名；未配置开发者证书与公证。Windows 生成 NSIS 安装程序和完整便携包。Linux 安装包与便携安装使用同一个固定门户应用 ID，升级后授权保留。
 
 目标系统的发行构建先执行 `go tool mygo build -platform <goos>/<goarch> -skip-dmg -skip-notarize`，再执行 `python scripts/package-release.py`。后者会验证版本、组件与真实 OCR，并收集安装包。macOS 还会补齐 MyGo 0.7.4 忽略的 `.dylibs` 目录，重新封装签名，再创建并校验 DMG。Intel macOS 使用仍提供 x86_64 预编译包的 ONNX Runtime 1.23.2，其他平台使用 1.24.4。
+
+## 安装迁移验证
+
+发行程序和组件实际使用 `framely` / `Framely` 名称，默认安装位置见 README。开发安装 `python scripts/install-local-linux.py` 使用真实二进制 `~/.local/bin/framely` 和 `~/.local/share/framely/workers`，旧命令仅作为链接保留。
+
+修改安装规则时先运行 `Build MyGo native preview` 的 `installers_only=true` 手动模式。该模式只构建主程序与实际安装器，在 Windows 检查旧注册表目录、自定义目录、快捷方式和禁用自启动的迁移，以及重复安装和卸载；Linux 检查 deb 内容、便携版首次安装、旧便携/开发安装迁移和卸载；macOS 检查应用包与可执行文件。三端运行配置迁移回归后，再启动完整组件发布构建。

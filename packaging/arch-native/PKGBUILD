@@ -1,5 +1,5 @@
 pkgname=framely
-pkgver=0.4.1
+pkgver=0.4.2
 pkgrel=1
 pkgdesc="Framely (取景): screenshots, pins, scrolling capture, recording, offline OCR and translation (formerly ScreenPin)"
 arch=('x86_64' 'aarch64')
@@ -9,7 +9,7 @@ depends=('gtk3' 'libayatana-appindicator' 'xdg-desktop-portal' 'libpipewire' 'li
 makedepends=('go>=1.27.3' 'uv' 'python' 'pkgconf' 'nasm')
 provides=("screenpin=$pkgver" "screenpin-native=$pkgver")
 conflicts=('screenpin' 'screenpin-native')
-replaces=('screenpin-native')
+replaces=('screenpin' 'screenpin-native')
 options=('!debug' '!lto')
 source=()
 sha256sums=()

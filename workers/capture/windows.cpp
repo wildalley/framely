@@ -74,7 +74,7 @@ struct InputControl {
         POINT point{monitor.left+x,monitor.top+y},cursor{};GetCursorPos(&cursor);
         if(target && (std::abs(cursor.x-last.x)>48||std::abs(cursor.y-last.y)>48)) {target=nullptr;return "鼠标已移开，自动滚动暂停；可手动滚动或重新启用自动模式";}
         HWND candidate=GetAncestor(WindowFromPoint(point),GA_ROOT);DWORD pid=0;GetWindowThreadProcessId(candidate,&pid);
-        if(!candidate||pid==owner||pid==GetCurrentProcessId())return "滚动区域被 ScreenPin 窗口遮挡，请移动或隐藏窗口";
+        if(!candidate||pid==owner||pid==GetCurrentProcessId())return "滚动区域被 Framely 窗口遮挡，请移动或隐藏窗口";
         if(target && candidate!=target){target=nullptr;return "目标窗口已变化，自动滚动暂停";}
         if(GetForegroundWindow()!=candidate && !SetForegroundWindow(candidate)){target=nullptr;return "无法激活目标窗口，请先点击它或使用手动滚动";}
         if(!SetCursorPos(point.x,point.y)){target=nullptr;return "无法定位滚动位置";}

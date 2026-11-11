@@ -28,6 +28,16 @@ migrate_legacy_install() {
         ln -s ../framely.app/framely "$legacy_app/screenpin"
     fi
     if [ -n "$backup" ]; then echo "Previous installation backed up to $backup"; fi
+    for old_desktop in "$data_home/applications/screenpin.desktop" "$data_home/applications/framely.desktop"; do
+        if [ -f "$old_desktop" ] &&
+           grep -qF -e "$HOME/.local/screenpin.app/" -e "$HOME/.local/bin/screenpin" "$old_desktop"; then
+            if [ -z "$backup" ]; then
+                mkdir -p "$backup_root"
+                backup=$(mktemp -d "$backup_root/upgrade-XXXXXX")
+            fi
+            mv "$old_desktop" "$backup/$(basename "$old_desktop")"
+        fi
+    done
     autostart="${XDG_CONFIG_HOME:-$HOME/.config}/autostart/io.screenpin.desktop.desktop"
     if [ -f "$autostart" ]; then
         # Keep Hidden and X-GNOME-Autostart-enabled as the user set them.

@@ -178,6 +178,8 @@ def main():
     app = bundle / "Framely.app"
     binary = app / "Contents/MacOS/Framely" if goos == "darwin" else bundle / ("Framely.exe" if goos == "windows" else "framely")
     resources = app / "Contents/Resources/workers" if goos == "darwin" else bundle / "workers"
+    if list(resources.glob("screenpin-*")):
+        raise ValueError("Bundle contains stale ScreenPin components; rebuild the complete runtime")
     actual = subprocess.check_output([str(binary), "--version"], text=True).strip()
     if actual != f"Framely {version} (mygo)":
         raise ValueError(f"Unexpected application version: {actual}")

@@ -306,3 +306,58 @@ func TestRecordShortcutSharesManagedFile(t *testing.T) {
 		t.Fatal(p.RecordKey)
 	}
 }
+
+func TestLegacyBindingResolvesNewBinaryAndMigratesWhenApplied(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("niri")
+	}
+	path, _ := fixture(t)
+	t.Setenv("XDG_CURRENT_DESKTOP", "niri")
+	t.Setenv("NIRI_CONFIG", path)
+	t.Setenv("NIRI_SOCKET", "")
+	command, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldCommand := filepath.Join(filepath.Dir(path), "screenpin")
+	if err := os.Symlink(command, oldCommand); err != nil {
+		t.Fatal(err)
+	}
+	noop := func(context.Context, string) error { return nil }
+	old, err := prepareShortcuts(path, oldCommand, "Super+Shift+S", "Super+Shift+L", noop, "Super+Shift+R")
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := filepath.Join(filepath.Dir(path), "screenpin-shortcut.kdl")
+	legacyData := bytes.Replace(old.content, []byte(marker), []byte(legacyMarker), 1)
+	if err := os.WriteFile(legacy, legacyData, 0600); err != nil {
+		t.Fatal(err)
+	}
+	main := bytes.Replace(old.main(legacy), []byte(marker+"include "), []byte(legacyMarker+"include "), 1)
+	if err := os.WriteFile(path, main, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if !MatchesShortcuts("Super+Shift+S", "Super+Shift+L", "Super+Shift+R") {
+		t.Fatal("legacy binding no longer recognized")
+	}
+	if MatchesShortcuts("Ctrl+Alt+A", "Super+Shift+L", "Super+Shift+R") {
+		t.Fatal("wrong key recognized")
+	}
+	next, err := prepareShortcuts(path, command, "Super+Shift+S", "Super+Shift+L", noop, "Super+Shift+R")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := next.Apply(context.Background(), func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Fatalf("old file remains: %v", err)
+	}
+	if !MatchesShortcuts("Super+Shift+S", "Super+Shift+L", "Super+Shift+R") {
+		t.Fatal("new binding not recognized")
+	}
+	backups, err := filepath.Glob(filepath.Join(filepath.Dir(path), "framely-backup-*/legacy-shortcut.kdl"))
+	if err != nil || len(backups) != 1 {
+		t.Fatalf("missing backup: %v %v", backups, err)
+	}
+}

@@ -49,7 +49,10 @@ try {
         } else { Install $newDir }
         Assert ((Get-ItemPropertyValue $uninstall InstallLocation) -ieq $newDir) 'Installation directory was not migrated correctly'
         $exe = Join-Path $newDir 'Framely.exe'
-        Assert ((& $exe --version) -eq "Framely $version (mygo)") 'Installed command/version is incorrect'
+        # Windows PowerShell does not capture GUI-subsystem output reliably.
+        # Use a pipe, just as the release packager does for this actual binary.
+        & python -c "import subprocess,sys; got=subprocess.check_output([sys.argv[1], '--version'], text=True).strip(); expected='Framely '+sys.argv[2]+' (mygo)'; assert got == expected, repr(got)" $exe $version
+        Assert ($LASTEXITCODE -eq 0) 'Installed command/version is incorrect'
         if ($scenario -ne 'fresh') {
             Assert (!(Test-Path (Join-Path $oldDir 'ScreenPin.exe'))) 'Old binary remains'
             Assert (!(Test-Path (Join-Path $oldDir 'workers/screenpin-ocr'))) 'Old OCR runtime remains'

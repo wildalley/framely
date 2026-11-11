@@ -54,7 +54,7 @@ func configDir(root, goos string) (string, error) {
 		// Keep an existing Framely configuration authoritative. Copy missing
 		// known files, then retire the entire old directory into a backup so
 		// consumed/deleted portal tokens can never be imported a second time.
-		for _, file := range []string{"config.json", "scroll-source.json"} {
+		for _, file := range []string{"config.json", "scroll-source.json", "recording.json"} {
 			if err := copyMissing(filepath.Join(old, file), filepath.Join(dir, file)); err != nil {
 				return "", err
 			}

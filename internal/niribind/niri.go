@@ -198,7 +198,34 @@ func MatchesShortcuts(key, scroll string, record ...string) bool {
 		return false
 	}
 	p, err := PrepareShortcuts(key, scroll, record...)
-	return err == nil && p.shortcut.exists && bytes.Equal(p.shortcut.data, p.content) && bytes.Equal(p.root.data, p.main(p.ShortcutPath))
+	if err != nil {
+		return false
+	}
+	if p.shortcut.exists && bytes.Equal(p.shortcut.data, p.content) && bytes.Equal(p.root.data, p.main(p.ShortcutPath)) {
+		return true
+	}
+	// An old absolute command may now be a compatibility link to this binary.
+	// Recognize it only when the entire file still matches our generated keys.
+	if !p.legacy.exists {
+		return false
+	}
+	match := regexp.MustCompile(`spawn ("(?:[^"\\]|\\.)*") `).FindSubmatch(p.legacy.data)
+	if len(match) != 2 {
+		return false
+	}
+	command, err := strconv.Unquote(string(match[1]))
+	if err != nil {
+		return false
+	}
+	oldPath, oldErr := filepath.EvalSymlinks(command)
+	newPath, newErr := filepath.EvalSymlinks(p.Command)
+	if oldErr != nil || newErr != nil || oldPath != newPath {
+		return false
+	}
+	expected := bytes.ReplaceAll(p.content, []byte(strconv.Quote(p.Command)), match[1])
+	expected = bytes.Replace(expected, []byte(marker), []byte(legacyMarker), 1)
+	main := bytes.Replace(p.main(p.legacy.path), []byte(marker+"include "), []byte(legacyMarker+"include "), 1)
+	return bytes.Equal(p.legacy.data, expected) && bytes.Equal(p.root.data, main)
 }
 
 // Verify checks the installed config with niri before reporting it as usable.

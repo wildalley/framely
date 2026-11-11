@@ -8,6 +8,7 @@ import (
 )
 
 func TestWorkingDirectoryCannotInjectAWorker(t *testing.T) {
+	t.Setenv("FRAMELY_COMPONENTS_DIR", "")
 	for _, ending := range []string{"\n", "\r\n"} {
 		t.Run(ending, func(t *testing.T) {
 			root := t.TempDir()
@@ -40,6 +41,7 @@ func TestWorkingDirectoryCannotInjectAWorker(t *testing.T) {
 }
 
 func TestExplicitRootAndNamesAreValidated(t *testing.T) {
+	t.Setenv("FRAMELY_COMPONENTS_DIR", "")
 	for _, root := range []string{".", "relative/workers"} {
 		t.Setenv("SCREENPIN_COMPONENTS_DIR", root)
 		if _, err := Find("framely-ocr"); err == nil {
