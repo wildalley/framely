@@ -5,7 +5,7 @@ import (
 	"runtime"
 )
 
-// TrayIcon is the colour tile; Linux panels do not recolour tray icons.
+// TrayIcon is the app icon's tile, for the Linux and Windows trays.
 //
 //go:embed tray-icon.png
 var TrayIcon []byte
@@ -29,8 +29,8 @@ var Mark []byte
 // IdleTrayIcon returns the platform's resting tray icon and whether it is a
 // template image.
 func IdleTrayIcon() ([]byte, bool) {
-	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
-		return TrayTemplate, true
+	if runtime.GOOS == "darwin" {
+		return TrayTemplate, true // The menu bar tints a monochrome icon.
 	}
 	return TrayIcon, false
 }

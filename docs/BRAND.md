@@ -9,9 +9,9 @@
 | `assets/app-icon.svg` | 应用图标 SVG 母版 |
 | `assets/app-icon.png`、`assets/icons/*` | 原生打包和 Linux 桌面菜单，多尺寸 PNG |
 | `assets/mark.svg` | 界面标题中的 `currentColor` 剪影 |
-| `assets/tray-icon.svg` | Linux 托盘，高对比青绿色剪影 |
-| `assets/tray-template.svg` | macOS/Windows 的黑色模板剪影 |
-| `assets/tray-recording.svg` | 录制中图标，增加红色角标 |
+| `assets/tray-icon.svg` | Linux 与 Windows 托盘：应用图标的圆角底板（裁去外边距），64px PNG |
+| `assets/tray-template.svg` | macOS 菜单栏的黑色模板剪影，由系统按明暗着色 |
+| `assets/tray-recording.svg` | 录制中：托盘图标加红色角标 |
 
 安装 librsvg 后，在仓库根目录运行 `python3 scripts/render-icons.py`，即可从 SVG 同步生成全部 PNG。不要单独改某个尺寸的 PNG。
 
