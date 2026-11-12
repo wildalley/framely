@@ -12,6 +12,8 @@ Framely is an open-source desktop tool for screenshots, annotations, image pinni
 
 ![Framely 原生截图编辑器，画布使用生成的示例内容](docs/images/framely.png)
 
+当前 Release 为 **v0.4.2**。源码中的固定侧栏拼接修复、录屏控件调整与性能优化尚未发布，详见 [未发布改进](CHANGELOG.md#未发布) 和 [本轮资源检查](docs/AUDIT_2026-11-12.md)。
+
 ## 功能
 
 | 功能 | 用法 |
@@ -108,7 +110,7 @@ Linux Wayland 的截图、屏幕共享和快捷键由系统分别授权。niri �
 | Windows | 长截图使用 Windows Graphics Capture，要求 Windows 10 1903+；浮动控制窗口排除采集需要 Windows 10 2004+。 |
 | macOS | 要求 macOS 15+；暂不支持长截图、独立取色器和重复上次区域。 |
 
-Windows / macOS 安装包暂未配置正式开发者签名与公证。多屏、HiDPI、系统共享授权和硬件编码仍可能因桌面环境或设备而异；已验证范围见 [发布说明](docs/releases/v0.4.0.md)、[录屏说明](docs/RECORDING.md) 与 [资源检查](docs/AUDIT_2026-11-11.md)。
+Windows / macOS 安装包暂未配置正式开发者签名与公证。多屏、HiDPI、系统共享授权和硬件编码仍可能因桌面环境或设备而异；已验证范围见 [发布说明](docs/releases/v0.4.0.md)、[录屏说明](docs/RECORDING.md) 与 [资源检查](docs/AUDIT_2026-11-12.md)。
 
 ## 技术栈
 
@@ -158,6 +160,7 @@ Linux 需要 C 编译器、`pkg-config`、PipeWire / VAAPI 开发库；媒体构
 - [使用与开发说明](docs/NATIVE.md)：平台配置、快捷键、构建和集成测试。
 - [OCR 流程](docs/OCR_WORKFLOW.md)：取字交互、模型复用和长图处理。
 - [录屏说明](docs/RECORDING.md)：采集、编码、GIF、依赖及验证范围。
+- [资源与性能检查](docs/AUDIT_2026-11-12.md)：预览优化、内存回收测试与平台验证范围。
 - [更新日志](CHANGELOG.md) · [改进记录](IMPROVEMENTS.md)。
 - [图标与品牌](docs/BRAND.md)：SVG 母版、生成方式和设计来源。
 

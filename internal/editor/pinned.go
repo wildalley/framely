@@ -87,9 +87,15 @@ func (a *App) pinCapsule(c *ui.Context) {
 				}
 				zoom := ui.Button(c.Key("pin-zoom"), fmt.Sprintf("%d%%", int(math.Round(a.displayZoom*100)))).
 					Height(32).Padding(0, 6).Radius(16).FontSize(12).Font("monospace").
-					Background(ui.Transparent).Border(0, ui.Transparent).
+					Border(0, ui.Transparent).
 					Label("缩放到 100%").Tooltip("滚轮缩放；点击回到 100%")
-				if zoom.Clicked() {
+				bg := ui.Transparent
+				if zoom.Pressed() {
+					bg = t.SurfacePressed
+				} else if zoom.Hovered() {
+					bg = t.SurfaceHover
+				}
+				if zoom.Background(bg).Clicked() {
 					a.setZoom(1)
 				}
 				if iconButton(c, "pin-close", iconClose, "关闭图片", false).Radius(16).Clicked() {

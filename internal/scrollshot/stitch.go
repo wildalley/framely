@@ -33,6 +33,9 @@ type undo struct {
 	chunks              []*image.RGBA
 	previous, footer    *image.RGBA
 	top, bottom, height int
+	left, right         int
+	sidebarFill         [2]color.RGBA
+	sidebarFrame        *image.RGBA
 }
 type Stitcher struct {
 	chunks                     []*image.RGBA
@@ -42,6 +45,9 @@ type Stitcher struct {
 	MaxPixels                  int64
 	MaxHeight                  int
 	scrollbar                  image.Rectangle
+	sidebarFrame               *image.RGBA
+	left, right                int
+	sidebarFill                [2]color.RGBA
 }
 
 func New() *Stitcher              { return &Stitcher{MaxPixels: 24_000_000, MaxHeight: 30000} }
@@ -53,6 +59,9 @@ func (s *Stitcher) Undo() bool {
 	}
 	u := s.last
 	s.chunks, s.previous, s.footer, s.top, s.bottom, s.height = u.chunks, u.previous, u.footer, u.top, u.bottom, u.height
+	s.left, s.right = u.left, u.right
+	s.sidebarFill = u.sidebarFill
+	s.sidebarFrame = u.sidebarFrame
 	s.last = nil
 	return true
 }
@@ -60,6 +69,9 @@ func (s *Stitcher) Release() {
 	s.chunks, s.previous, s.footer, s.last = nil, nil, nil, nil
 	s.height, s.width = 0, 0
 	s.scrollbar = image.Rectangle{}
+	s.sidebarFrame = nil
+	s.left, s.right = 0, 0
+	s.sidebarFill = [2]color.RGBA{}
 }
 
 func (s *Stitcher) Add(frame *image.RGBA) (Outcome, error) {
@@ -104,11 +116,20 @@ func (s *Stitcher) Add(frame *image.RGBA) (Outcome, error) {
 	if forward.ambiguous {
 		return Outcome{Height: s.height}, ErrAmbiguous
 	}
+	left, right := stationarySides(s.previous, frame, top, bottom)
+	if s.height > h {
+		left, right = min(left, s.left), min(right, s.right)
+	}
 	delta := forward.shift
 	if !s.fits(w, s.height+delta) {
 		return Outcome{Height: s.height}, ErrLimit
 	}
-	s.last = &undo{chunks: append([]*image.RGBA(nil), s.chunks...), previous: s.previous, footer: s.footer, top: s.top, bottom: s.bottom, height: s.height}
+	s.last = &undo{chunks: append([]*image.RGBA(nil), s.chunks...), previous: s.previous, footer: s.footer, top: s.top, bottom: s.bottom, height: s.height, left: s.left, right: s.right, sidebarFill: s.sidebarFill, sidebarFrame: s.sidebarFrame}
+	// Retain only the stationary strips, not the entire first screenshot.
+	// Copy them before prefix detaches the retained overlap from that frame.
+	if s.height == h {
+		s.sidebarFrame = sidebarPixels(s.previous, left, right)
+	}
 	// Replace the overlapping tail at a seam inside the moving content.
 	// Keeping only a newly revealed bottom strip duplicates sticky footers
 	// and can cut through rows when blank row padding is mistaken for a bar.
@@ -116,6 +137,13 @@ func (s *Stitcher) Add(frame *image.RGBA) (Outcome, error) {
 	cut := s.height - h + seam + delta
 	s.chunks = s.prefix(cut)
 	s.top, s.bottom = top, bottom
+	if left != s.left || right != s.right {
+		s.sidebarFill = [2]color.RGBA{
+			sidebarBackground(s.sidebarFrame, 0, left),
+			sidebarRightBackground(s.sidebarFrame, right),
+		}
+	}
+	s.left, s.right = left, right
 	s.previous = clone(frame, frame.Bounds())
 	s.chunks = append(s.chunks, s.previous.SubImage(image.Rect(0, seam, w, h)).(*image.RGBA))
 	s.footer = nil
@@ -163,7 +191,7 @@ func (s *Stitcher) Image() image.Image {
 		y += c.Bounds().Dy()
 		ends[i] = y
 	}
-	return tiled{chunks: chunks, ends: ends, bounds: image.Rect(0, 0, s.width, s.height), scrollbar: s.scrollbar}
+	return tiled{chunks: chunks, ends: ends, bounds: image.Rect(0, 0, s.width, s.height), scrollbar: s.scrollbar, sidebarFrame: s.sidebarFrame, left: s.left, right: s.right, sidebarFill: s.sidebarFill}
 }
 func (s *Stitcher) Flatten() *image.RGBA {
 	out := image.NewRGBA(image.Rect(0, 0, s.width, s.height))
@@ -175,6 +203,25 @@ func (s *Stitcher) Flatten() *image.RGBA {
 	}
 	if s.footer != nil {
 		draw.Draw(out, image.Rect(0, y, s.width, s.height), s.footer, s.footer.Rect.Min, draw.Src)
+	}
+	// Preserve each stationary sidebar once at its original size. Additional
+	// height is background, never stretched pixels from an avatar/text row.
+	if f := s.sidebarFrame; f != nil {
+		for i, r := range []image.Rectangle{
+			image.Rect(0, 0, s.left, s.height),
+			image.Rect(s.width-s.right, 0, s.width, s.height),
+		} {
+			if r.Empty() {
+				continue
+			}
+			draw.Draw(out, r, image.NewUniform(s.sidebarFill[i]), image.Point{}, draw.Src)
+			sourceX := 0
+			if i == 1 {
+				sourceX = f.Rect.Dx() - s.right
+			}
+			draw.Draw(out, r.Intersect(image.Rect(0, 0, s.width, f.Rect.Dy())), f,
+				image.Pt(f.Rect.Min.X+sourceX, f.Rect.Min.Y), draw.Src)
+		}
 	}
 	if !s.scrollbar.Empty() {
 		for y := range s.height {
@@ -195,20 +242,45 @@ func (s *Stitcher) Preview(w, h int) *image.RGBA {
 }
 
 type tiled struct {
-	chunks    []*image.RGBA
-	ends      []int
-	bounds    image.Rectangle
-	scrollbar image.Rectangle
+	chunks       []*image.RGBA
+	ends         []int
+	bounds       image.Rectangle
+	scrollbar    image.Rectangle
+	sidebarFrame *image.RGBA
+	left, right  int
+	sidebarFill  [2]color.RGBA
 }
 
 func (t tiled) ColorModel() color.Model { return color.RGBAModel }
 func (t tiled) Bounds() image.Rectangle { return t.bounds }
-func (t tiled) At(x, y int) color.Color {
+func (t tiled) At(x, y int) color.Color { return t.rgbaAt(x, y) }
+
+// x/image/draw uses RGBA64Image to sample without boxing millions of colors
+// into interfaces while scaling a long screenshot preview.
+func (t tiled) RGBA64At(x, y int) color.RGBA64 {
+	c := t.rgbaAt(x, y)
+	return color.RGBA64{uint16(c.R) * 0x101, uint16(c.G) * 0x101, uint16(c.B) * 0x101, uint16(c.A) * 0x101}
+}
+
+func (t tiled) rgbaAt(x, y int) color.RGBA {
 	if !image.Pt(x, y).In(t.bounds) {
 		return color.RGBA{}
 	}
 	if !t.scrollbar.Empty() && x >= t.scrollbar.Min.X && x < t.scrollbar.Max.X {
 		x = max(0, t.scrollbar.Min.X-2)
+	}
+	if f := t.sidebarFrame; f != nil && (x < t.left || x >= t.bounds.Dx()-t.right) {
+		if y < f.Rect.Dy() {
+			fx := x
+			if x >= t.bounds.Dx()-t.right {
+				fx = f.Rect.Dx() - t.bounds.Dx() + x
+			}
+			return f.RGBAAt(f.Rect.Min.X+fx, f.Rect.Min.Y+y)
+		}
+		if x < t.left {
+			return t.sidebarFill[0]
+		}
+		return t.sidebarFill[1]
 	}
 	i := sort.SearchInts(t.ends, y+1)
 	if i >= len(t.chunks) {
@@ -440,4 +512,79 @@ func match(a, b features, cols []int, top, bottom int) alignment {
 	best.valid = true
 	best.ambiguous = second-best.score < math.Max(0.65, best.score*0.25)
 	return best
+}
+
+// Only contiguous unchanged columns at the outer edges qualify. Interior
+// columns (for example repeated table values) must still follow the scroll.
+// Ignore fixed headers/footers when looking for a stationary navigation panel.
+func stationarySides(a, b *image.RGBA, top, bottom int) (int, int) {
+	w, h := a.Rect.Dx(), a.Rect.Dy()
+	stationary := func(x int) bool {
+		changes := 0
+		for y := top; y < h-bottom; y++ {
+			ca, cb := a.RGBAAt(a.Rect.Min.X+x, a.Rect.Min.Y+y), b.RGBAAt(b.Rect.Min.X+x, b.Rect.Min.Y+y)
+			if max(abs(int(ca.R)-int(cb.R)), abs(int(ca.G)-int(cb.G)), abs(int(ca.B)-int(cb.B))) > 8 {
+				changes++
+				if changes >= 2 {
+					return false
+				}
+			}
+		}
+		return true
+	}
+	left, right := 0, 0
+	for left < w/2 && stationary(left) {
+		left++
+	}
+	for right < w/2 && stationary(w-right-1) {
+		right++
+	}
+	minimum := max(24, w/20)
+	if left < minimum {
+		left = 0
+	}
+	if right < minimum {
+		right = 0
+	}
+	return left, right
+}
+
+// Sample the dominant actual color rather than averaging text/avatar pixels
+// into a dirty fill. Cache this on accepted boundary changes, not each preview.
+func sidebarBackground(frame *image.RGBA, left, right int) color.RGBA {
+	if frame == nil || right <= left {
+		return color.RGBA{}
+	}
+	counts := make(map[color.RGBA]int)
+	var best color.RGBA
+	most := 0
+	for y := 0; y < frame.Rect.Dy(); y += max(1, frame.Rect.Dy()/128) {
+		for x := left; x < right; x += max(1, (right-left)/64) {
+			c := frame.RGBAAt(frame.Rect.Min.X+x, frame.Rect.Min.Y+y)
+			counts[c]++
+			if counts[c] > most {
+				best, most = c, counts[c]
+			}
+		}
+	}
+	return best
+}
+
+// Pack both sidebars into one small detached buffer. A SubImage would keep
+// the entire desktop frame alive even for a narrow navigation rail.
+func sidebarPixels(frame *image.RGBA, left, right int) *image.RGBA {
+	if left+right == 0 {
+		return nil
+	}
+	out := image.NewRGBA(image.Rect(0, 0, left+right, frame.Rect.Dy()))
+	draw.Draw(out, image.Rect(0, 0, left, out.Rect.Dy()), frame, frame.Rect.Min, draw.Src)
+	draw.Draw(out, image.Rect(left, 0, left+right, out.Rect.Dy()), frame, image.Pt(frame.Rect.Max.X-right, frame.Rect.Min.Y), draw.Src)
+	return out
+}
+
+func sidebarRightBackground(frame *image.RGBA, right int) color.RGBA {
+	if frame == nil {
+		return color.RGBA{}
+	}
+	return sidebarBackground(frame, frame.Rect.Dx()-right, frame.Rect.Dx())
 }

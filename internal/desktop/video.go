@@ -41,8 +41,10 @@ type videoWindow struct {
 	choosing                                         bool
 	exportCancel                                     context.CancelFunc
 	traySecond                                       int64
-	// bar is the floating control beside the recorded region.
-	bar *mygo.Window
+	// bar is the floating control beside the recorded region, and frame is the
+	// click-through selection border outside the recorded pixels.
+	bar, frame *mygo.Window
+	frameHole  ui.Rect
 }
 
 const (
@@ -199,7 +201,15 @@ func (v *videoWindow) later(fn func()) {
 	v.app.dispatch(func() {
 		if !v.closed {
 			fn()
-			v.win.Invalidate()
+			if v.win != nil {
+				v.win.Invalidate()
+			}
+			if v.bar != nil && !v.bar.IsDestroyed() {
+				v.bar.Invalidate()
+			}
+			if v.frame != nil && !v.frame.IsDestroyed() {
+				v.frame.Invalidate()
+			}
 		}
 	})
 }
@@ -248,7 +258,7 @@ func (v *videoWindow) view(c *ui.Context) {
 			case v.paused:
 				state = "已暂停"
 			case v.running:
-				state = "● 录制中"
+				state = "录制中"
 			case v.busy:
 				state = "准备中"
 			case v.exporting:
@@ -256,7 +266,7 @@ func (v *videoWindow) view(c *ui.Context) {
 			}
 			badge := ui.Badge(c, state).Shrink(0)
 			if v.running && !v.paused {
-				badge.Background(c.Theme().Danger).TextColor(c.Theme().AccentText)
+				badge.Background(brand.Signal).TextColor(c.Theme().AccentText)
 			}
 		})
 		if !locked {
@@ -342,7 +352,7 @@ func (v *videoWindow) recordView(c *ui.Context) {
 		})
 		ui.Column(c).Gap(5).Children(func() {
 			ui.Text(c, "保存位置").FontSize(12)
-			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Padding(8, 10).Radius(8).Background(c.Theme().Surface).Border(1, c.Theme().Border).Children(func() {
 				where := v.app.recordDir()
 				if v.app.cfg.AskRecordPath {
 					where = "每次询问（默认 " + where + "）"
@@ -359,40 +369,44 @@ func (v *videoWindow) recordView(c *ui.Context) {
 		ui.Text(c, "首次框选后自动记住区域，再次录制无需重选。结束后自动保存，也可从托盘暂停或结束。").FontSize(12).TextColor(muted)
 	}
 	if v.running || v.status.Finished {
-		ui.Text(c, clock(v.status.ElapsedMS)).FontSize(32).Font("monospace")
-		encoder := v.status.Encoder
-		if encoder == "mpeg4" {
-			encoder = "MPEG-4 软件编码"
-		} else if encoder == "libx264" {
-			encoder = "H.264 软件编码"
-		} else if encoder != "" {
-			encoder = "H.264 硬件编码 · " + encoder
-		}
-		ui.Text(c, encoder).FontSize(12)
-		average := float64(0)
-		if v.status.ElapsedMS > 0 {
-			average = float64(v.status.Frames) * 1000 / float64(v.status.ElapsedMS)
-		}
-		ui.Text(c, fmt.Sprintf("%d × %d · 目标 %d fps · 编码平均 %.1f fps", v.status.Width, v.status.Height, v.status.FPS, average)).FontSize(12).TextColor(muted)
-		ui.Text(c, fmt.Sprintf("已编码 %d 帧 · 复用静止画面 %d 帧 · 延迟丢帧 %d", v.status.Frames, v.status.Repeated, v.status.Missed)).FontSize(12).TextColor(muted)
+		ui.Column(c).FillWidth().Padding(10, 12).Gap(4).Radius(8).Background(c.Theme().Surface).Border(1, c.Theme().Border).Children(func() {
+			ui.Text(c, clock(v.status.ElapsedMS)).FontSize(32).Font("monospace")
+			encoder := v.status.Encoder
+			if encoder == "mpeg4" {
+				encoder = "MPEG-4 软件编码"
+			} else if encoder == "libx264" {
+				encoder = "H.264 软件编码"
+			} else if encoder != "" {
+				encoder = "H.264 硬件编码 · " + encoder
+			}
+			ui.Text(c, encoder).FontSize(12)
+			average := float64(0)
+			if v.status.ElapsedMS > 0 {
+				average = float64(v.status.Frames) * 1000 / float64(v.status.ElapsedMS)
+			}
+			ui.Text(c, fmt.Sprintf("%d × %d · 目标 %d fps · 编码平均 %.1f fps", v.status.Width, v.status.Height, v.status.FPS, average)).FontSize(12).TextColor(muted)
+			ui.Text(c, fmt.Sprintf("已编码 %d 帧 · 复用静止画面 %d 帧 · 延迟丢帧 %d", v.status.Frames, v.status.Repeated, v.status.Missed)).FontSize(12).TextColor(muted)
+		})
 	}
 	if v.path != "" && !v.running && !v.busy {
-		ui.Text(c, "视频已保存").FontWeight(600)
-		if v.preview != nil {
-			ui.Image(c, v.preview).Fit(ui.Contain).FillWidth().Height(140).Label("视频首帧预览")
-		}
-		ui.Text(c, v.path).FontSize(12).Selectable()
-		ui.Row(c).Wrap().Gap(8).Children(func() {
-			if ui.Button(c, "播放视频").Clicked() {
-				_ = mygo.Shell.OpenPath(v.path)
+		ui.Column(c).FillWidth().Padding(10, 12).Gap(8).Radius(8).Background(c.Theme().Surface).Border(1, c.Theme().Border).Children(func() {
+			ui.Text(c, "视频已保存").FontWeight(600)
+			if v.preview != nil {
+				ui.Image(c, v.preview).Fit(ui.Contain).FillWidth().Height(140).Label("视频首帧预览")
 			}
-			if ui.Button(c, "打开文件夹").Clicked() {
-				_ = mygo.Shell.OpenPath(filepath.Dir(v.path))
-			}
-			if ui.PrimaryButton(c.Key("to-gif"), "转为 GIF…").Disabled(v.exporting).Clicked() {
-				v.useGIFSource(v.path, float64(v.status.ElapsedMS)/1000)
-				v.tab = videoTabGIF
-			}
+			ui.Text(c, v.path).FontSize(12).Selectable()
+			ui.Row(c).Wrap().Gap(8).Children(func() {
+				if ui.Button(c, "播放视频").Clicked() {
+					_ = mygo.Shell.OpenPath(v.path)
+				}
+				if ui.Button(c, "打开文件夹").Clicked() {
+					_ = mygo.Shell.OpenPath(filepath.Dir(v.path))
+				}
+				if ui.PrimaryButton(c.Key("to-gif"), "转为 GIF…").Disabled(v.exporting).Clicked() {
+					v.useGIFSource(v.path, float64(v.status.ElapsedMS)/1000)
+					v.tab = videoTabGIF
+				}
+			})
 		})
 	}
 }
@@ -401,7 +415,7 @@ func (v *videoWindow) gifView(c *ui.Context) {
 	muted := c.Theme().TextMuted
 	ui.Column(c).Gap(5).Children(func() {
 		ui.Text(c, "视频").FontSize(12)
-		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Padding(8, 10).Radius(8).Background(c.Theme().Surface).Border(1, c.Theme().Border).Children(func() {
 			name := "尚未选择视频"
 			if v.gifSource != "" {
 				name = filepath.Base(v.gifSource)
@@ -453,15 +467,17 @@ func (v *videoWindow) gifView(c *ui.Context) {
 		ui.Text(c, fmt.Sprintf("正在导出 %d%%", int(v.gifProgress*100))).FontSize(12).TextColor(muted)
 	}
 	if v.gifResult != "" && !v.exporting {
-		ui.Text(c, "GIF 已保存").FontWeight(600)
-		ui.Text(c, v.gifResult).FontSize(12).Selectable()
-		ui.Row(c).Gap(8).Children(func() {
-			if ui.Button(c.Key("open-gif"), "打开 GIF").Clicked() {
-				_ = mygo.Shell.OpenPath(v.gifResult)
-			}
-			if ui.Button(c.Key("open-gif-folder"), "打开文件夹").Clicked() {
-				_ = mygo.Shell.OpenPath(filepath.Dir(v.gifResult))
-			}
+		ui.Column(c).FillWidth().Padding(10, 12).Gap(8).Radius(8).Background(c.Theme().Surface).Border(1, c.Theme().Border).Children(func() {
+			ui.Text(c, "GIF 已保存").FontWeight(600)
+			ui.Text(c, v.gifResult).FontSize(12).Selectable()
+			ui.Row(c).Gap(8).Children(func() {
+				if ui.Button(c.Key("open-gif"), "打开 GIF").Clicked() {
+					_ = mygo.Shell.OpenPath(v.gifResult)
+				}
+				if ui.Button(c.Key("open-gif-folder"), "打开文件夹").Clicked() {
+					_ = mygo.Shell.OpenPath(filepath.Dir(v.gifResult))
+				}
+			})
 		})
 	}
 }
@@ -512,7 +528,13 @@ func (v *videoWindow) chooseVideo() {
 	})
 }
 
-const recordBarW, recordBarH = 264, 48
+const recordBarW, recordBarH = 304, 56
+
+var (
+	recordPauseIcon  = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5v14M15 5v14"/></svg>`))
+	recordResumeIcon = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m8 5 11 7-11 7z"/></svg>`))
+	recordStopIcon   = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>`))
+)
 
 // openBar shows timer, pause and stop beside the recorded region, so the
 // recording can be controlled without the tray.
@@ -523,6 +545,11 @@ func (v *videoWindow) openBar(display mygo.Display, region image.Rectangle, sour
 	b := display.Bounds
 	sx, sy := float32(b.Width)/float32(source.X), float32(b.Height)/float32(source.Y)
 	selected := ui.Rect{X: float32(region.Min.X) * sx, Y: float32(region.Min.Y) * sy, W: float32(region.Dx()) * sx, H: float32(region.Dy()) * sy}
+	if v.frame == nil {
+		if fw, _, hole, ok := openRegionFrame(v.ctx, brand.Title("录屏选区"), display, selected, v.frameView, v.app.worker); ok {
+			v.frame, v.frameHole = fw, hole
+		}
+	}
 	rect, ok := barBeside(selected, float32(b.Width), float32(b.Height), recordBarW, recordBarH)
 	if !ok {
 		v.notice = "录制区域周围没有空间放置控制条，请用托盘或录屏快捷键结束。"
@@ -551,36 +578,80 @@ func (v *videoWindow) closeBar() {
 		}
 		v.bar = nil
 	}
+	if v.frame != nil {
+		if !v.frame.IsDestroyed() {
+			v.frame.Destroy()
+		}
+		v.frame = nil
+	}
+}
+
+func (v *videoWindow) frameView(c *ui.Context) {
+	panelTheme(c)
+	t := c.Theme()
+	stroke := brand.Signal
+	if v.paused {
+		stroke = t.TextMuted
+	}
+	if v.ending {
+		stroke = brand.Accent(t.Dark)
+	}
+	drawRegionFrame(c, v.frameHole, stroke)
 }
 
 func (v *videoWindow) barView(c *ui.Context) {
 	panelTheme(c)
+	c.Root().Background(ui.Transparent)
 	t := c.Theme()
-	ui.Row(c).Fill().Padding(6, 8, 6, 12).Gap(8).AlignItems(ui.Center).Background(t.Background).
+	ui.Row(c).Fill().Padding(8).Gap(6).AlignItems(ui.Center).Background(t.Background).
 		Border(1, t.Border).Radius(12).Children(func() {
-		dot := t.Danger
+		state, dot := "录制中", brand.Signal
 		if v.paused {
-			dot = t.TextMuted
+			state, dot = "已暂停", t.TextMuted
 		}
-		ui.Box(c).Size(10, 10).Radius(5).Background(dot).Shrink(0)
-		label := clock(v.status.ElapsedMS)
 		if v.ending {
-			label = "保存中…"
+			state, dot = "正在保存…", brand.Accent(t.Dark)
 		}
-		ui.Text(c, label).Font("monospace").FontSize(15).FontWeight(600).Grow(1).MinWidth(0)
-		pause := "暂停"
+		// Keep the timer and both actions in fixed slots, including hour-long
+		// recordings and in-flight commands, so a tick never moves the buttons.
+		ui.Row(c).Grow(1).MinWidth(0).Gap(8).AlignItems(ui.Center).Padding(0, 4).Children(func() {
+			ui.Box(c).Size(6, 6).Radius(3).Background(dot).Shrink(0)
+			ui.Column(c).Gap(1).Children(func() {
+				ui.Text(c, state).FontSize(11).TextColor(t.TextMuted).SingleLine()
+				ui.Text(c, clock(v.status.ElapsedMS)).Font("monospace").FontSize(16).FontWeight(600).SingleLine()
+			})
+		})
+		ui.Box(c).Size(1, 24).Background(t.Border).Shrink(0)
+		pause, icon := "暂停", recordPauseIcon
 		if v.paused {
-			pause = "继续"
+			pause, icon = "继续", recordResumeIcon
 		}
-		if ui.Button(c.Key("bar-pause"), pause).Height(32).Padding(0, 10).Disabled(!v.running || v.busy || v.ending).Clicked() {
+		button := ui.Button(c.Key("bar-pause"), "").Size(72, 36).Padding(0).Gap(5).Radius(8).Shrink(0).
+			Border(0, ui.Transparent).Label(pause).
+			Disabled(!v.running || v.busy || v.ending)
+		background := t.Surface
+		if button.Pressed() {
+			background = t.SurfacePressed
+		} else if button.Hovered() {
+			background = t.SurfaceHover
+		}
+		button.Background(background).Children(func() {
+			ui.Icon(c, icon).Size(16, 16).AccessHidden(true)
+			ui.Text(c, pause).FontSize(13).SingleLine()
+		})
+		if button.Clicked() {
 			if v.paused {
 				v.command("resume")
 			} else {
 				v.command("pause")
 			}
 		}
-		stop := ui.PrimaryButton(c.Key("bar-stop"), "结束").Height(32).Padding(0, 12).Disabled(!v.running || v.ending).
-			Background(t.Danger).Tooltip("结束并保存录屏")
+		stop := ui.PrimaryButton(c.Key("bar-stop"), "").Size(76, 36).Padding(0).Gap(5).Radius(8).Shrink(0).
+			Label("结束").Disabled(!v.running || v.ending).
+			Children(func() {
+				ui.Icon(c, recordStopIcon).Size(16, 16).AccessHidden(true)
+				ui.Text(c, "结束").FontSize(13).SingleLine()
+			})
 		if stop.Clicked() {
 			v.command("finish")
 		}
@@ -597,7 +668,15 @@ func (v *videoWindow) command(command string) {
 		if command == "finish" {
 			v.ending = true
 		}
-		v.win.Invalidate()
+		if v.win != nil {
+			v.win.Invalidate()
+		}
+		if v.bar != nil && !v.bar.IsDestroyed() {
+			v.bar.Invalidate()
+		}
+		if v.frame != nil && !v.frame.IsDestroyed() {
+			v.frame.Invalidate()
+		}
 	default:
 	}
 }
@@ -665,7 +744,15 @@ func (v *videoWindow) startRecording(reuse bool, token string, selected *editor.
 			}
 			if !v.closed {
 				v.win.Show()
-				v.win.Invalidate()
+				if v.win != nil {
+					v.win.Invalidate()
+				}
+				if v.bar != nil && !v.bar.IsDestroyed() {
+					v.bar.Invalidate()
+				}
+				if v.frame != nil && !v.frame.IsDestroyed() {
+					v.frame.Invalidate()
+				}
 			}
 		})
 		// The first protocol probe may launch a helper and wait up to five
@@ -877,8 +964,11 @@ func (v *videoWindow) startRecording(reuse bool, token string, selected *editor.
 					v.busy = v.ending
 					v.paused = command == "pause"
 					v.app.refreshTray()
-					if v.bar != nil {
+					if v.bar != nil && !v.bar.IsDestroyed() {
 						v.bar.Invalidate()
+					}
+					if v.frame != nil && !v.frame.IsDestroyed() {
+						v.frame.Invalidate()
 					}
 				})
 			case <-ticker.C:

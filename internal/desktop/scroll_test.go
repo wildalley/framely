@@ -262,3 +262,46 @@ func TestWideScrollSelectionKeepsControlsByTheLowerRightCorner(t *testing.T) {
 		}
 	}
 }
+
+func TestScrollPreviewBesideAvoidsRegionAndToolbarAndRendersLivePreview(t *testing.T) {
+	for _, region := range []ui.Rect{
+		{X: 300, Y: 120, W: 800, H: 600},
+		{X: 270, Y: 10, W: 2260, H: 1320},
+	} {
+		toolbar, ok := toolbarBeside(region, 2560, 1440)
+		if !ok {
+			t.Fatalf("no toolbar for %+v", region)
+		}
+		previewRect, ok := previewBeside(region, toolbar, 2560, 1440)
+		if !ok {
+			t.Fatalf("no preview placement for %+v", region)
+		}
+		if rectsOverlap(previewRect, expandRect(region, 32)) {
+			t.Fatalf("preview overlaps capture region: preview=%+v region=%+v", previewRect, region)
+		}
+		if rectsOverlap(previewRect, expandRect(toolbar, 12)) {
+			t.Fatalf("preview overlaps toolbar: preview=%+v toolbar=%+v", previewRect, toolbar)
+		}
+		for _, dark := range []bool{false, true} {
+			v := &scrollWindow{running: true, floating: true, height: 1840}
+			sample := image.NewRGBA(image.Rect(0, 0, 240, 480))
+			for y := range 480 {
+				for x := range 240 {
+					sample.SetRGBA(x, y, color.RGBA{R: 40, G: uint8(80 + y/4), B: 140, A: 255})
+				}
+			}
+			v.setPreview(sample)
+			tt := ui.NewTester(v.previewOverlayView, int(previewRect.W), int(previewRect.H))
+			tt.SetDark(dark)
+			for _, label := range []string{"实时预览", "1840 px"} {
+				if _, ok := tt.Find(label); !ok {
+					t.Fatalf("dark=%v missing %s", dark, label)
+				}
+			}
+			if got := tt.Image().RGBAAt(0, 0); got.A != 0 {
+				t.Fatalf("preview corner should be transparent, got %+v", got)
+			}
+			saveShortcutPreview(t, tt, fmt.Sprintf("scroll-live-preview-dark-%t", dark))
+		}
+	}
+}

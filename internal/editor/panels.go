@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/wildalley/framely/internal/brand"
 	"github.com/wildalley/framely/internal/doc"
 )
 
@@ -54,12 +55,12 @@ func (a *App) slider(c *ui.Context, key, label string, value, lo, hi float64, su
 			ui.Textf(c, "%d%s", int(math.Round(value)), suffix).Font("monospace").FontSize(12)
 		})
 		v := value
-		s := ui.SliderBase(c.Key(key), &v, lo, hi).Step(1).Label(label).FillWidth().Height(20).Padding(0, 5)
+		s := ui.SliderBase(c.Key(key), &v, lo, hi).Step(1).Label(label).FillWidth().Height(20).Padding(0, 6)
 		s.Draw(func(p *ui.Painter, r ui.Rect) {
-			x := r.X + 5 + (r.W-10)*float32(clamp((v-lo)/(hi-lo), 0, 1))
-			p.Fill(ui.Rect{X: r.X + 5, Y: r.Y + r.H/2 - 1.5, W: r.W - 10, H: 3}, p.Theme().Border, 1.5)
-			p.Fill(ui.Rect{X: r.X + 5, Y: r.Y + r.H/2 - 1.5, W: x - r.X - 5, H: 3}, p.Theme().Accent, 1.5)
-			p.Fill(ui.Rect{X: x - 4, Y: r.Y + r.H/2 - 4, W: 8, H: 8}, p.Theme().Accent, 4)
+			x := r.X + 6 + (r.W-12)*float32(clamp((v-lo)/(hi-lo), 0, 1))
+			p.Fill(ui.Rect{X: r.X + 6, Y: r.Y + r.H/2 - 2, W: r.W - 12, H: 4}, p.Theme().Border, 2)
+			p.Fill(ui.Rect{X: r.X + 6, Y: r.Y + r.H/2 - 2, W: x - r.X - 6, H: 4}, p.Theme().Accent, 2)
+			p.Fill(ui.Rect{X: x - 6, Y: r.Y + r.H/2 - 6, W: 12, H: 12}, p.Theme().Accent, 6)
 		})
 		held := s.Pressed() || s.Dragging()
 		if s.Changed() {
@@ -92,16 +93,9 @@ func (a *App) stylePanel(c *ui.Context, style doc.Style) {
 		a.cornerControl(c, "annotation-corners", "矩形圆角", style.CornerRatio, func(v float64, live bool) { a.changeStyle(func(s *doc.Style) { s.CornerRatio = v }, live) })
 	}
 	if target != doc.ToolMosaic {
-		ui.Row(c).Gap(5).Wrap().Children(func() {
+		ui.Row(c.Key("panel-colors")).FillWidth().Gap(8).Wrap().Children(func() {
 			for _, col := range doc.Colors {
-				b := ui.Button(c.Key("color-"+col), "").Size(28, 28).Radius(6).
-					Background(ui.Hex(col)).Border(1, ui.RGBA(0, 0, 0, 0.18)).Label("颜色 " + col).Tooltip(col)
-				if strings.EqualFold(style.Color, col) {
-					b.Border(2, c.Theme().Accent)
-				}
-				if b.Clicked() {
-					a.changeStyle(func(s *doc.Style) { s.Color = col }, false)
-				}
+				a.colorDot(c, col, strings.EqualFold(style.Color, col))
 			}
 		})
 	}
@@ -165,7 +159,11 @@ func (a *App) cornerControl(c *ui.Context, key, label string, ratio float64, set
 	ui.Row(c.Key(key + "-presets")).Gap(4).Wrap().Children(func() {
 		for _, percent := range []int{0, 10, 25, 50, 75, 100} {
 			on := math.Abs(ratio*100-float64(percent)) < 0.5
-			if ui.Toggle(c.Key(fmt.Sprintf("%s-%d", key, percent)), &on, fmt.Sprintf("%d%%", percent)).Label(fmt.Sprintf("%s %d%%", label, percent)).Height(28).Padding(0, 4).Changed() {
+			toggle := ui.Toggle(c.Key(fmt.Sprintf("%s-%d", key, percent)), &on, fmt.Sprintf("%d%%", percent)).Label(fmt.Sprintf("%s %d%%", label, percent)).Height(28).Padding(0, 6).Radius(6)
+			if on {
+				toggle.Background(brand.Soft(c)).TextColor(brand.Ink(c)).Border(1, c.Theme().Accent)
+			}
+			if toggle.Changed() {
 				a.finishEditing()
 				set(float64(percent)/100, false)
 			}

@@ -160,10 +160,78 @@ func TestRecordBarStaysOutsideRegionAndShowsControls(t *testing.T) {
 			if paused {
 				want = "继续"
 			}
-			if _, ok := tt.Find(want); !ok {
+			pauseRect, ok := tt.Find(want)
+			if !ok {
 				t.Fatalf("missing %s", want)
+			}
+			img := tt.Image()
+			if got := img.RGBAAt(0, 0); got.A != 0 {
+				t.Fatalf("bar corner should be transparent, got %+v", got)
+			}
+			if err := tt.Click(want); err != nil {
+				t.Fatal(err)
+			}
+			after := tt.Image()
+			topSample := after.RGBAAt(int(pauseRect.X+pauseRect.W/2), 4)
+			bgSample := after.RGBAAt(20, 4)
+			if topSample != bgSample {
+				t.Fatalf("unexpected tooltip artifact above %s after click: got %+v, want %+v", want, topSample, bgSample)
 			}
 			saveShortcutPreview(t, tt, fmt.Sprintf("record-bar-paused-%t-dark-%t", paused, dark))
 		}
 	}
+}
+
+func TestRecordBarLongTimerAndSavingState(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		v := newVideoWindow(&application{ctx: context.Background()}, context.Background(), func() {})
+		v.running, v.status.ElapsedMS = true, 37_425_000
+		tt := ui.NewTester(v.barView, recordBarW, recordBarH)
+		tt.SetDark(dark)
+		pauseBefore, _ := tt.Find("暂停")
+		for _, saving := range []bool{false, true} {
+			v.ending = saving
+			tt.Frame()
+			state := "录制中"
+			if saving {
+				state = "正在保存…"
+			}
+			for _, label := range []string{state, "10:23:45", "暂停", "结束"} {
+				r, ok := tt.Find(label)
+				if !ok || r.X < 0 || r.Y < 0 || r.X+r.W > recordBarW+.5 || r.Y+r.H > recordBarH+.5 {
+					t.Fatalf("%s saving=%v dark=%v hidden: %+v", label, saving, dark, r)
+				}
+			}
+			if r, _ := tt.Find("暂停"); r != pauseBefore {
+				t.Fatal("saving state moved actions")
+			}
+			saveShortcutPreview(t, tt, fmt.Sprintf("record-bar-saving-%t-dark-%t", saving, dark))
+		}
+	}
+}
+
+func TestRecordRegionFrameKeepsInteriorTransparent(t *testing.T) {
+	if _, _, ok := regionFrameRect(ui.Rect{X: 0, Y: 0, W: 1920, H: 1080}, 1920, 1080); ok {
+		t.Fatal("full-screen recording should not open a region border frame")
+	}
+	region := ui.Rect{X: 40, Y: 30, W: 240, H: 160}
+	outer, hole, ok := regionFrameRect(region, 1920, 1080)
+	if !ok {
+		t.Fatal("expected region frame around sub-region")
+	}
+	v := newVideoWindow(&application{ctx: context.Background()}, context.Background(), func() {})
+	v.running, v.frameHole = true, hole
+	tt := ui.NewTester(v.frameView, int(outer.W), int(outer.H))
+	img := tt.Image()
+	if got := img.RGBAAt(1, 1); got.A == 0 {
+		t.Fatalf("expected visible corner bracket at outer frame, got %+v", got)
+	}
+	for y := int(hole.Y); y < int(hole.Y+hole.H); y++ {
+		for x := int(hole.X); x < int(hole.X+hole.W); x++ {
+			if got := img.RGBAAt(x, y); got.A != 0 {
+				t.Fatalf("frame contaminated hole at (%d,%d): %+v", x, y, got)
+			}
+		}
+	}
+	saveShortcutPreview(t, tt, "record-region-frame")
 }

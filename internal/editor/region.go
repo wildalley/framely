@@ -3,6 +3,7 @@ package editor
 import (
 	"context"
 	"errors"
+	"fmt"
 	"image"
 	"math"
 
@@ -230,7 +231,12 @@ func (p *imagePicker) view(c *ui.Context) {
 		}
 	}
 	ui.Column(c).Fill().Padding(12).Gap(10).Children(func() {
-		ui.Text(c, p.title).FontWeight(600)
+		ui.Row(c).Justify(ui.SpaceBetween).AlignItems(ui.Center).Gap(8).Children(func() {
+			ui.Text(c, p.title).FontWeight(600)
+			if sel := p.selection(); !sel.Empty() {
+				ui.Badge(c, fmt.Sprintf("%d × %d", sel.Dx(), sel.Dy())).Shrink(0)
+			}
+		})
 		hint := "拖动框选；框内移动，边缘缩放。方向键移动，Shift+方向键调大小，Enter 确认。"
 		if p.quick {
 			hint = "避开滚动条和动画；框选至少 80 × 160 像素，松开立即开始。Esc 取消。"
@@ -240,7 +246,7 @@ func (p *imagePicker) view(c *ui.Context) {
 		if cursor == ui.CursorDefault {
 			cursor = ui.CursorCrosshair
 		}
-		box := ui.Box(c.Key("image-region")).Label("图片选区").Grow(1).MinHeight(80).FillWidth().Clip().Cursor(cursor)
+		box := ui.Box(c.Key("image-region")).Label("图片选区").Grow(1).MinHeight(80).FillWidth().Radius(8).Background(c.Theme().Surface).Border(1, c.Theme().Border).Clip().Cursor(cursor)
 		box.HandleInput(func(ev ui.InputEvent) bool {
 			switch ev.Kind {
 			case ui.InputPointerDown:
@@ -308,7 +314,15 @@ func (p *imagePicker) view(c *ui.Context) {
 				})
 			}
 			if sel := p.selection(); !sel.Empty() {
-				painter.Stroke(ui.Rect{X: at.X + float32(float64(sel.Min.X)*scale), Y: at.Y + float32(float64(sel.Min.Y)*scale), W: float32(float64(sel.Dx()) * scale), H: float32(float64(sel.Dy()) * scale)}, c.Theme().Accent, 0, 2)
+				sx := at.X + float32(float64(sel.Min.X)*scale)
+				sy := at.Y + float32(float64(sel.Min.Y)*scale)
+				sw := float32(float64(sel.Dx()) * scale)
+				sh := float32(float64(sel.Dy()) * scale)
+				painter.Fill(ui.Rect{X: at.X, Y: at.Y, W: at.W, H: sy - at.Y}, pickDim, 0)
+				painter.Fill(ui.Rect{X: at.X, Y: sy + sh, W: at.W, H: at.Y + at.H - sy - sh}, pickDim, 0)
+				painter.Fill(ui.Rect{X: at.X, Y: sy, W: sx - at.X, H: sh}, pickDim, 0)
+				painter.Fill(ui.Rect{X: sx + sw, Y: sy, W: at.X + at.W - sx - sw, H: sh}, pickDim, 0)
+				painter.Stroke(ui.Rect{X: sx, Y: sy, W: sw, H: sh}, c.Theme().Accent, 0, 2)
 				for _, v := range p.handles() {
 					handle := ui.Rect{X: r.X + float32(v.X) - 4, Y: r.Y + float32(v.Y) - 4, W: 8, H: 8}
 					painter.Fill(handle, ui.RGBA(255, 255, 255, 1), 2)

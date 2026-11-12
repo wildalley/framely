@@ -57,8 +57,9 @@ type scrollWindow struct {
 	floating                                 bool
 	holdsCapture                             bool
 	display                                  mygo.Display
-	overlay                                  *mygo.Window
+	overlay, regionFrame, previewOverlay     *mygo.Window
 	overlayRegion, overlayToolbar            ui.Rect
+	overlayPreview, frameHole                ui.Rect
 	reuse                                    *editor.ScreenSelection
 }
 
@@ -157,16 +158,26 @@ func (v *scrollWindow) later(fn func()) {
 		}
 	})
 }
+func (v *scrollWindow) invalidateOverlays() {
+	for _, w := range []*mygo.Window{v.overlay, v.regionFrame, v.previewOverlay} {
+		if w != nil && !w.IsDestroyed() {
+			w.Invalidate()
+		}
+	}
+}
+
 func (v *scrollWindow) release() {
 	if v.closed {
 		return
 	}
 	v.closed = true
 	v.cancel()
-	if v.overlay != nil {
-		v.overlay.Destroy()
-		v.overlay = nil
+	for _, w := range []*mygo.Window{v.overlay, v.regionFrame, v.previewOverlay} {
+		if w != nil && !w.IsDestroyed() {
+			w.Destroy()
+		}
 	}
+	v.overlay, v.regionFrame, v.previewOverlay = nil, nil, nil
 	v.restore()
 	v.preview = nil
 	v.previewBuffers = [2]*image.RGBA{}
@@ -239,7 +250,7 @@ func (v *scrollWindow) finish() {
 	log.Print(brand.Name + ": long screenshot finish requested")
 	v.send("finish")
 	if v.overlay != nil {
-		v.overlay.Invalidate()
+		v.invalidateOverlays()
 	} else {
 		v.win.Show()
 	}
@@ -263,23 +274,46 @@ func (v *scrollWindow) view(c *ui.Context) {
 		v.floatingView(c)
 		return
 	}
-	ui.Column(c).Fill().Padding(18).Gap(12).Children(func() {
-		ui.Scroll(c).Grow(1).MinHeight(0).Gap(12).Children(func() {
-			panelHeader(c, "长截图", "框选滚动区域，自动拼接", nil)
+	t := c.Theme()
+	ui.Column(c).Fill().Padding(20).Gap(12).Children(func() {
+		panelHeader(c, "长截图", "框选滚动区域，自动拼接", func() {
+			state := "就绪"
+			switch {
+			case v.ending:
+				state = "正在生成…"
+			case v.paused:
+				state = "已暂停"
+			case v.running:
+				state = "采集中"
+			case v.busy || v.loading:
+				state = "准备中"
+			}
+			badge := ui.Badge(c, state).Shrink(0)
+			if v.running && !v.paused {
+				badge.Background(brand.Signal).TextColor(t.AccentText)
+			}
+		})
+		ui.Scroll(c.Key("scroll-content")).Grow(1).MinHeight(0).Gap(12).Children(func() {
 			if !v.running {
-				ui.Text(c, "框选滚动内容，松开立即开始。截图过程中可从托盘查看或完成。").TextColor(c.Theme().TextMuted)
+				ui.Text(c, "框选滚动内容，松开立即开始。截图过程中可从托盘查看或完成。").FontSize(12).TextColor(t.TextMuted)
 				if v.loading {
-					ui.Text(c, "正在检查采集组件…")
+					ui.Text(c, "正在检查采集组件…").FontSize(12).TextColor(t.TextMuted)
 				}
 				if len(v.monitors) > 0 {
 					names := make([]string, len(v.monitors))
 					for i, m := range v.monitors {
 						names[i] = m.Name
 					}
-					ui.Select(c, &v.monitorName, names).Label("采集显示器").FillWidth().Disabled(v.busy)
+					ui.Column(c).Gap(5).Children(func() {
+						ui.Text(c, "采集显示器").FontSize(12)
+						ui.Select(c, &v.monitorName, names).Label("采集显示器").FillWidth().Disabled(v.busy)
+					})
 				}
 			} else {
-				ui.Text(c, fmt.Sprintf("已拼接高度：%d px", v.height)).Font("monospace")
+				ui.Row(c).Gap(8).AlignItems(ui.Center).Padding(10, 12).Radius(8).Background(t.Surface).Border(1, t.Border).Children(func() {
+					ui.Box(c).Size(8, 8).Radius(4).Background(v.overlayStatusDot(t)).Shrink(0)
+					ui.Text(c, fmt.Sprintf("已拼接高度：%d px", v.height)).Font("monospace").FontWeight(600)
+				})
 			}
 			auto := ui.Checkbox(c.Key("automatic"), &v.automatic, "自动向下滚动").Disabled(v.loading || v.busy || !v.canAuto || v.sourceEnded || v.running && !v.autoGranted)
 			if auto.Changed() && v.running {
@@ -287,35 +321,38 @@ func (v *scrollWindow) view(c *ui.Context) {
 				v.send("pause")
 			}
 			if !v.loading && !v.canAuto {
-				ui.Text(c, "当前桌面未提供自动滚动所需的指针控制接口，可使用手动模式。").FontSize(12).TextColor(c.Theme().TextMuted)
+				ui.Text(c, "当前桌面未提供自动滚动所需的指针控制接口，可使用手动模式。").FontSize(12).TextColor(t.TextMuted)
 			}
 			if v.running {
-				ui.Text(c, "再次按全局截图快捷键可完成；从托盘打开此窗口会暂停。手动模式请缓慢向下滚动。").FontSize(12).TextColor(c.Theme().TextMuted)
+				ui.Text(c, "再次按全局截图快捷键可完成；从托盘打开此窗口会暂停。手动模式请缓慢向下滚动。").FontSize(12).TextColor(t.TextMuted)
 			}
 			if v.setupError != "" {
-				ui.Text(c, v.setupError).TextColor(c.Theme().Danger).Selectable()
+				ui.Text(c, v.setupError).FontSize(12).TextColor(t.Danger).Selectable()
 			}
 			if v.notice != "" {
-				ui.Text(c, v.notice).TextColor(c.Theme().TextMuted).Selectable()
+				ui.Text(c, v.notice).FontSize(12).TextColor(t.TextMuted).Selectable()
 			}
 			if !v.running {
-				if ui.Button(c, "权限与长截图设置").Clicked() {
-					v.app.showSettings("")
-					v.app.settings.tab = 2
-					v.app.settings.win.Invalidate()
-				}
+				ui.Row(c).Children(func() {
+					if ui.Button(c, "权限与长截图设置").Clicked() {
+						v.app.showSettings("")
+						v.app.settings.tab = 3
+						v.app.settings.win.Invalidate()
+					}
+				})
 			}
 			if v.preview != nil {
-				ui.Box(c).Height(300).FillWidth().Clip().Background(c.Theme().Surface).Draw(func(p *ui.Painter, r ui.Rect) {
+				ui.Box(c).Height(300).FillWidth().Radius(8).Clip().Background(t.Surface).Border(1, t.Border).Draw(func(p *ui.Painter, r ui.Rect) {
 					if v.preview != nil {
 						v.drawPreview(p, r)
 					}
 				})
 			} else {
-				ui.Column(c).Padding(16).Gap(10).FillWidth().Background(c.Theme().Surface).Children(func() {
-					ui.Text(c, "1. 选择共享的窗口或显示器")
-					ui.Text(c, "2. 框选需要滚动的内容")
-					ui.Text(c, "3. 缓慢滚动，再按截图快捷键完成")
+				ui.Column(c).Padding(14, 16).Gap(8).FillWidth().Radius(8).Background(t.Surface).Border(1, t.Border).Children(func() {
+					ui.Text(c, "操作步骤").FontSize(12).FontWeight(600).TextColor(t.TextMuted)
+					ui.Text(c, "1. 选择共享的窗口或显示器").FontSize(13)
+					ui.Text(c, "2. 框选需要滚动的内容").FontSize(13)
+					ui.Text(c, "3. 缓慢滚动，再按截图快捷键完成").FontSize(13)
 				})
 			}
 		})
@@ -355,16 +392,20 @@ func (v *scrollWindow) resume() {
 	if !v.floating {
 		v.hideAll()
 	}
+	v.invalidateOverlays()
 	v.send("resume")
 }
 
 func (v *scrollWindow) floatingView(c *ui.Context) {
-	ui.Column(c).Fill().Padding(12).Gap(8).Children(func() {
-		ui.Row(c).Gap(12).Children(func() {
+	t := c.Theme()
+	ui.Column(c).Fill().Padding(12).Gap(8).Background(t.Background).Children(func() {
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Box(c).Size(6, 6).Radius(3).Background(v.overlayStatusDot(t)).Shrink(0)
 			ui.Text(c, fmt.Sprintf("长截图 · %d px", v.height)).FontWeight(600).Grow(1)
 			auto := ui.Checkbox(c, &v.automatic, "自动滚动").Disabled(!v.autoGranted || v.sourceEnded || v.ending)
 			if auto.Changed() {
 				v.paused = true
+				v.invalidateOverlays()
 				v.send("pause")
 			}
 		})
@@ -381,24 +422,37 @@ func (v *scrollWindow) floatingView(c *ui.Context) {
 		if v.notice != "" {
 			status = v.notice
 		}
-		ui.Scroll(c).Grow(1).MinHeight(0).Children(func() { ui.Text(c, status).FontSize(12).TextColor(c.Theme().TextMuted) })
+		ui.Row(c).Grow(1).MinHeight(0).Gap(8).AlignItems(ui.Center).Children(func() {
+			if v.preview != nil {
+				ui.Box(c.Key("floating-preview")).Size(48, 52).Radius(6).Clip().
+					Background(t.Surface).Border(1, t.Border).Shrink(0).
+					Draw(func(p *ui.Painter, r ui.Rect) {
+						if v.preview != nil {
+							v.drawPreview(p, ui.Rect{X: r.X + 2, Y: r.Y + 2, W: max(0, r.W-4), H: max(0, r.H-4)})
+						}
+					})
+			}
+			ui.Scroll(c).Grow(1).MinHeight(0).FillHeight().Children(func() {
+				ui.Text(c, status).FontSize(12).TextColor(t.TextMuted)
+			})
+		})
 		ui.Row(c).Gap(6).Justify(ui.End).Children(func() {
-			if ui.Button(c, "取消").Disabled(v.ending).Clicked() {
+			if ui.Button(c, "取消").Radius(8).Disabled(v.ending).Clicked() {
 				v.win.Close()
 			}
-			if ui.Button(c, "撤回").Disabled(!v.canUndo || v.ending).Clicked() {
+			if ui.Button(c, "撤回").Radius(8).Disabled(!v.canUndo || v.ending).Clicked() {
 				v.paused = true
 				v.send("undo")
 			}
 			if v.paused {
-				if ui.Button(c, "继续").Disabled(v.sourceEnded || v.ending).Clicked() {
+				if ui.Button(c, "继续").Radius(8).Disabled(v.sourceEnded || v.ending).Clicked() {
 					v.resume()
 				}
-			} else if ui.Button(c, "暂停").Disabled(v.ending).Clicked() {
+			} else if ui.Button(c, "暂停").Radius(8).Disabled(v.ending).Clicked() {
 				v.paused = true
 				v.send("pause")
 			}
-			if ui.PrimaryButton(c, "完成").Disabled(v.ending).Clicked() {
+			if ui.PrimaryButton(c, "完成").Radius(8).Disabled(v.ending).Clicked() {
 				v.finish()
 			}
 		})
@@ -745,10 +799,7 @@ func (v *scrollWindow) applyStartFailure(err error) {
 }
 
 func (v *scrollWindow) publish(c *scrollshot.Controller, show bool) {
-	var preview *image.RGBA
-	if !v.floating {
-		preview = c.Stitch.Preview(previewWidth, previewHeight)
-	}
+	preview := c.Stitch.Preview(previewWidth, previewHeight)
 	height, canUndo, paused, automatic, notice := c.Stitch.Height(), c.Stitch.CanUndo(), c.Paused, c.Automatic, c.Notice
 	log.Printf(brand.Name+": long screenshot progress: height=%d paused=%t notice=%q", height, paused, notice)
 	v.later(func() {
@@ -757,7 +808,7 @@ func (v *scrollWindow) publish(c *scrollshot.Controller, show bool) {
 		}
 		v.height, v.canUndo, v.paused, v.automatic, v.notice = height, canUndo, paused, automatic, notice
 		if v.overlay != nil {
-			v.overlay.Invalidate()
+			v.invalidateOverlays()
 		} else if show {
 			v.win.Show()
 			v.win.Focus()

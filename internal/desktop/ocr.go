@@ -368,7 +368,12 @@ func (v *ocrWindow) view(c *ui.Context) {
 					v.selection.All(false)
 					v.refreshSelection()
 				}
-				if ui.Toggle(c, &v.characters, "单字").Tooltip("拆成单字，精确选择中文或符号").Changed() {
+				ui.Box(c).Width(1).Height(18).Margin(0, 2).Background(c.Theme().Border).Shrink(0)
+				charToggle := ui.Toggle(c, &v.characters, "单字").Tooltip("拆成单字，精确选择中文或符号")
+				if v.characters {
+					charToggle.Background(brand.Soft(c)).TextColor(brand.Ink(c)).Border(1, c.Theme().Accent)
+				}
+				if charToggle.Changed() {
 					v.sweep = ocrSweep{}
 					v.selection.SetCharacters(v.characters)
 					v.rows = v.selection.Rows()
@@ -414,7 +419,7 @@ func (v *ocrWindow) view(c *ui.Context) {
 				}).Grow(1).MinHeight(50).FillWidth().HandleInput(func(ev ui.InputEvent) bool { return v.sweepInput(c, ev) })
 			}
 			ui.Text(c, "点选 / 拖动扫选 / Shift 连选 · 方向键与空格").FontSize(12).MaxLines(2).TextColor(c.Theme().TextMuted)
-			ui.Column(c).FillWidth().Padding(10).Gap(5).Radius(8).Background(c.Theme().Surface).Children(func() {
+			ui.Column(c).FillWidth().Padding(10).Gap(5).Radius(8).Background(c.Theme().Surface).Border(1, c.Theme().Border).Children(func() {
 				ui.Text(c, fmt.Sprintf("已选 %d 块", v.selected)).FontSize(12).FontWeight(600)
 				preview := v.preview
 				if preview == "" {
@@ -501,7 +506,7 @@ func (v *ocrWindow) translationView(c *ui.Context) {
 	})
 	w, _ := c.Size()
 	pane := func(key, caption, text, empty string) {
-		ui.Column(c.Key(key)).Grow(1).Basis(0).MinWidth(0).MinHeight(60).FillHeight().Padding(10).Gap(6).Radius(8).Background(t.Surface).Children(func() {
+		ui.Column(c.Key(key)).Grow(1).Basis(0).MinWidth(0).MinHeight(60).FillHeight().Padding(10).Gap(6).Radius(8).Background(t.Surface).Border(1, t.Border).Children(func() {
 			ui.Text(c, caption).FontSize(11).FontWeight(600).TextColor(t.TextMuted)
 			ui.Scroll(c.Key(key + "-scroll")).Grow(1).MinHeight(0).FillWidth().Children(func() {
 				if text == "" {

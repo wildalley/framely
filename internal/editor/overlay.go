@@ -889,8 +889,15 @@ func (s *pick) actionBar(c *ui.Context, v *pickView, sel doc.Rect, w, h float32)
 		}
 		toolbarDivider(c, "pick-div-tools")
 		text := func(key, label string, action PickAction) bool {
-			if ui.Button(c.Key(key), label).Height(34).Padding(0, 9).Radius(8).FontSize(13).Shrink(0).
-				Background(ui.Transparent).Border(0, ui.Transparent).Label(label).Clicked() {
+			b := ui.Button(c.Key(key), label).Height(34).Padding(0, 9).Radius(8).FontSize(13).Shrink(0).
+				Border(0, ui.Transparent).Label(label)
+			bg := ui.Transparent
+			if b.Pressed() {
+				bg = t.SurfacePressed
+			} else if b.Hovered() {
+				bg = t.SurfaceHover
+			}
+			if b.Background(bg).Clicked() {
 				choose(Pick{Action: action})
 				return true
 			}

@@ -44,7 +44,7 @@ var cornerPresets = []preset{{"直角", 0}, {"小圆角", .1}, {"大圆角", .3}
 // puts it away.
 func (a *App) styleFlyout(c *ui.Context, stageWidth, stageHeight float32, zoom float64) {
 	style := a.activeStyle()
-	if style == nil || a.drag != nil || a.styleHidden {
+	if style == nil || a.drag != nil || a.styleHidden || a.panel == PanelStyle {
 		return
 	}
 	target := a.styleTarget()
@@ -65,9 +65,16 @@ func (a *App) styleFlyout(c *ui.Context, stageWidth, stageHeight float32, zoom f
 		ui.Row(c).FillWidth().AlignItems(ui.Center).Margin(0, 0, -6).Children(func() {
 			ui.Text(c, "颜色").FontSize(11).TextColor(c.Theme().TextMuted)
 			ui.Spacer(c).Grow(1)
-			more := ui.Button(c.Key("more-style"), "更多…").Height(18).Padding(0, 2).FontSize(11).
-				Background(ui.Transparent).Border(0, ui.Transparent).TextColor(brand.Ink(c)).
+			more := ui.Button(c.Key("more-style"), "更多…").Height(20).Padding(0, 4).Radius(4).FontSize(11).
+				Border(0, ui.Transparent).TextColor(brand.Ink(c)).
 				Label("更多样式").Tooltip("全部样式与精确数值")
+			if more.Pressed() {
+				more.Background(t.SurfacePressed)
+			} else if more.Hovered() {
+				more.Background(t.SurfaceHover)
+			} else {
+				more.Background(ui.Transparent)
+			}
 			if more.Clicked() {
 				a.appearanceTab = 0
 				a.togglePanel(PanelStyle)
@@ -136,6 +143,8 @@ func (a *App) colorDot(c *ui.Context, col string, chosen bool) {
 		Background(ui.Transparent).Border(0, ui.Transparent).Label("颜色 " + name).Tooltip(name)
 	if chosen {
 		b.Border(2, brand.Ink(c))
+	} else if b.Hovered() {
+		b.Background(t.SurfaceHover)
 	}
 	b.Children(func() {
 		edge := t.Text.Alpha(.15)
@@ -172,6 +181,8 @@ func (a *App) presetRow(c *ui.Context, key string, presets []preset, value float
 				b.Background(t.SurfacePressed)
 			} else if on {
 				b.Background(t.Background).Shadow(0, 1, 2, 0, ui.RGBA(0, 0, 0, .12))
+			} else if b.Hovered() {
+				b.Background(t.SurfaceHover)
 			} else {
 				b.Background(ui.Transparent)
 			}

@@ -117,13 +117,15 @@ func (v *settingsWindow) view(c *ui.Context) {
 					if s.shortcutError != "" {
 						ui.Text(c, "快捷键不可用："+s.shortcutError).FontSize(12).TextColor(c.Theme().Danger)
 						if runtime.GOOS == "linux" {
-							if niribind.Current() {
-								if ui.Button(c.Key("niri-shortcut"), "配置 niri 快捷键").Disabled(v.saving || s.shortcutPending || v.recording).Clicked() {
-									v.setupNiri()
+							ui.Row(c).Children(func() {
+								if niribind.Current() {
+									if ui.Button(c.Key("niri-shortcut"), "配置 niri 快捷键").Disabled(v.saving || s.shortcutPending || v.recording).Clicked() {
+										v.setupNiri()
+									}
+								} else if ui.Button(c.Key("authorize-shortcut"), "授权快捷键").Disabled(v.saving || s.shortcutPending || v.recording).Clicked() {
+									v.save()
 								}
-							} else if ui.Button(c.Key("authorize-shortcut"), "授权快捷键").Disabled(v.saving || s.shortcutPending || v.recording).Clicked() {
-								v.save()
-							}
+							})
 						}
 					}
 					if s.shortcutPending {
@@ -141,13 +143,19 @@ func (v *settingsWindow) view(c *ui.Context) {
 						}
 						globalKeyRow(c, s.recordShortcutDescription, "录屏")
 						ui.Text(c, "再次按下可结束长截图或录屏；系统改键后自动更新。").FontSize(12).TextColor(c.Theme().TextMuted)
-						if ui.Button(c, "配置系统快捷键").Disabled(v.saving || s.shortcutPending).Clicked() {
-							v.configureShortcuts()
-						}
+						ui.Row(c).Children(func() {
+							if ui.Button(c, "配置系统快捷键").Disabled(v.saving || s.shortcutPending).Clicked() {
+								v.configureShortcuts()
+							}
+						})
 					} else {
 						ui.Text(c, "截图快捷键").FontWeight(600)
 						ui.Column(c.Key("capture-shortcut")).Gap(8).Children(func() { v.shortcutEntry(c, false, false) })
-						ui.Text(c, "当前按键："+s.shortcutDescription).FontSize(12).TextColor(c.Theme().TextMuted)
+						current := s.shortcutDescription
+						if current == "" {
+							current = "未绑定"
+						}
+						ui.Text(c, "当前按键："+current).FontSize(12).TextColor(c.Theme().TextMuted)
 						if capture.ScrollingSupported() {
 							ui.Text(c, "长截图快捷键").FontWeight(600)
 							ui.Column(c.Key("scroll-shortcut")).Gap(8).Children(func() { v.shortcutEntry(c, true, false) })
@@ -169,19 +177,19 @@ func (v *settingsWindow) view(c *ui.Context) {
 				keyRow(c, "Enter / Esc", "确认 / 取消")
 			} else if v.tab == 1 {
 				ui.Text(c, "启动与图片").FontWeight(600)
-				ui.Column(c).Gap(8).Children(func() {
+				ui.Column(c).Padding(12, 14).Gap(6).Radius(8).Background(c.Theme().Surface).Border(1, c.Theme().Border).Children(func() {
 					ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
 						if ui.Switch(c.Key("autostart"), &v.autostart).Label("开机自启").Changed() {
 							s.setAutostart(v.autostart)
 						}
-						ui.Text(c, "开机自启")
+						ui.Text(c, "开机自启").FontWeight(500)
 					})
 					ui.Text(c, "登录后在托盘待命，改动立即生效。").FontSize(12).TextColor(c.Theme().TextMuted)
 				})
-				ui.Column(c).Gap(8).Children(func() {
+				ui.Column(c).Padding(12, 14).Gap(6).Radius(8).Background(c.Theme().Surface).Border(1, c.Theme().Border).Children(func() {
 					ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
 						ui.Switch(c.Key("close-after-copy"), &v.draft.HideAfterCopy).Label("复制后关闭图片").Disabled(v.saving)
-						ui.Text(c, "复制后关闭图片")
+						ui.Text(c, "复制后关闭图片").FontWeight(500)
 					})
 					ui.Text(c, "置顶图片继续保留。关闭会清空该图片及其标注。").FontSize(12).TextColor(c.Theme().TextMuted)
 				})
@@ -189,8 +197,7 @@ func (v *settingsWindow) view(c *ui.Context) {
 			} else if v.tab == 2 {
 				ui.Text(c, "录屏").FontWeight(600)
 				ui.Text(c, "区域录制为无声 MP4，支持 30/60 fps；录完可在录屏窗口或托盘「视频转 GIF…」导出。").FontSize(12).TextColor(c.Theme().TextMuted)
-				ui.Column(c).Gap(6).Children(func() {
-					ui.Text(c, "保存位置").FontSize(12)
+				ui.Column(c).Padding(8, 10).Gap(6).Radius(8).Background(c.Theme().Surface).Border(1, c.Theme().Border).Children(func() {
 					ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 						dir := v.draft.RecordDir
 						if dir == "" {
@@ -219,44 +226,49 @@ func (v *settingsWindow) view(c *ui.Context) {
 			} else {
 				ui.Text(c, "长截图").FontWeight(600)
 				ui.Checkbox(c.Key("automatic-scroll"), &v.draft.AutomaticScroll, "长截图自动向下滚动").Disabled(v.saving || !capture.ScrollingSupported())
-				ui.Text(c, "长截图需要持续共享所选窗口或显示器；截图快捷键授权与屏幕共享是两个独立权限。").TextColor(c.Theme().TextMuted)
+				ui.Text(c, "长截图需要持续共享所选窗口或显示器；截图快捷键授权与屏幕共享是两个独立权限。").FontSize(12).TextColor(c.Theme().TextMuted)
 				if v.streamIssue != "" {
-					ui.Text(c, v.streamIssue).TextColor(c.Theme().Danger).Selectable()
+					ui.Text(c, v.streamIssue).FontSize(12).TextColor(c.Theme().Danger).Selectable()
 				} else {
 					ui.Text(c, "在鼠标所在显示器框选，松开后滚动页面或拖动滚动条。自动滚动不可用时，可缓慢手动滚动。").FontSize(12).TextColor(c.Theme().TextMuted)
 				}
 				if !capture.ScrollingSupported() {
 					ui.Text(c, "当前系统暂不支持长截图。").FontSize(12).TextColor(c.Theme().TextMuted)
 				}
-				if ui.Button(c, "打开长截图").Disabled(s.captureBusy || !capture.ScrollingSupported()).Clicked() {
-					s.showScroll()
-				}
-
 				if runtime.GOOS == "linux" {
 					ui.Text(c, "默认手动滚动；每块显示器首次使用时请选择对应共享来源，之后分别记住。自动模式需要额外的鼠标控制授权。").FontSize(12).TextColor(c.Theme().TextMuted)
-					if ui.Button(c, "更换共享来源").Disabled(s.captureBusy || v.saving).Clicked() {
-						v.app.worker(func() {
-							err := capture.ForgetScrollSource()
-							v.later(func() {
-								if err != nil {
-									v.notice = err.Error()
-									return
-								}
-								if s.scroll != nil {
-									s.scroll.start()
-								} else {
-									s.showScroll()
-								}
+				}
+				ui.Row(c).Wrap().Gap(8).Children(func() {
+					if ui.Button(c, "打开长截图").Disabled(s.captureBusy || !capture.ScrollingSupported()).Clicked() {
+						s.showScroll()
+					}
+					if runtime.GOOS == "linux" {
+						if ui.Button(c, "更换共享来源").Disabled(s.captureBusy || v.saving).Clicked() {
+							v.app.worker(func() {
+								err := capture.ForgetScrollSource()
+								v.later(func() {
+									if err != nil {
+										v.notice = err.Error()
+										return
+									}
+									if s.scroll != nil {
+										s.scroll.start()
+									} else {
+										s.showScroll()
+									}
+								})
 							})
-						})
+						}
+						if ui.Button(c, "重新检查权限").Disabled(v.accessLoading || v.asking).Clicked() {
+							v.refreshAccess()
+						}
 					}
-					if ui.Button(c, "重新检查权限").Disabled(v.accessLoading || v.asking).Clicked() {
-						v.refreshAccess()
-					}
-					ui.Column(c).Gap(8).Children(func() {
+				})
+				if runtime.GOOS == "linux" {
+					ui.Column(c).Padding(12, 14).Gap(8).Radius(8).Background(c.Theme().Surface).Border(1, c.Theme().Border).Children(func() {
 						ui.Text(c, "截图权限").FontWeight(600)
 						if v.accessLoading {
-							ui.Text(c, "正在读取权限…").TextColor(c.Theme().TextMuted)
+							ui.Text(c, "正在读取权限…").FontSize(12).TextColor(c.Theme().TextMuted)
 						} else {
 							hint := "使用系统选区界面。"
 							switch v.access {
@@ -273,9 +285,11 @@ func (v *settingsWindow) view(c *ui.Context) {
 								if v.asking {
 									label = "等待授权…"
 								}
-								if ui.Button(c.Key("grant"), label).Disabled(v.asking || s.captureBusy).Clicked() {
-									v.askAccess()
-								}
+								ui.Row(c).Children(func() {
+									if ui.Button(c.Key("grant"), label).Disabled(v.asking || s.captureBusy).Clicked() {
+										v.askAccess()
+									}
+								})
 							}
 						}
 					})

@@ -64,6 +64,11 @@ func (v *settingsWindow) shortcutEntry(c *ui.Context, scroll, video bool) {
 		if v.recording && v.recordingScroll == scroll && v.recordingVideo == video {
 			record.HandleInput(v.recordShortcut)
 		}
+		if ui.Button(c.Key("shortcut-default"), defaultLabel).Disabled(busy).Clicked() {
+			v.recordingScroll = scroll
+			v.recordingVideo = video
+			v.setRecordedShortcut(defaultKey)
+		}
 	})
 	if v.recording && v.recordingScroll == scroll && v.recordingVideo == video {
 		preview := strings.Join(modifierNames(v.recordingMods), "+")
@@ -78,11 +83,6 @@ func (v *settingsWindow) shortcutEntry(c *ui.Context, scroll, video bool) {
 			color = c.Theme().Danger
 		}
 		ui.Text(c, v.shortcutHint).FontSize(12).TextColor(color)
-	}
-	if ui.Button(c.Key("shortcut-default"), defaultLabel).Disabled(busy).Clicked() {
-		v.recordingScroll = scroll
-		v.recordingVideo = video
-		v.setRecordedShortcut(defaultKey)
 	}
 	ui.Text(c, "可直接填写组合键；系统占用的按键可能无法录制。推荐："+
 		config.DisplayShortcut(defaultKey)+"。").FontSize(12).TextColor(c.Theme().TextMuted)

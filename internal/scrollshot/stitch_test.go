@@ -223,7 +223,7 @@ func TestUndoAndLimitsPreserveThePreviousImage(t *testing.T) {
 		t.Fatal("limit partially appended the frame")
 	}
 	s.Release()
-	if s.Height() != 0 || s.previous != nil || len(s.chunks) != 0 {
+	if s.Height() != 0 || s.previous != nil || s.sidebarFrame != nil || len(s.chunks) != 0 {
 		t.Fatal("release retained the long image")
 	}
 }
@@ -254,5 +254,119 @@ func TestArticleTextWithWhiteSpaceAndFixedSidebar(t *testing.T) {
 		if err != nil || out.Height != 665+at {
 			t.Fatalf("article at %d: %+v, %v", at, out, err)
 		}
+	}
+}
+
+// Fixed navigation must remain anchored once while only the article grows.
+func TestFixedSidebarsKeepNavigationOnce(t *testing.T) {
+	for _, sides := range []struct {
+		left, right int
+		bg          color.RGBA
+	}{
+		{120, 0, color.RGBA{235, 235, 235, 255}}, {0, 100, color.RGBA{235, 235, 235, 255}}, {120, 100, color.RGBA{235, 235, 235, 255}},
+		{120, 0, color.RGBA{30, 35, 35, 255}}, {0, 100, color.RGBA{30, 35, 35, 255}}, {120, 100, color.RGBA{30, 35, 35, 255}},
+	} {
+		t.Run(fmt.Sprintf("left_%d_right_%d_bg_%d", sides.left, sides.right, sides.bg.R), func(t *testing.T) {
+			const w, h, top, bottom = 480, 320, 20, 16
+			page := document(w, 1500)
+			frame := func(at int) *image.RGBA {
+				f := viewport(page, at, h-top-bottom, top, bottom)
+				for _, r := range []image.Rectangle{image.Rect(0, 0, sides.left, h), image.Rect(w-sides.right, 0, w, h)} {
+					draw.Draw(f, r, image.NewUniform(sides.bg), image.Point{}, draw.Src)
+					if !r.Empty() {
+						draw.Draw(f, image.Rect(r.Min.X+10, top+25, r.Max.X-10, top+45), image.Black, image.Point{}, draw.Src)
+						draw.Draw(f, image.Rect(r.Min.X+10, top+100, r.Max.X-10, top+120), image.Black, image.Point{}, draw.Src)
+						// A menu item/avatar crosses the last viewport row. Copying
+						// that row to extend the sidebar creates vertical streaks.
+						for x := r.Min.X + 10; x < r.Max.X-10; x += 3 {
+							draw.Draw(f, image.Rect(x, h-30, x+1, h), image.Black, image.Point{}, draw.Src)
+						}
+					}
+				}
+				return f
+			}
+			first := frame(0)
+			s := New()
+			for _, at := range []int{0, 45, 95, 150, 210} {
+				out, err := s.Add(frame(at))
+				if err != nil || out.Height != h+at {
+					t.Fatalf("at %d: %+v %v", at, out, err)
+				}
+			}
+			check := func(at int) {
+				t.Helper()
+				got, view := s.Flatten(), s.Image()
+				want := viewport(page, 0, h-top-bottom+at, top, bottom)
+				for y := 0; y < want.Rect.Dy(); y++ {
+					for x := range w {
+						expected := want.RGBAAt(x, y)
+						if x < sides.left || x >= w-sides.right {
+							if y < h {
+								expected = first.RGBAAt(x, y)
+							} else {
+								expected = sides.bg
+							}
+						}
+						if got.RGBAAt(x, y) != expected {
+							t.Fatalf("wrong composite pixel %d,%d at scroll %d", x, y, at)
+						}
+						if view.At(x, y) != got.At(x, y) {
+							t.Fatalf("preview differs at %d,%d", x, y)
+						}
+					}
+				}
+			}
+			check(210)
+			if !s.Undo() {
+				t.Fatal("undo failed")
+			}
+			check(150)
+			if _, err := s.Add(frame(210)); err != nil {
+				t.Fatal(err)
+			}
+			check(210)
+		})
+	}
+}
+
+func TestFixedSidebarUndoRestoresInitialViewportAndRelease(t *testing.T) {
+	page := document(300, 1000)
+	frame := func(at int) *image.RGBA {
+		f := viewport(page, at, 240, 20, 16)
+		draw.Draw(f, image.Rect(0, 20, 90, 260), image.NewUniform(color.RGBA{230, 230, 230, 255}), image.Point{}, draw.Src)
+		draw.Draw(f, image.Rect(10, 40, 70, 60), image.Black, image.Point{}, draw.Src)
+		return f
+	}
+	first := frame(0)
+	s := New()
+	if _, err := s.Add(first); err != nil {
+		t.Fatal(err)
+	}
+	initialView := s.Image()
+	if _, err := s.Add(frame(50)); err != nil {
+		t.Fatal(err)
+	}
+	if s.left == 0 {
+		t.Fatal("sidebar not detected")
+	}
+	acceptedView := s.Image()
+	if !s.Undo() || s.left != 0 || s.right != 0 {
+		t.Fatal("undo retained sidebar state")
+	}
+	got := s.Flatten()
+	for y := range first.Rect.Dy() {
+		for x := range first.Rect.Dx() {
+			if got.RGBAAt(x, y) != first.RGBAAt(x, y) || initialView.At(x, y) != first.At(x, y) {
+				t.Fatalf("initial viewport changed at %d,%d", x, y)
+			}
+		}
+	}
+	s.Release()
+	if s.sidebarFrame != nil || s.left != 0 || s.right != 0 {
+		t.Fatal("release retained sidebar")
+	}
+	// Previously handed-out previews remain immutable after undo/release.
+	if acceptedView.At(10, 90) != first.At(10, 90) {
+		t.Fatal("accepted preview changed")
 	}
 }
