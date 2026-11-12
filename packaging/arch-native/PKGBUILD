@@ -1,5 +1,5 @@
 pkgname=framely
-pkgver=0.4.3
+pkgver=0.4.4
 pkgrel=1
 pkgdesc="Framely (取景): screenshots, pins, scrolling capture, recording, offline OCR and translation (formerly ScreenPin)"
 arch=('x86_64' 'aarch64')
