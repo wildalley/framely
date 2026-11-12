@@ -1,6 +1,6 @@
 # 原生版开发与构建
 
-Framely · 取景使用 Go + MyGo 实现托盘截图与贴图工具，命令为 `framely`。启动时只显示托盘；每张图片独立开窗，关闭就销毁图片、标注和撤销记录。没有主页、截图历史或工程保存流程。当前版本为 `0.4.4`，使用 MyGo `0.8.3`，发行包功能以实际发布说明为准。
+Framely · 取景使用 Go + MyGo 实现托盘截图与贴图工具，命令为 `framely`。启动时只显示托盘；每张图片独立开窗，关闭就销毁图片、标注和撤销记录。没有主页、截图历史或工程保存流程。当前版本为 `0.4.5`，使用 MyGo `0.8.3`，发行包功能以实际发布说明为准。
 
 ## 使用
 
@@ -167,7 +167,7 @@ Linux 安装入口使用固定的门户应用 ID 命名（见 `internal/capture`
 ```bash
 cd packaging/arch-native
 makepkg --syncdeps --cleanbuild
-sudo pacman -U ./framely-0.4.4-1-x86_64.pkg.tar.zst
+sudo pacman -U ./framely-0.4.5-1-x86_64.pkg.tar.zst
 ```
 
 该配方从当前工作区构建，支持 x86_64 和 aarch64，并排除本地凭据、代理状态和编译产物。Arch 包名为 `framely`，提供 `framely` 命令，并替换旧版包；已有设置保留。安装前请从托盘退出旧实例。

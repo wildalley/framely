@@ -1,6 +1,7 @@
 package editor
 
 import (
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -77,6 +78,72 @@ func TestReleasedRegionStaysAdjustableUntilAnActionIsChosen(t *testing.T) {
 	choice := waitPick(t, s)
 	if choice.err != nil || choice.Action != PickCopy || choice.Region != image.Rect(240, 238, 780, 598) {
 		t.Fatalf("copy choice: %+v", choice)
+	}
+}
+
+func TestPickerWaitsForCopyBeforeClosing(t *testing.T) {
+	s, _, tt := actionPicker()
+	var complete func(error)
+	calls := 0
+	s.copyRegion = func(region image.Rectangle, done func(error)) {
+		calls++
+		if s.done || s.full == nil || region != image.Rect(200, 200, 600, 500) {
+			t.Fatalf("picker closed before copying the selected pixels: done=%v region=%v", s.done, region)
+		}
+		complete = done
+	}
+	dragPick(tt, 100, 100, 300, 250)
+	if err := tt.Click("复制"); err != nil {
+		t.Fatal(err)
+	}
+	if complete == nil || s.done || !s.copying || len(s.result) != 0 {
+		t.Fatal("copy did not keep the picker alive until the clipboard write")
+	}
+	// Pending encoding freezes the selection and cannot start another action.
+	tt.Key(0, ui.KeyEnter)
+	tt.Key(0, ui.KeyRight)
+	_ = tt.Click("钉在屏幕上（双击选区）")
+	if calls != 1 || s.done || s.sel.X != 100 {
+		t.Fatal("pending copy allowed another action or changed its region")
+	}
+	complete(nil)
+	choice := waitPick(t, s)
+	if choice.err != nil || choice.Action != PickCopy || choice.Region != image.Rect(200, 200, 600, 500) {
+		t.Fatalf("copy result: %+v", choice)
+	}
+	if s.full != nil || s.copyRegion != nil || s.copying {
+		t.Fatal("completed copy retained picker resources")
+	}
+	complete(nil)
+	if len(s.result) != 0 {
+		t.Fatal("copy completed twice")
+	}
+}
+
+func TestPickerCopyFailureAndCancellation(t *testing.T) {
+	for _, cancel := range []bool{false, true} {
+		t.Run(fmt.Sprintf("cancel=%v", cancel), func(t *testing.T) {
+			s, _, tt := actionPicker()
+			var complete func(error)
+			s.copyRegion = func(_ image.Rectangle, done func(error)) { complete = done }
+			dragPick(tt, 100, 100, 300, 250)
+			if err := tt.Click("复制"); err != nil {
+				t.Fatal(err)
+			}
+			failure := errors.New("clipboard unavailable")
+			if cancel {
+				tt.Key(0, ui.KeyEscape)
+			}
+			complete(failure)
+			choice := waitPick(t, s)
+			want := failure
+			if cancel {
+				want = capture.ErrCancelled
+			}
+			if !errors.Is(choice.err, want) || s.full != nil || s.copyRegion != nil || len(s.result) != 0 {
+				t.Fatalf("copy did not release resources or report its error: %+v", choice)
+			}
+		})
 	}
 }
 

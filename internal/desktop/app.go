@@ -563,6 +563,9 @@ func (s *application) captureWithActivation(token string, mode captureMode) {
 			if err != nil {
 				return editor.Picture{}, nil, "", err
 			}
+			if choice.Action == editor.PickCopy {
+				return editor.Picture{}.WithPick(choice), choice.Target, "", nil
+			}
 			pixels, err := capture.CropPixels(full, choice.Region)
 			if err != nil {
 				return editor.Picture{}, nil, "", err
@@ -574,6 +577,9 @@ func (s *application) captureWithActivation(token string, mode captureMode) {
 		data, choice, selection, remaining, err := grab(ctx, token, opts)
 		if err != nil {
 			return editor.Picture{}, nil, "", err
+		}
+		if choice.Action == editor.PickCopy {
+			return editor.Picture{}.WithPick(choice), choice.Target, remaining, nil
 		}
 		picture, err := editor.DecodePicture(data, "截图 "+time.Now().Format("15-04-05"))
 		return picture.WithScreenSelection(selection).WithPick(choice), choice.Target, remaining, err
@@ -620,7 +626,7 @@ func grab(ctx context.Context, token string, opts editor.PickOptions) ([]byte, e
 func (s *application) presentPick(picture editor.Picture, target *mygo.Rectangle, token string) {
 	switch choice := picture.Pick(); choice.Action {
 	case editor.PickCopy:
-		s.copyPicture(picture)
+		picture.Close() // The focused picker wrote the clipboard before closing.
 	case editor.PickText:
 		s.recognizePicture(picture)
 	case editor.PickTranslate:
@@ -636,24 +642,6 @@ func (s *application) presentPick(picture editor.Picture, target *mygo.Rectangle
 	default:
 		s.showPicture(picture, target, token)
 	}
-}
-
-// copyPicture puts a picked region on the clipboard without a window.
-func (s *application) copyPicture(picture editor.Picture) {
-	retained := picture.Retain()
-	picture.Close()
-	s.worker(func() {
-		defer retained.Close()
-		data, err := retained.PNG()
-		s.dispatch(func() {
-			if err == nil {
-				err = mygo.Clipboard.WriteImage(data)
-			}
-			if err != nil {
-				s.notify("复制截图失败：" + err.Error())
-			}
-		})
-	})
 }
 
 // trayItems is shared by the native tray and its interaction regression tests.

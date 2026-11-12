@@ -14,6 +14,7 @@ import (
 	"github.com/wildalley/framely/internal/brand"
 	"github.com/wildalley/framely/internal/capture"
 	"github.com/wildalley/framely/internal/doc"
+	"github.com/wildalley/framely/internal/render"
 )
 
 // minRegion is the smallest drag, in DIPs, taken as a region rather than a
@@ -25,7 +26,7 @@ type PickAction int
 
 const (
 	PickEdit      PickAction = iota // open the image window
-	PickCopy                        // copy the region, no window
+	PickCopy                        // region already copied, no window
 	PickPin                         // open it pinned
 	PickSave                        // open it and ask where to save
 	PickScroll                      // start a long capture of the region
@@ -72,6 +73,10 @@ type pick struct {
 	result   chan pickResult
 	displays []mygo.Display
 	opts     PickOptions
+	// Copy while the picker still owns keyboard focus. On Wayland, writing
+	// after destroying its windows can silently leave the old selection.
+	copyRegion func(image.Rectangle, func(error))
+	copying    bool
 
 	active         *pickView
 	origin, corner doc.Point
@@ -130,7 +135,8 @@ func recallPick() (mygo.Rectangle, doc.Rect, bool) {
 }
 
 // PickRegion shows the overlays for the PNG of the whole desktop and waits
-// for the region and what to do with it. Call it off the main thread.
+// for the region and what to do with it. PickCopy writes the clipboard before
+// returning and needs no returned PNG. Call it off the main thread.
 func PickRegion(ctx context.Context, png []byte, token string, opts PickOptions) ([]byte, Pick, *ScreenSelection, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, Pick{}, nil, err
@@ -149,6 +155,9 @@ func PickRegion(ctx context.Context, png []byte, token string, opts PickOptions)
 		return nil, Pick{}, nil, err
 	}
 	selection, _ := ScreenSelectionFromDesktop(choice.Region, choice.Target, displays, full.Bounds())
+	if choice.Action == PickCopy {
+		return nil, choice, selection, nil
+	}
 	data, err := capture.Crop(full, choice.Region)
 	return data, choice, selection, err
 }
@@ -161,7 +170,8 @@ func PickScreenRegion(ctx context.Context, full *image.RGBA, displays []mygo.Dis
 	return choice.Region, choice.Target, err
 }
 
-// PickScreen selects on a display with opts and returns the choice.
+// PickScreen selects on a display with opts and returns the choice. PickCopy
+// completes its clipboard write while the picker still has focus.
 func PickScreen(ctx context.Context, full *image.RGBA, displays []mygo.Display, token string, opts PickOptions) (Pick, error) {
 	if err := ctx.Err(); err != nil {
 		return Pick{}, err
@@ -171,6 +181,27 @@ func PickScreen(ctx context.Context, full *image.RGBA, displays []mygo.Display, 
 	}
 	var err error
 	s := &pick{full: full, displays: displays, opts: opts, result: make(chan pickResult, 1)}
+	s.copyRegion = func(region image.Rectangle, complete func(error)) {
+		go func() {
+			pixels, err := capture.CropPixels(full, region)
+			var data []byte
+			if err == nil {
+				data, err = render.EncodeContext(ctx, pixels, render.PNG, 1)
+			}
+			mygo.RunOnMain(func() {
+				if s.done {
+					return // Cancelled while encoding: never replace the clipboard.
+				}
+				if ctx.Err() != nil {
+					err = ctx.Err()
+				}
+				if err == nil {
+					err = mygo.Clipboard.WriteImage(data)
+				}
+				complete(err)
+			})
+		}()
+	}
 	opened := false
 	mygo.RunOnMain(func() {
 		if ctx.Err() != nil {
@@ -365,7 +396,7 @@ func (s *pick) cancel() { s.finish(nil, nil, Pick{}) }
 // finish ends the picking once: region nil cancels. A region under the
 // minimum leaves the picker open.
 func (s *pick) finish(v *pickView, region *doc.Rect, choice Pick) {
-	if s.done {
+	if s.done || s.copying && region != nil {
 		return
 	}
 	var r image.Rectangle
@@ -376,14 +407,32 @@ func (s *pick) finish(v *pickView, region *doc.Rect, choice Pick) {
 			return
 		}
 	}
+	if region != nil && choice.Action == PickCopy && s.copyRegion != nil {
+		s.copying = true
+		selected := *region
+		s.copyRegion(r, func(err error) {
+			if !s.done {
+				s.complete(v, &selected, choice, r, err)
+			}
+		})
+		return
+	}
+	s.complete(v, region, choice, r, nil)
+}
+
+func (s *pick) complete(v *pickView, region *doc.Rect, choice Pick, r image.Rectangle, err error) {
 	s.done = true
 	for _, o := range s.views {
 		o.win.Destroy()
 	}
-	s.full, s.bitmap, s.views, s.active, s.hover, s.displays = nil, nil, nil, nil, nil, nil
-	s.dragging, s.space, s.adjusting = false, false, false
+	s.full, s.bitmap, s.views, s.active, s.hover, s.displays, s.copyRegion = nil, nil, nil, nil, nil, nil, nil
+	s.dragging, s.space, s.adjusting, s.copying = false, false, false, false
 	if region == nil {
 		s.result <- pickResult{err: capture.ErrCancelled}
+		return
+	}
+	if err != nil {
+		s.result <- pickResult{err: fmt.Errorf("复制截图失败：%w", err)}
 		return
 	}
 	rememberPick(v.display.Bounds, *region)
@@ -502,6 +551,12 @@ func (s *pick) redrawOthers(v *pickView) {
 }
 
 func (s *pick) input(v *pickView, ev ui.InputEvent, w, h float64) bool {
+	if s.copying {
+		if ev.Kind == ui.InputKeyDown && ev.Key == ui.KeyEscape {
+			s.cancel()
+		}
+		return true
+	}
 	if (ev.Kind == ui.InputPointerMove && s.hover != nil && s.hover != v) || ev.Kind == ui.InputPointerDown {
 		s.redrawOthers(v)
 	}
@@ -932,7 +987,7 @@ func (s *pick) actionBar(c *ui.Context, v *pickView, sel doc.Rect, w, h float32)
 			s.cancel()
 			return
 		}
-		if ui.PrimaryButton(c.Key("pick-copy"), "复制").Height(34).Padding(0, 14).Radius(8).Shrink(0).
+		if ui.PrimaryButton(c.Key("pick-copy"), "复制").Disabled(s.copying).Height(34).Padding(0, 14).Radius(8).Shrink(0).
 			Tooltip("复制到剪贴板 (Enter)").Clicked() {
 			choose(Pick{Action: PickCopy})
 		}
