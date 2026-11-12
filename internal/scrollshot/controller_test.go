@@ -41,6 +41,7 @@ func TestManualUncertainFrameCanRecoverWithoutResumeClick(t *testing.T) {
 	}
 	c.Feed(viewport(page, 1800, 500, 0, 0), now.Add(time.Second))
 	c.Tick(now.Add(2 * time.Second))
+	c.Tick(now.Add(2800 * time.Millisecond))
 	if c.Paused || c.Notice == "" || c.Stitch.Height() != 500 {
 		t.Fatal("unmatched manual frame stopped capture or damaged the result")
 	}

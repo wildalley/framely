@@ -13,7 +13,7 @@ import (
 )
 
 var (
-	ErrOverlap   = errors.New("未找到可靠的重叠区域，请向上滚回一些并放慢滚动")
+	ErrOverlap   = errors.New("暂未对齐画面，请稍停一下；若已跳过内容，可略向上滚回以保留重叠")
 	ErrAmbiguous = errors.New("画面内容重复，无法确定拼接位置；已保留此前结果")
 	ErrReverse   = errors.New("检测到向上滚动，未追加重复内容")
 	ErrSize      = errors.New("画面尺寸已变化，请完成当前长截图后重新开始")
@@ -93,7 +93,7 @@ func (s *Stitcher) Add(frame *image.RGBA) (Outcome, error) {
 	if w != s.width || h != s.previous.Bounds().Dy() {
 		return Outcome{Height: s.height}, ErrSize
 	}
-	if Difference(s.previous, frame) < duplicateThreshold {
+	if motionDifference(s.previous, frame) < duplicateThreshold {
 		return Outcome{Duplicate: true, Height: s.height}, nil
 	}
 	a, b := sample(s.previous), sample(frame)
@@ -587,4 +587,52 @@ func sidebarRightBackground(frame *image.RGBA, right int) color.RGBA {
 		return color.RGBA{}
 	}
 	return sidebarBackground(frame, frame.Rect.Dx()-right, frame.Rect.Dx())
+}
+
+// motionDifference ignores changes confined to a small horizontal band, such
+// as an inline GIF or a blinking status widget. Document scrolling changes
+// tiles throughout the viewport and keeps the original mean-difference test.
+// It is not a promise to capture arbitrary full-page animation reliably.
+func motionDifference(a, b *image.RGBA) float64 {
+	if a == nil || b == nil || a.Bounds().Size() != b.Bounds().Size() {
+		return math.Inf(1)
+	}
+	const columns, rows = 8, 12
+	var sums, counts [columns * rows]int
+	w, h := a.Rect.Dx(), a.Rect.Dy()
+	total, count := 0, 0
+	for y := 0; y < h; y += max(1, h/120) {
+		for x := 0; x < w; x += max(1, w/160) {
+			ca, cb := a.RGBAAt(a.Rect.Min.X+x, a.Rect.Min.Y+y), b.RGBAAt(b.Rect.Min.X+x, b.Rect.Min.Y+y)
+			d := abs(int(gray(ca)) - int(gray(cb)))
+			index := (y*rows/h)*columns + x*columns/w
+			sums[index] += d
+			counts[index]++
+			total += d
+			count++
+		}
+	}
+	var values [columns * rows]float64
+	first, last := rows, -1
+	peak := 0.0
+	for i := range values {
+		values[i] = float64(sums[i]) / float64(max(1, counts[i]))
+		peak = max(peak, values[i])
+		if values[i] > 4 {
+			first = min(first, i/columns)
+			last = max(last, i/columns)
+		}
+	}
+	if peak < 24 || last < 0 || last-first+1 > rows/3+1 {
+		return float64(total) / float64(max(1, count))
+	}
+	sort.Float64s(values[:])
+	// Ignore at most a quarter of the tiles. The unchanged majority must still
+	// agree, and sparse changes spread over the whole page are not trimmed.
+	keep := len(values) * 3 / 4
+	sum := 0.0
+	for _, v := range values[:keep] {
+		sum += v
+	}
+	return sum / float64(keep)
 }

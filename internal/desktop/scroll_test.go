@@ -305,3 +305,23 @@ func TestScrollPreviewBesideAvoidsRegionAndToolbarAndRendersLivePreview(t *testi
 		}
 	}
 }
+
+func TestCompactScrollStatusShowsModeAndNeutralAlignmentNotice(t *testing.T) {
+	for _, automatic := range []bool{false, true} {
+		v := &scrollWindow{running: true, automatic: automatic, height: 5000, overlayToolbar: ui.Rect{W: 420, H: 52}}
+		tt := ui.NewTester(v.overlayView, 420, 52)
+		mode := "手动"
+		if automatic {
+			mode = "自动"
+		}
+		if _, ok := tt.Find(mode + " · 5000 px"); !ok {
+			t.Fatal("scroll mode is hidden")
+		}
+		saveShortcutPreview(t, tt, fmt.Sprintf("scroll-mode-auto-%t", automatic))
+		v.notice = scrollshot.ErrOverlap.Error()
+		tt.Frame()
+		if _, ok := tt.Find("等待画面对齐"); !ok || tt.HasText("放慢") {
+			t.Fatal("alignment failure still blames scroll speed")
+		}
+	}
+}

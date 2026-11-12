@@ -19,6 +19,7 @@ type Controller struct {
 	waiting                                          bool
 	unchanged                                        int
 	lastAttempt                                      time.Time
+	uncertainSince                                   time.Time
 }
 
 func NewController(first *image.RGBA, automatic bool, now time.Time) (*Controller, error) {
@@ -32,11 +33,11 @@ func (c *Controller) Feed(frame *image.RGBA, now time.Time) {
 	if c.Paused {
 		return
 	}
-	if Difference(c.candidate, frame) > 0.7 {
+	if motionDifference(c.candidate, frame) > 0.7 {
 		c.candidateAt = now
 	}
 	c.candidate = frame
-	c.pending = Difference(c.processed, frame) >= duplicateThreshold
+	c.pending = motionDifference(c.processed, frame) >= duplicateThreshold
 }
 
 func (c *Controller) Settled(now time.Time) bool {
@@ -56,6 +57,13 @@ func (c *Controller) Tick(now time.Time) (changed, scroll bool) {
 		}
 		return false, false
 	}
+	if !c.pending && !c.uncertainSince.IsZero() {
+		c.uncertainSince = time.Time{}
+		if c.Notice != "" {
+			c.Notice = ""
+			changed = true
+		}
+	}
 	if c.pending {
 		// Manual wheel/scrollbar input can remain in motion for many seconds.
 		// Match intermediate viewports while overlap still exists. An uncertain
@@ -67,7 +75,10 @@ func (c *Controller) Tick(now time.Time) (changed, scroll bool) {
 		out, err := c.Stitch.Add(c.candidate)
 		if err != nil {
 			if !c.Automatic && (errors.Is(err, ErrOverlap) || errors.Is(err, ErrAmbiguous) || errors.Is(err, ErrReverse)) {
-				if settled && c.Notice != err.Error() {
+				if c.uncertainSince.IsZero() {
+					c.uncertainSince = now
+				}
+				if settled && now.Sub(c.uncertainSince) >= 650*time.Millisecond && c.Notice != err.Error() {
 					c.Notice = err.Error()
 					return true, false
 				}
@@ -76,6 +87,7 @@ func (c *Controller) Tick(now time.Time) (changed, scroll bool) {
 			c.Pause(err.Error())
 			return true, false
 		}
+		c.uncertainSince = time.Time{}
 		c.processed, c.pending = c.candidate, false
 		if out.Added > 0 {
 			c.waiting = false
@@ -120,6 +132,7 @@ func (c *Controller) Resume(automatic bool, now time.Time) {
 	c.ignoreUntil = now.Add(150 * time.Millisecond)
 	c.nextScroll = now.Add(250 * time.Millisecond)
 	c.candidateAt = now
+	c.uncertainSince = time.Time{}
 }
 func (c *Controller) Undo() {
 	if c.Stitch.Undo() {

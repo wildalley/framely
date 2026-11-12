@@ -324,7 +324,7 @@ func (v *scrollWindow) view(c *ui.Context) {
 				ui.Text(c, "当前桌面未提供自动滚动所需的指针控制接口，可使用手动模式。").FontSize(12).TextColor(t.TextMuted)
 			}
 			if v.running {
-				ui.Text(c, "再次按全局截图快捷键可完成；从托盘打开此窗口会暂停。手动模式请缓慢向下滚动。").FontSize(12).TextColor(t.TextMuted)
+				ui.Text(c, "再次按全局截图快捷键可完成；从托盘打开此窗口会暂停。手动模式可直接滚动或拖动页面滚动条。").FontSize(12).TextColor(t.TextMuted)
 			}
 			if v.setupError != "" {
 				ui.Text(c, v.setupError).FontSize(12).TextColor(t.Danger).Selectable()
@@ -332,15 +332,14 @@ func (v *scrollWindow) view(c *ui.Context) {
 			if v.notice != "" {
 				ui.Text(c, v.notice).FontSize(12).TextColor(t.TextMuted).Selectable()
 			}
-			if !v.running {
-				ui.Row(c).Children(func() {
-					if ui.Button(c, "权限与长截图设置").Clicked() {
-						v.app.showSettings("")
-						v.app.settings.tab = 3
-						v.app.settings.win.Invalidate()
-					}
-				})
+			if v.running && v.canAuto && !v.autoGranted {
+				ui.Text(c, "本次为手动采集。可在自动滚动设置中开启，下次开始时授权鼠标控制。").FontSize(12).TextColor(t.TextMuted).MaxLines(3)
 			}
+			ui.Row(c).Children(func() {
+				if ui.Button(c, "自动滚动与权限设置").Clicked() {
+					v.openModeSettings()
+				}
+			})
 			if v.preview != nil {
 				ui.Box(c).Height(300).FillWidth().Radius(8).Clip().Background(t.Surface).Border(1, t.Border).Draw(func(p *ui.Painter, r ui.Rect) {
 					if v.preview != nil {
@@ -352,7 +351,7 @@ func (v *scrollWindow) view(c *ui.Context) {
 					ui.Text(c, "操作步骤").FontSize(12).FontWeight(600).TextColor(t.TextMuted)
 					ui.Text(c, "1. 选择共享的窗口或显示器").FontSize(13)
 					ui.Text(c, "2. 框选需要滚动的内容").FontSize(13)
-					ui.Text(c, "3. 缓慢滚动，再按截图快捷键完成").FontSize(13)
+					ui.Text(c, "3. 滚动页面，再按截图快捷键完成").FontSize(13)
 				})
 			}
 		})
@@ -387,6 +386,19 @@ func (v *scrollWindow) view(c *ui.Context) {
 	})
 }
 
+// Changing the pointer grant requires a new capture session. Keep the current
+// stitched result intact while the user changes the preference for next time.
+func (v *scrollWindow) openModeSettings() {
+	if v.running && !v.paused {
+		v.paused = true
+		v.send("pause")
+		v.invalidateOverlays()
+	}
+	v.app.showSettings("")
+	v.app.settings.tab = 3
+	v.app.settings.win.Invalidate()
+}
+
 func (v *scrollWindow) resume() {
 	v.paused = false
 	if !v.floating {
@@ -409,7 +421,7 @@ func (v *scrollWindow) floatingView(c *ui.Context) {
 				v.send("pause")
 			}
 		})
-		status := "缓慢向下滚动；按截图快捷键完成"
+		status := "手动滚动页面；按截图快捷键完成"
 		if v.automatic {
 			status = "正在自动滚动；按截图快捷键完成"
 		}

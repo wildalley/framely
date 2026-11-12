@@ -191,7 +191,11 @@ func (v *scrollWindow) overlayView(c *ui.Context) {
 	if v.overlayToolbar.W >= 400 && v.overlayToolbar.H <= 60 {
 		ui.Row(c).Fill().Padding(8, 10).Gap(6).AlignItems(ui.Center).Background(t.Background).
 			Border(1, t.Border).Radius(12).Children(func() {
-			label := fmt.Sprintf("长截图 · %d px", v.height)
+			mode := "手动"
+			if v.automatic {
+				mode = "自动"
+			}
+			label := fmt.Sprintf("%s · %d px", mode, v.height)
 			switch {
 			case v.ending:
 				label = "正在生成长截图…"
@@ -200,7 +204,7 @@ func (v *scrollWindow) overlayView(c *ui.Context) {
 			case v.paused:
 				label = fmt.Sprintf("已暂停 · %d px", v.height)
 			case v.notice != "":
-				label = "请放慢滚动"
+				label = "等待画面对齐"
 			}
 			ui.Row(c).Grow(1).MinWidth(0).Gap(7).AlignItems(ui.Center).Children(func() {
 				if v.previewOverlay == nil && v.preview != nil {
@@ -213,7 +217,7 @@ func (v *scrollWindow) overlayView(c *ui.Context) {
 						})
 				}
 				ui.Box(c).Size(6, 6).Radius(3).Background(dot).Shrink(0)
-				ui.Text(c, label).FontSize(12).FontWeight(600).SingleLine().Grow(1).MinWidth(0)
+				v.modeControl(c, label)
 			})
 			ui.Box(c).Size(1, 22).Background(t.Border).Shrink(0)
 			v.overlayActions(c)
@@ -277,5 +281,23 @@ func (v *scrollWindow) overlayActions(c *ui.Context) {
 	}
 	if ui.PrimaryButton(c, "完成").Height(32).Padding(0, 12).Radius(8).Disabled(v.ending).Clicked() {
 		v.finish()
+	}
+}
+
+// A visible mode label also gives direct access to automatic-scroll settings
+// without adding another small action beside Pause/Finish.
+func (v *scrollWindow) modeControl(c *ui.Context, label string) {
+	t := c.Theme()
+	b := ui.Button(c.Key("scroll-mode-settings"), "").Grow(1).MinWidth(0).Height(32).Padding(0, 3).
+		Border(0, ui.Transparent).Radius(6).Label("自动滚动与权限设置")
+	background := ui.Transparent
+	if b.Pressed() {
+		background = t.SurfacePressed
+	} else if b.Hovered() {
+		background = t.SurfaceHover
+	}
+	b.Background(background).Children(func() { ui.Text(c, label).FontSize(12).FontWeight(600).SingleLine() })
+	if b.Clicked() {
+		v.openModeSettings()
 	}
 }
