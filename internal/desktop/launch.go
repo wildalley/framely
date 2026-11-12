@@ -6,7 +6,7 @@ import (
 	"io"
 )
 
-const Version = "0.4.5"
+const Version = "0.4.6"
 
 type Launch struct {
 	Hidden    bool

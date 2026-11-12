@@ -24,11 +24,25 @@ function Uninstall([string]$directory) {
     Assert (!(Test-Path (Join-Path $directory 'Framely.exe'))) 'Application remains after uninstall'
     Assert (!(Test-Path $uninstall)) 'Uninstall registry remains'
 }
+function AssertAutostart([string]$executable, [bool]$configured) {
+    if ($configured) {
+        Assert ((Get-ItemPropertyValue $run $id) -eq ('"' + $executable + '" --hidden')) 'Autostart path not migrated'
+        Assert ((Get-ItemPropertyValue $startup $id)[0] -eq 3) 'Disabled autostart was enabled'
+    } else {
+        foreach ($key in @($run, $startup)) {
+            if (Test-Path -LiteralPath $key) {
+                Assert ($null -eq (Get-Item -LiteralPath $key).GetValue($id, $null)) 'Installation created an autostart entry'
+            }
+        }
+    }
+}
 try {
-    foreach ($scenario in @('fresh', 'ScreenPin', 'Framely', 'Custom App')) {
+    foreach ($scenario in @('fresh', 'ScreenPin', 'ScreenPin without autostart', 'Framely', 'Framely without autostart', 'Custom App')) {
+        $directoryName = $scenario -replace ' without autostart$', ''
+        $hasAutostart = $scenario -ne 'fresh' -and !$scenario.EndsWith(' without autostart')
         $parent = Join-Path $testRoot $scenario
-        $oldDir = Join-Path $parent $scenario
-        $newDir = if ($scenario -eq 'ScreenPin' -or $scenario -eq 'fresh') { Join-Path $parent 'Framely' } else { $oldDir }
+        $oldDir = Join-Path $parent $directoryName
+        $newDir = if ($directoryName -eq 'ScreenPin' -or $scenario -eq 'fresh') { Join-Path $parent 'Framely' } else { $oldDir }
         if ($scenario -ne 'fresh') {
             New-Item -ItemType Directory -Path (Join-Path $oldDir 'workers/screenpin-ocr') -Force | Out-Null
             Copy-Item (Join-Path $bundle 'Framely.exe') (Join-Path $oldDir 'ScreenPin.exe')
@@ -37,9 +51,11 @@ try {
             New-Item -Path $uninstall -Force | Out-Null
             New-ItemProperty -Path $uninstall -Name InstallLocation -Value $oldDir -PropertyType String -Force | Out-Null
             New-Item -Path $run -Force | Out-Null
-            New-ItemProperty -Path $run -Name $id -Value ('"' + (Join-Path $oldDir 'ScreenPin.exe') + '" --hidden') -PropertyType String -Force | Out-Null
-            New-Item -Path $startup -Force | Out-Null
-            New-ItemProperty -Path $startup -Name $id -Value ([byte[]](3,0,0,0,0,0,0,0,0,0,0,0)) -PropertyType Binary -Force | Out-Null
+            if ($hasAutostart) {
+                New-ItemProperty -Path $run -Name $id -Value ('"' + (Join-Path $oldDir 'ScreenPin.exe') + '" --hidden') -PropertyType String -Force | Out-Null
+                New-Item -Path $startup -Force | Out-Null
+                New-ItemProperty -Path $startup -Name $id -Value ([byte[]](3,0,0,0,0,0,0,0,0,0,0,0)) -PropertyType Binary -Force | Out-Null
+            }
             foreach ($folder in @([Environment]::GetFolderPath('DesktopDirectory'), [Environment]::GetFolderPath('Programs'))) {
                 $link = $shell.CreateShortcut((Join-Path $folder 'ScreenPin.lnk'))
                 $link.TargetPath = Join-Path $oldDir 'ScreenPin.exe'
@@ -57,15 +73,15 @@ try {
             Assert (!(Test-Path (Join-Path $oldDir 'ScreenPin.exe'))) 'Old binary remains'
             Assert (!(Test-Path (Join-Path $oldDir 'workers/screenpin-ocr'))) 'Old OCR runtime remains'
             Assert (Test-Path (Join-Path $oldDir 'keep.txt')) 'User data was removed'
-            Assert ((Get-ItemPropertyValue $run $id) -eq ('"' + $exe + '" --hidden')) 'Autostart path not migrated'
-            Assert ((Get-ItemPropertyValue $startup $id)[0] -eq 3) 'Disabled autostart was enabled'
             foreach ($folder in @([Environment]::GetFolderPath('DesktopDirectory'), [Environment]::GetFolderPath('Programs'))) {
                 Assert (!(Test-Path (Join-Path $folder 'ScreenPin.lnk'))) 'Old shortcut remains'
                 Assert ($shell.CreateShortcut((Join-Path $folder 'Framely.lnk')).TargetPath -ieq $exe) 'Shortcut targets old path'
             }
         }
+        AssertAutostart $exe $hasAutostart
         Install
         Assert (Test-Path $exe) 'Reinstall removed executable'
+        AssertAutostart $exe $hasAutostart
         Uninstall $newDir
         Remove-ItemProperty -Path $run -Name $id -ErrorAction SilentlyContinue
         Remove-ItemProperty -Path $startup -Name $id -ErrorAction SilentlyContinue

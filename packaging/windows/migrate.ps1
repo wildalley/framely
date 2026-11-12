@@ -13,7 +13,9 @@ $oldExecutables = @((Join-Path $oldDir 'ScreenPin.exe'), (Join-Path $oldDir 'Fra
 $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 $id = 'io.screenpin.desktop'
 if (Test-Path $runKey) {
-    $command = Get-ItemPropertyValue -LiteralPath $runKey -Name $id -ErrorAction SilentlyContinue
+    # A missing value is normal when autostart was never configured. Windows
+    # PowerShell's Get-ItemPropertyValue throws for it despite SilentlyContinue.
+    $command = (Get-Item -LiteralPath $runKey).GetValue($id, $null)
     foreach ($old in $oldExecutables) {
         if ($command -match ('^"?' + [regex]::Escape($old) + '"?(\s.*)?$')) {
             Set-ItemProperty -LiteralPath $runKey -Name $id -Value ('"' + $executable + '"' + $Matches[1])
