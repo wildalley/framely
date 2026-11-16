@@ -1,6 +1,7 @@
 package recording
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -50,9 +51,20 @@ func SiblingPath(source, ext string) string {
 	return base + time.Now().Format(" 150405") + ext
 }
 
-// Duration reads the movie header of an MP4/MOV file, in seconds. It walks
-// only box headers, so it reads a few hundred bytes even for long videos.
+// Duration reads the movie header, falling back to a bounded metadata probe
+// when a fragmented MP4 stores its duration outside mvhd.
 func Duration(path string) (float64, error) {
+	return DurationContext(context.Background(), path)
+}
+
+// DurationContext shares one deadline across header parsing and the metadata
+// fallback, and allows a closing window to cancel either phase.
+func DurationContext(ctx context.Context, path string) (float64, error) {
+	ctx, cancel := context.WithTimeout(ctx, durationTimeout)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return 0, err
@@ -62,16 +74,16 @@ func Duration(path string) (float64, error) {
 	if err != nil {
 		return 0, err
 	}
-	moov, size, err := findBox(f, 0, info.Size(), "moov")
+	moov, size, err := findBox(ctx, f, 0, info.Size(), "moov")
 	if err != nil {
 		return 0, err
 	}
-	mvhd, size, err := findBox(f, moov, moov+size, "mvhd")
+	mvhd, size, err := findBox(ctx, f, moov, moov+size, "mvhd")
 	if err != nil {
 		return 0, err
 	}
 	var head [32]byte
-	n, _ := f.ReadAt(head[:], mvhd)
+	n, _ := f.ReadAt(head[:min(int64(len(head)), size)], mvhd)
 	var scale, units uint64
 	switch {
 	case n >= 20 && head[0] == 0:
@@ -84,13 +96,22 @@ func Duration(path string) (float64, error) {
 	if scale == 0 {
 		return 0, errors.New("无法读取视频时长")
 	}
+	if units == 0 || head[0] == 0 && units == 1<<32-1 || units == 1<<64-1 {
+		return probeDuration(ctx, path)
+	}
 	return float64(units) / float64(scale), nil
 }
 
 // findBox returns the payload offset and payload size of the first box of
 // kind between start and end.
-func findBox(r io.ReaderAt, start, end int64, kind string) (int64, int64, error) {
-	for off := start; off+8 <= end; {
+func findBox(ctx context.Context, r io.ReaderAt, start, end int64, kind string) (int64, int64, error) {
+	if start < 0 || end < start {
+		return 0, 0, errors.New("视频文件结构无效")
+	}
+	for off := start; off <= end-8; {
+		if err := ctx.Err(); err != nil {
+			return 0, 0, err
+		}
 		var h [16]byte
 		if _, err := r.ReadAt(h[:8], off); err != nil {
 			return 0, 0, errors.New("视频文件不完整")
@@ -105,7 +126,7 @@ func findBox(r io.ReaderAt, start, end int64, kind string) (int64, int64, error)
 			}
 			size, header = int64(binary.BigEndian.Uint64(h[8:16])), 16
 		}
-		if size < header || off+size > end {
+		if size < header || size > end-off {
 			return 0, 0, errors.New("视频文件结构无效")
 		}
 		if string(h[4:8]) == kind {

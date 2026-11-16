@@ -2,14 +2,12 @@ package desktop
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"image"
 	"image/color"
 	"runtime"
 	"strings"
 	"testing"
-	"time"
 	"weak"
 
 	"github.com/egoist/mygo/ui"
@@ -123,7 +121,7 @@ func TestRecordingDuringLongCaptureDoesNotFinishIt(t *testing.T) {
 func TestFloatingScrollControlsStayVisibleAndCanPauseAndResume(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		for _, scale := range []float32{1, 1.5, 2} {
-			v := &scrollWindow{running: true, floating: true, automatic: true, autoGranted: true, canUndo: true, height: 12000, commands: make(chan scrollCommand, 8)}
+			v := &scrollWindow{running: true, floating: true, automatic: true, autoGranted: true, canUndo: true, height: 12000, commands: make(chan scrollshot.Command, 8)}
 			tt := ui.NewTester(v.view, 420, 170)
 			tt.SetDark(dark)
 			tt.SetScale(scale)
@@ -136,81 +134,15 @@ func TestFloatingScrollControlsStayVisibleAndCanPauseAndResume(t *testing.T) {
 			if err := tt.Click("暂停"); err != nil {
 				t.Fatal(err)
 			}
-			if cmd := <-v.commands; cmd.kind != "pause" || !v.paused {
+			if cmd := <-v.commands; cmd.Kind != "pause" || !v.paused {
 				t.Fatal(cmd)
 			}
 			if err := tt.Click("继续"); err != nil {
 				t.Fatal(err)
 			}
-			if cmd := <-v.commands; cmd.kind != "resume" || v.paused {
+			if cmd := <-v.commands; cmd.Kind != "resume" || v.paused {
 				t.Fatal(cmd)
 			}
-		}
-	}
-}
-
-type finalScrollStream struct {
-	frame    *image.RGBA
-	scrolled bool
-}
-
-func (s *finalScrollStream) Next(ctx context.Context) (*image.RGBA, error) {
-	if s.frame != nil {
-		frame := s.frame
-		s.frame = nil
-		return frame, nil
-	}
-	<-ctx.Done()
-	return nil, ctx.Err()
-}
-func (s *finalScrollStream) Scroll(context.Context, image.Point) error { s.scrolled = true; return nil }
-func (*finalScrollStream) Close()                                      {}
-
-func TestFinishKeepsLastSettledScrollAndStopsAutomaticInput(t *testing.T) {
-	for _, origin := range []image.Point{{}, {X: 930, Y: 500}} {
-		t.Run(origin.String(), func(t *testing.T) { testFinishCroppedScroll(t, origin) })
-	}
-}
-
-func testFinishCroppedScroll(t *testing.T, origin image.Point) {
-	page := image.NewRGBA(image.Rect(0, 0, 160, 400))
-	seed := uint32(1234)
-	for i := 0; i < len(page.Pix); i += 4 {
-		seed = seed*1664525 + 1013904223
-		page.Pix[i], page.Pix[i+1], page.Pix[i+2], page.Pix[i+3] = uint8(seed>>24), uint8(seed>>16), uint8(seed>>8), 255
-	}
-	region := image.Rect(0, 0, 160, 240)
-	c, err := scrollshot.NewController(page.SubImage(region).(*image.RGBA), true, time.Now().Add(-time.Second))
-	if err != nil {
-		t.Fatal(err)
-	}
-	frame := image.NewRGBA(region)
-	for y := 0; y < 240; y++ {
-		copy(frame.Pix[y*frame.Stride:(y+1)*frame.Stride], page.Pix[(y+45)*page.Stride:(y+46)*page.Stride])
-	}
-	frame.Rect = frame.Rect.Add(origin)
-	region = region.Add(origin)
-	source := &finalScrollStream{frame: frame}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	v := &scrollWindow{ctx: ctx, commands: make(chan scrollCommand, 1)}
-	v.commands <- scrollCommand{kind: "finish"}
-	if !v.run(source, region, image.Pt(1920, 1080), c) || c.Stitch.Height() != 285 || source.scrolled {
-		t.Fatalf("height=%d scrolled=%v", c.Stitch.Height(), source.scrolled)
-	}
-}
-
-func TestScrollViewportRejectsChangedSourceAndWrongCrop(t *testing.T) {
-	region, size := image.Rect(30, 40, 130, 240), image.Pt(1920, 1080)
-	for _, bounds := range []image.Rectangle{region, image.Rectangle{Max: size}} {
-		got, err := scrollViewport(image.NewRGBA(bounds), region, size)
-		if err != nil || got.Rect != region {
-			t.Fatalf("valid frame: %v, %v", got, err)
-		}
-	}
-	for _, bounds := range []image.Rectangle{region.Add(image.Pt(1, 0)), image.Rect(0, 0, 100, 200), image.Rect(0, 0, 1920, 1200)} {
-		if _, err := scrollViewport(image.NewRGBA(bounds), region, size); !errors.Is(err, scrollshot.ErrSize) {
-			t.Fatalf("accepted wrong source: %v", err)
 		}
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/wildalley/framely/internal/components"
+	"golang.org/x/image/bmp"
 )
 
 func TestGIFRejectsNonfiniteAndUnboundedInputs(t *testing.T) {
@@ -92,9 +93,23 @@ func TestPackagedMediaExports(t *testing.T) {
 		}
 		input.Write(frame)
 	}
-	cmd.Stdin = &input
+	cmd.Stdin = bytes.NewReader(input.Bytes())
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("generate fixture: %v\n%s", err, out)
+	}
+	fragmented := filepath.Join(dir, "分片录屏.mp4")
+	args := append([]string{}, cmd.Args[1:len(cmd.Args)-1]...)
+	args = append(args, "-movflags", "frag_keyframe+empty_moov+default_base_moof", fragmented)
+	fragCmd := exec.CommandContext(ctx, ffmpeg, args...)
+	fragCmd.Stdin = bytes.NewReader(input.Bytes())
+	if out, err := fragCmd.CombinedOutput(); err != nil {
+		t.Fatalf("generate fragmented fixture: %v\n%s", err, out)
+	}
+	if length, err := DurationContext(ctx, fragmented); err != nil || length < 1.9 || length > 2.1 {
+		t.Fatalf("fragmented duration %v %v", length, err)
+	}
+	if err := ExportGIF(ctx, fragmented, filepath.Join(dir, "fragmented.gif"), GIFOptions{Start: .5, Duration: 1, FPS: 15, Width: 160}); err != nil {
+		t.Fatalf("fragmented GIF export: %v", err)
 	}
 	dest := filepath.Join(dir, "export.gif")
 	var progress []float64
@@ -138,6 +153,26 @@ func TestPackagedMediaExports(t *testing.T) {
 	data, err := os.ReadFile(thumb)
 	if err != nil || len(data) < 54 || string(data[:2]) != "BM" {
 		t.Fatal("missing bitmap thumbnail", err)
+	}
+	first, err := bmp.Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ThumbnailAt(ctx, source, thumb, 1); err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(thumb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := bmp.Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r0, g0, b0, _ := first.At(100, 100).RGBA()
+	r1, g1, b1, _ := second.At(100, 100).RGBA()
+	if r0 == r1 && g0 == g1 && b0 == b1 {
+		t.Fatal("seeking a preview returned the first frame again")
 	}
 	original, err := os.ReadFile(dest)
 	if err != nil {

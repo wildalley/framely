@@ -2,13 +2,14 @@ package desktop
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/wildalley/framely/internal/brand"
 	"image"
 	"log"
+	"math"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -33,11 +34,17 @@ type videoWindow struct {
 	tab                                              int
 	fps, quality                                     string
 	notice, path                                     string
+	recoveryPath, diagnostic                         string
+	errorDetails                                     bool
+	openPath                                         func(string) error
 	status                                           capture.RecordingStatus
 	commands                                         chan string
 	gifFPS, gifWidth, gifStart, gifDuration          string
 	gifSource, gifResult                             string
 	gifLength, gifProgress                           float64
+	gifLow, gifHigh                                  float64
+	gifErrors                                        map[string]string
+	gifFrame                                         gifFramePreview
 	choosing                                         bool
 	exportCancel                                     context.CancelFunc
 	traySecond                                       int64
@@ -161,6 +168,7 @@ func (s *application) openVideo(tab int) {
 	}
 	ctx, cancel := context.WithCancel(s.ctx)
 	v := newVideoWindow(s, ctx, cancel)
+	v.gifFrame.load, v.gifFrame.run, v.gifFrame.later = videoPreviewAt, s.worker, v.later
 	v.tab = tab
 	v.win = mygo.NewWindow(mygo.WindowOptions{Title: brand.Title("录屏"), Width: 480, Height: 500, MinWidth: 400, MinHeight: 360, UseContentSize: true, AlwaysOnTop: true, Content: ui.View(v.view)})
 	capture.ExcludeWindow(v.win.NativeHandle())
@@ -179,6 +187,8 @@ func (s *application) openVideo(tab int) {
 	v.win.OnClosed(func() {
 		v.closed = true
 		v.preview = nil
+		v.cancelGIFPreview()
+		v.gifFrame.bitmap = nil
 		v.cancel()
 		if v.exportCancel != nil {
 			v.exportCancel()
@@ -201,17 +211,17 @@ func (v *videoWindow) later(fn func()) {
 	v.app.dispatch(func() {
 		if !v.closed {
 			fn()
-			if v.win != nil {
-				v.win.Invalidate()
-			}
-			if v.bar != nil && !v.bar.IsDestroyed() {
-				v.bar.Invalidate()
-			}
-			if v.frame != nil && !v.frame.IsDestroyed() {
-				v.frame.Invalidate()
-			}
+			v.invalidate()
 		}
 	})
+}
+
+func (v *videoWindow) invalidate() {
+	for _, window := range []*mygo.Window{v.win, v.bar, v.frame} {
+		if window != nil && !window.IsDestroyed() {
+			window.Invalidate()
+		}
+	}
 }
 
 func clock(ms int64) string {
@@ -274,6 +284,12 @@ func (v *videoWindow) view(c *ui.Context) {
 			ui.Tabs(c, &v.tab, "录制", "转 GIF")
 			if previous != v.tab && v.tab == videoTabGIF && v.gifSource == "" && v.path != "" {
 				v.useGIFSource(v.path, float64(v.status.ElapsedMS)/1000)
+			} else if previous != v.tab {
+				if v.tab == videoTabGIF {
+					v.requestGIFPreview(v.gifLow)
+				} else {
+					v.cancelGIFPreview()
+				}
 			}
 		}
 		ui.Scroll(c.Key("video-content")).Grow(1).MinHeight(0).Gap(12).Children(func() {
@@ -284,6 +300,35 @@ func (v *videoWindow) view(c *ui.Context) {
 			}
 			if v.notice != "" {
 				ui.Text(c, v.notice).FontSize(12).Selectable()
+			}
+			if v.recoveryPath != "" {
+				ui.Text(c, v.recoveryPath).FontSize(12).MaxLines(2).Tooltip(v.recoveryPath).Selectable()
+				ui.Row(c).Wrap().Gap(8).Children(func() {
+					if ui.Button(c.Key("record-recovery-open"), "打开保留片段").Clicked() {
+						v.openMediaPath(v.recoveryPath)
+					}
+					if ui.Button(c.Key("record-recovery-folder"), "打开片段文件夹").Clicked() {
+						v.openMediaPath(filepath.Dir(v.recoveryPath))
+					}
+				})
+			}
+			if v.diagnostic != "" {
+				ui.Row(c).Wrap().Gap(8).Children(func() {
+					label := "查看错误详情"
+					if v.errorDetails {
+						label = "收起错误详情"
+					}
+					if ui.Button(c.Key("video-error-details"), label).Clicked() {
+						v.errorDetails = !v.errorDetails
+					}
+					if v.errorDetails && ui.Button(c.Key("video-copy-error"), "复制错误详情").Clicked() {
+						mygo.Clipboard.WriteText(v.diagnostic)
+						c.Toast("已复制错误详情")
+					}
+				})
+				if v.errorDetails {
+					ui.Text(c, v.diagnostic).FontSize(12).MaxLines(4).Tooltip(v.diagnostic).Selectable()
+				}
 			}
 		})
 		ui.Row(c).Gap(8).Justify(ui.End).Children(func() {
@@ -397,10 +442,10 @@ func (v *videoWindow) recordView(c *ui.Context) {
 			ui.Text(c, v.path).FontSize(12).Selectable()
 			ui.Row(c).Wrap().Gap(8).Children(func() {
 				if ui.Button(c, "播放视频").Clicked() {
-					_ = mygo.Shell.OpenPath(v.path)
+					v.openMediaPath(v.path)
 				}
 				if ui.Button(c, "打开文件夹").Clicked() {
-					_ = mygo.Shell.OpenPath(filepath.Dir(v.path))
+					v.openMediaPath(filepath.Dir(v.path))
 				}
 				if ui.PrimaryButton(c.Key("to-gif"), "转为 GIF…").Disabled(v.exporting).Clicked() {
 					v.useGIFSource(v.path, float64(v.status.ElapsedMS)/1000)
@@ -437,14 +482,21 @@ func (v *videoWindow) gifView(c *ui.Context) {
 		ui.Text(c, "选择一段 MP4 视频，或先在「录制」页录一段。").FontSize(12).TextColor(muted)
 		return
 	}
+	v.gifSelectionView(c)
 	ui.Row(c).Gap(8).Children(func() {
 		ui.Column(c).Grow(1).MinWidth(0).Gap(5).Children(func() {
 			ui.Text(c, "开始（秒）").FontSize(12)
-			ui.TextInput(c, &v.gifStart).Label("GIF 开始秒数").Placeholder("0").FillWidth().Disabled(v.exporting)
+			if ui.TextInput(c, &v.gifStart).Label("GIF 开始秒数").Placeholder("0").FillWidth().Disabled(v.exporting).Invalid(v.gifErrors["start"] != "").Changed() {
+				v.syncGIFRange(true)
+			}
+			v.gifFieldError(c, "start")
 		})
 		ui.Column(c).Grow(1).MinWidth(0).Gap(5).Children(func() {
 			ui.Text(c, "时长（秒，最多 60）").FontSize(12)
-			ui.TextInput(c, &v.gifDuration).Label("GIF 时长秒数").Placeholder("10").FillWidth().Disabled(v.exporting)
+			if ui.TextInput(c, &v.gifDuration).Label("GIF 时长秒数").Placeholder("10").FillWidth().Disabled(v.exporting).Invalid(v.gifErrors["duration"] != "").Changed() {
+				v.syncGIFRange(false)
+			}
+			v.gifFieldError(c, "duration")
 		})
 	})
 	ui.Row(c).Gap(8).Children(func() {
@@ -472,10 +524,10 @@ func (v *videoWindow) gifView(c *ui.Context) {
 			ui.Text(c, v.gifResult).FontSize(12).Selectable()
 			ui.Row(c).Gap(8).Children(func() {
 				if ui.Button(c.Key("open-gif"), "打开 GIF").Clicked() {
-					_ = mygo.Shell.OpenPath(v.gifResult)
+					v.openMediaPath(v.gifResult)
 				}
 				if ui.Button(c.Key("open-gif-folder"), "打开文件夹").Clicked() {
-					_ = mygo.Shell.OpenPath(filepath.Dir(v.gifResult))
+					v.openMediaPath(filepath.Dir(v.gifResult))
 				}
 			})
 		})
@@ -484,6 +536,12 @@ func (v *videoWindow) gifView(c *ui.Context) {
 
 // useGIFSource loads a video into the GIF tab; length 0 means unknown.
 func (v *videoWindow) useGIFSource(path string, length float64) {
+	if math.IsNaN(length) || math.IsInf(length, 0) || length < 0 {
+		length = 0
+	}
+	v.cancelGIFPreview()
+	v.gifFrame.bitmap, v.gifFrame.err = nil, ""
+	v.gifErrors = nil
 	v.gifSource, v.gifLength, v.gifResult = path, length, ""
 	v.gifStart = "0"
 	duration := 10.0
@@ -494,6 +552,8 @@ func (v *videoWindow) useGIFSource(path string, length float64) {
 	if length > 0 && duration != float64(int(duration)) {
 		v.gifDuration = strconv.FormatFloat(duration, 'f', 2, 64)
 	}
+	v.gifLow, v.gifHigh = 0, duration
+	v.requestGIFPreview(0)
 }
 
 func (v *videoWindow) chooseVideo() {
@@ -508,8 +568,9 @@ func (v *videoWindow) chooseVideo() {
 	v.app.worker(func() {
 		paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{Parent: v.win, Title: "选择要转为 GIF 的视频", DefaultPath: dir, Filters: []mygo.FileFilter{{Name: "MP4 视频", Extensions: []string{"mp4", "m4v", "mov"}}}})
 		var length float64
+		var durationErr error
 		if err == nil && len(paths) > 0 {
-			length, _ = recording.Duration(paths[0])
+			length, durationErr = recording.DurationContext(v.ctx, paths[0])
 		}
 		v.later(func() {
 			v.choosing = false
@@ -520,7 +581,8 @@ func (v *videoWindow) chooseVideo() {
 			if len(paths) > 0 {
 				v.useGIFSource(paths[0], length)
 				v.notice = ""
-				if length == 0 {
+				if durationErr != nil {
+					log.Printf(brand.Name+": video duration: %v", durationErr)
 					v.notice = "无法读取视频时长，请确认起点不超过视频长度。"
 				}
 			}
@@ -668,15 +730,7 @@ func (v *videoWindow) command(command string) {
 		if command == "finish" {
 			v.ending = true
 		}
-		if v.win != nil {
-			v.win.Invalidate()
-		}
-		if v.bar != nil && !v.bar.IsDestroyed() {
-			v.bar.Invalidate()
-		}
-		if v.frame != nil && !v.frame.IsDestroyed() {
-			v.frame.Invalidate()
-		}
+		v.invalidate()
 	default:
 	}
 }
@@ -694,7 +748,7 @@ func recordingStreamOptions(display mygo.Display, recording capture.RecordingOpt
 func (v *videoWindow) start() { v.startRecording(true, "", nil) }
 
 func (v *videoWindow) startRecording(reuse bool, token string, selected *editor.ScreenSelection) {
-	if v.busy || v.running || v.exporting || v.app.captureBusy {
+	if v.closed || v.busy || v.running || v.exporting || v.app.captureBusy {
 		return
 	}
 	if _, err := components.Find("framely-record"); err != nil {
@@ -705,11 +759,6 @@ func (v *videoWindow) startRecording(reuse bool, token string, selected *editor.
 		v.ctx, v.cancel = context.WithCancel(v.app.ctx)
 	}
 	v.commands = make(chan string, 4)
-	ctx := v.ctx
-	fps, _ := strconv.Atoi(v.fps)
-	edge := map[string]int{"720p": 1280, "1080p": 1920, "1440p": 2560, "4K": 3840}[v.quality]
-	v.busy = true
-	v.notice = "正在连接共享来源…"
 	setup := v.app.recordingSetup
 	if selected != nil {
 		setup.Selection = selected
@@ -720,297 +769,29 @@ func (v *videoWindow) startRecording(reuse bool, token string, selected *editor.
 		selection = &copy
 	}
 	setup.FPS, setup.Quality = v.fps, v.quality
-	ask, dir := v.app.cfg.AskRecordPath, v.app.recordDir()
-	v.app.captureBusy = true
+	fps, _ := strconv.Atoi(v.fps)
+	request := recordingRequest{
+		setup: setup, selection: selection, fps: fps,
+		maxEdge: map[string]int{"720p": 1280, "1080p": 1920, "1440p": 2560, "4K": 3840}[v.quality],
+		dir:     v.app.recordDir(), ask: v.app.cfg.AskRecordPath, token: token, commands: v.commands,
+	}
+	v.busy, v.app.captureBusy = true, true
+	v.notice = "正在连接共享来源…"
 	v.app.refreshTray()
-	displays := mygo.Screen.Displays()
-	display := mygo.Screen.DisplayNearestPoint(mygo.Screen.CursorScreenPoint())
-	v.app.worker(func() {
-		var hidden []*mygo.Window
-		defer v.app.dispatch(func() {
-			// Release ownership and restore windows even if the control was destroyed.
-			v.app.captureBusy = false
-			for _, w := range hidden {
-				if !w.IsDestroyed() && w != v.win {
-					w.Show()
-				}
-			}
-			v.busy, v.running, v.ending = false, false, false
-			v.closeBar()
-			v.app.refreshTray()
-			if v.quitAfter {
-				mygo.App.Quit()
-				return
-			}
-			if !v.closed {
-				v.win.Show()
-				if v.win != nil {
-					v.win.Invalidate()
-				}
-				if v.bar != nil && !v.bar.IsDestroyed() {
-					v.bar.Invalidate()
-				}
-				if v.frame != nil && !v.frame.IsDestroyed() {
-					v.frame.Invalidate()
-				}
-			}
-		})
-		// The first protocol probe may launch a helper and wait up to five
-		// seconds. Keep it off the UI thread so cancel and tray clicks work.
-		if _, err := components.FindProtocol("framely-record", components.FrameProtocol); err != nil {
-			v.report(err)
-			return
-		}
-		if ctx.Err() != nil {
-			return
-		}
-		path, err := recording.NextPath(dir, "录屏", ".mp4", time.Now())
-		if ask {
-			if err == nil {
-				path, err = mygo.Dialog.Save(mygo.SaveDialogOptions{Parent: v.win, Title: "保存录屏视频", DefaultPath: path, Filters: []mygo.FileFilter{{Name: "MP4 视频", Extensions: []string{"mp4"}}}})
-			}
-			if err == nil && path == "" {
-				v.later(func() { v.notice = "" })
-				return
-			}
-			if err == nil && !strings.EqualFold(filepath.Ext(path), ".mp4") {
-				path += ".mp4"
-			}
-		}
-		if err != nil {
-			v.report(err)
-			return
-		}
-		staged, err := recording.Stage(path)
-		if err != nil {
-			v.report(err)
-			return
-		}
-		keep := false
-		defer func() {
-			info, statErr := os.Stat(staged)
-			if !keep || statErr == nil && info.Size() == 0 {
-				_ = os.Remove(staged)
-			}
-		}()
-		mygo.RunOnMain(func() {
-			displays = mygo.Screen.Displays()
-			display = mygo.Screen.DisplayNearestPoint(mygo.Screen.CursorScreenPoint())
-			if selection != nil {
-				for _, d := range displays {
-					if d.Bounds == selection.Display {
-						display = d
-						break
-					}
-				}
-			}
-			for _, w := range mygo.Windows() {
-				if w.IsVisible() {
-					hidden = append(hidden, w)
-					w.Hide()
-				}
-			}
-		})
-		options := recordingStreamOptions(display, capture.RecordingOptions{Path: staged, FPS: fps, MaxEdge: edge})
-		monitors, err := capture.StreamMonitors(ctx)
-		if err != nil {
-			v.report(err)
-			return
-		}
-		for _, m := range monitors {
-			if m.UnderMouse {
-				options.Monitor = m.ID
-				break
-			}
-		}
-		// Native Windows monitor enumeration matches the desktop display order.
-		if runtime.GOOS == "windows" {
-			for i, d := range displays {
-				if d.ID == display.ID && i < len(monitors) {
-					options.Monitor = monitors[i].ID
-					break
-				}
-			}
-		}
-		if runtime.GOOS == "darwin" {
-			options.Monitor = int(display.ID)
-		}
-		log.Printf(brand.Name+": recording requested display: id=%d bounds=%v", display.ID, options.DisplayBounds)
-		source, err := capture.OpenStream(ctx, options)
-		if err != nil {
-			v.report(err)
-			return
-		}
-		defer source.Close()
-		firstCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-		first, err := source.Next(firstCtx)
-		cancel()
-		if err != nil {
-			v.report(err)
-			return
-		}
-		time.Sleep(200 * time.Millisecond)
-		var screen *mygo.Display
-		if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
-			screen = &display
-		} else if bounds, ok := capture.StreamDisplayBounds(source); ok {
-			for _, d := range displays {
-				if d.Bounds.X == bounds.Min.X && d.Bounds.Y == bounds.Min.Y && d.Bounds.Width == bounds.Dx() && d.Bounds.Height == bounds.Dy() {
-					copy := d
-					screen = &copy
-					break
-				}
-			}
-		}
-		if screen == nil && capture.StreamSourceType(source) == 1 && len(displays) == 1 {
-			screen = &displays[0]
-		}
-		size := first.Bounds().Size()
-		region, reused := reuseRecordingRegion(selection, screen, size)
-		if !reused {
-			v.later(func() {
-				v.notice = "框选要录制的区域，松开即开始。"
-				if selection != nil {
-					v.notice = "共享来源或显示器已变化，请重新框选录屏区域。"
-				}
-			})
-			if screen != nil {
-				region, _, err = editor.PickScreenRegion(ctx, first, []mygo.Display{*screen}, token, image.Pt(64, 64), "框选录屏区域，松开开始 · Enter 全屏 · Esc 取消")
-			} else {
-				region, err = editor.SelectVideoRegion(ctx, first)
-			}
-		} else {
-			log.Printf(brand.Name+": recording reused selection: display=%v region=%v", screen.Bounds, region)
-		}
-		first = nil
-		if err == nil {
-			err = capture.SetStreamRegion(ctx, source, region, size)
-		}
-		if err == nil {
-			time.Sleep(250 * time.Millisecond)
-			keep = true
-			err = capture.RecordingCommand(ctx, source, "record")
-		}
-		if err != nil {
-			v.report(err)
-			return
-		}
-		keep = true // Once recording begins, interrupted video must remain recoverable.
-		setup.Selection = nil
-		if screen != nil {
-			setup.Selection = &editor.ScreenSelection{Display: screen.Bounds, Region: region, Size: size}
-		}
-		if err := saveRecordingSetup(setup); err != nil {
-			log.Printf(brand.Name+": recording setup could not be remembered: %v", err)
-		}
-		v.later(func() {
-			v.app.recordingSetup = setup
-			v.running = true
-			v.busy = false
-			v.paused = false
-			v.path = ""
-			v.preview = nil
-			v.status = capture.RecordingStatus{}
-			v.notice = "录制已开始。用选区旁的控制条或托盘暂停、继续或结束。"
-			v.app.refreshTray()
-			if screen != nil {
-				v.openBar(*screen, region, size)
-			}
-			if v.app.tray == nil {
-				v.win.Show()
-				v.notice = "录制中。请把控制窗口移到录制区域外。"
-			}
-		})
-		ticker := time.NewTicker(250 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				v.report(fmt.Errorf("录屏已中断，视频片段保留于 %s", staged))
-				return
-			case command := <-v.commands:
-				err = capture.RecordingCommand(ctx, source, command)
-				if err != nil {
-					keep = true
-					v.report(fmt.Errorf("录屏中断，视频片段保留于 %s\n%w", staged, err))
-					return
-				}
-				if command == "finish" {
-					// Native workers send final status before acknowledging finish.
-					status, snapshotErr := capture.RecordingSnapshot(source)
-					if snapshotErr != nil || !status.Finished {
-						v.report(fmt.Errorf("未收到视频保存确认，片段保留于 %s", staged))
-						return
-					}
-					source.Close()
-					if err = recording.Publish(staged, path); err != nil {
-						keep = true
-						v.report(fmt.Errorf("保存失败，视频保留于 %s\n%w", staged, err))
-						return
-					}
-					preview := videoPreview(ctx, path)
-					v.later(func() {
-						if preview != nil {
-							v.preview = ui.NewBitmap(preview)
-						}
-						v.status = status
-						v.path = path
-						v.notice = "视频已保存。可播放查看，或点击「转为 GIF…」。"
-						v.useGIFSource(path, float64(status.ElapsedMS)/1000)
-					})
-					return
-				}
-				v.later(func() {
-					v.busy = v.ending
-					v.paused = command == "pause"
-					v.app.refreshTray()
-					if v.bar != nil && !v.bar.IsDestroyed() {
-						v.bar.Invalidate()
-					}
-					if v.frame != nil && !v.frame.IsDestroyed() {
-						v.frame.Invalidate()
-					}
-				})
-			case <-ticker.C:
-				status, e := capture.RecordingSnapshot(source)
-				if e != nil {
-					keep = true
-					v.report(fmt.Errorf("采集已结束，视频片段保留于 %s\n%w", staged, e))
-					return
-				}
-				v.later(func() {
-					v.status = status
-					if v.bar != nil {
-						v.bar.Invalidate()
-					}
-					// The tray shows elapsed seconds; update it in place when they change.
-					if second := status.ElapsedMS / 1000; second != v.traySecond {
-						v.traySecond = second
-						v.app.refreshTrayClock()
-					}
-				})
-			}
-		}
-	})
+	ctx := v.ctx
+	v.app.worker(func() { v.runRecording(ctx, request) })
 }
+
 func (v *videoWindow) exportGIF() {
 	if v.exporting || v.gifSource == "" {
 		return
 	}
-	start, e1 := strconv.ParseFloat(strings.TrimSpace(v.gifStart), 64)
-	duration, e2 := strconv.ParseFloat(strings.TrimSpace(v.gifDuration), 64)
+	start, duration, valid := v.gifRange()
 	fps, _ := strconv.Atoi(v.gifFPS)
 	width, _ := strconv.Atoi(v.gifWidth)
-	if e1 != nil || e2 != nil {
-		v.notice = "请输入有效的开始秒数和时长。"
+	if !valid {
+		v.notice = "请修正选段的开始时间和时长。"
 		return
-	}
-	if v.gifLength > 0 {
-		if start >= v.gifLength {
-			v.notice = fmt.Sprintf("开始时间超出视频长度（%.1f 秒）。", v.gifLength)
-			return
-		}
-		duration = min(duration, v.gifLength-start)
 	}
 	o := recording.GIFOptions{Start: start, Duration: duration, FPS: fps, Width: width}
 	if err := o.Validate(); err != nil {
@@ -1069,33 +850,63 @@ func (v *videoWindow) exportGIF() {
 
 // Copy errors before dispatch: worker locals may change before the UI executes.
 func (v *videoWindow) report(err error) {
+	if err == nil {
+		return
+	}
 	message := err.Error()
 	log.Print("recording: ", message)
+	notice, path := recordingFailure(err)
 	v.later(func() {
-		v.notice = message
+		v.diagnostic, v.errorDetails = message, false
+		v.notice = notice
+		if path != "" {
+			v.recoveryPath = path
+		}
 		if v.running {
 			v.quitAfter = false
 		}
 	})
 }
 
+func recordingFailure(err error) (notice, path string) {
+	var recovery *recording.RecoveryError
+	if errors.As(err, &recovery) && recovery.Path != "" {
+		return "录制未能完成，已保留录制片段，可尝试播放或从文件夹中找回。", recovery.Path
+	}
+	return "录制未能完成，请重试。", ""
+}
+
+func (v *videoWindow) openMediaPath(path string) {
+	open := v.openPath
+	if open == nil {
+		open = func(path string) error { return mygo.Shell.OpenPath(path) }
+	}
+	if err := open(path); err != nil {
+		v.notice, v.diagnostic, v.errorDetails = "无法打开，请确认文件仍存在，并已安装可用的播放器或文件管理器。", err.Error(), false
+	}
+}
+
 func videoPreview(ctx context.Context, path string) image.Image {
+	img, _ := videoPreviewAt(ctx, path, 0)
+	return img
+}
+
+func videoPreviewAt(ctx context.Context, path string, seconds float64) (image.Image, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	dir, err := os.MkdirTemp("", "framely-video-preview-")
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	defer os.RemoveAll(dir)
 	file := filepath.Join(dir, "preview.bmp")
-	if recording.Thumbnail(ctx, path, file) != nil {
-		return nil
+	if err := recording.ThumbnailAt(ctx, path, file, seconds); err != nil {
+		return nil, err
 	}
 	f, err := os.Open(file)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	defer f.Close()
-	img, _ := bmp.Decode(f)
-	return img
+	return bmp.Decode(f)
 }

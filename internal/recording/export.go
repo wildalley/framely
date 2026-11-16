@@ -148,11 +148,20 @@ func ExportGIF(ctx context.Context, source, destination string, o GIFOptions) er
 	return Publish(temp, destination)
 }
 func Thumbnail(ctx context.Context, source, destination string) error {
+	return ThumbnailAt(ctx, source, destination, 0)
+}
+
+// ThumbnailAt decodes a bounded preview at a selected time, using the same
+// private, local-file-only media component as exports.
+func ThumbnailAt(ctx context.Context, source, destination string, seconds float64) error {
+	if math.IsNaN(seconds) || math.IsInf(seconds, 0) || seconds < 0 {
+		return errors.New("预览时间必须是有效的非负秒数")
+	}
 	ffmpeg, err := components.Find("framely-ffmpeg")
 	if err != nil {
 		return err
 	}
-	return run(ctx, ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-threads", "2", "-protocol_whitelist", "file,pipe", "-i", source, "-frames:v", "1", "-vf", "scale='min(640,iw)':-2", "-c:v", "bmp", "-update", "1", destination)
+	return run(ctx, ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-threads", "2", "-protocol_whitelist", "file,pipe", "-ss", strconv.FormatFloat(seconds, 'f', 3, 64), "-i", source, "-frames:v", "1", "-vf", "scale='min(640,iw)':-2", "-c:v", "bmp", "-update", "1", destination)
 }
 
 type limitedLog struct{ bytes.Buffer }

@@ -1,9 +1,12 @@
 package recording
 
 import (
+	"context"
 	"encoding/binary"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -89,5 +92,38 @@ func TestAutomaticNamesNeverReplaceFiles(t *testing.T) {
 	}
 	if _, err := NextPath("", "录屏", ".mp4", now); err == nil {
 		t.Fatal("empty directory accepted")
+	}
+}
+
+func TestDurationProbeParsesOnlyPositiveMetadataDurations(t *testing.T) {
+	for log, want := range map[string]float64{
+		"Input #0\n  Duration: 00:00:01.00, start: 0\n": 1,
+		"  Duration: 125:03:04.25, start: 0\n":          125*3600 + 3*60 + 4.25,
+	} {
+		if got, ok := durationFromLog(log); !ok || got != want {
+			t.Fatalf("metadata %q: %v %v", log, got, ok)
+		}
+	}
+	for _, log := range []string{"", "  Duration: N/A, start: 0", "  Duration: 00:00:00.00, start: 0", "filename Duration: 00:01:00.00,", "  Duration: 00:70:00.00,", "  Duration: " + strings.Repeat("9", 307) + ":00:00.00,"} {
+		if _, ok := durationFromLog(log); ok {
+			t.Fatalf("accepted invalid duration %q", log)
+		}
+	}
+}
+
+func TestDurationCancellationAndMovieBoxBounds(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := DurationContext(ctx, "missing.mp4"); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "short-mvhd.mp4")
+	// A short mvhd must not read its duration from the following box.
+	data := box("moov", box("mvhd", []byte{0, 0, 0, 0}), mvhd(0, 1000, 5000))
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Duration(path); err == nil {
+		t.Fatal("read outside mvhd payload")
 	}
 }
