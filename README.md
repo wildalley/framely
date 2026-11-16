@@ -14,7 +14,7 @@ Framely is an open-source desktop tool for screenshots, annotations, image pinni
 
 ![Framely 原生截图编辑器，画布使用生成的示例内容](docs/images/framely.png)
 
-**v0.4.7** 改进翻译取消与错误恢复、GIF 画面选段、OCR 连续扫选和键盘操作，修复选区工具栏越界，并加强翻译安全与录屏稳定性。详见 [发布说明](docs/releases/v0.4.7.md) 和 [检查记录](docs/AUDIT_2026-11-16.md)。
+**v0.4.8** 改进翻译取消与错误恢复、GIF 画面选段、OCR 连续扫选和键盘操作，修复选区工具栏越界，并加强翻译安全与录屏稳定性。详见 [发布说明](docs/releases/v0.4.8.md) 和 [检查记录](docs/AUDIT_2026-11-16.md)。
 
 ## 功能
 
@@ -34,23 +34,23 @@ Framely is an open-source desktop tool for screenshots, annotations, image pinni
 
 ## 下载与安装
 
-当前版本为 **v0.4.7**，完整发行包包含屏幕采集、录屏和离线 OCR 组件，使用时无需另装 Go、Python 或 FFmpeg。离线翻译模型需在设置中单独下载。
+当前版本为 **v0.4.8**，完整发行包包含屏幕采集、录屏和离线 OCR 组件，使用时无需另装 Go、Python 或 FFmpeg。离线翻译模型需在设置中单独下载。
 
 从 [GitHub Releases](https://github.com/wildalley/framely/releases/latest) 下载对应平台的附件；发布页提供 `SHA256SUMS` 用于校验。
 
 | 平台 | 附件 |
 | --- | --- |
-| Windows x64 | `framely-0.4.7-windows-amd64-setup.exe` 或 `framely-0.4.7-windows-amd64-portable.zip` |
-| macOS 15+ · Apple Silicon | `framely-0.4.7-darwin-arm64.dmg` |
-| macOS 15+ · Intel | `framely-0.4.7-darwin-amd64.dmg` |
-| Ubuntu / Debian x64 | `framely-0.4.7-linux-amd64.deb` |
-| Arch Linux x64 | `framely-0.4.7-1-x86_64.pkg.tar.zst` |
-| 其他 Linux x64 | `framely-0.4.7-linux-amd64-portable.tar.gz` |
+| Windows x64 | `framely-0.4.8-windows-amd64-setup.exe` 或 `framely-0.4.8-windows-amd64-portable.zip` |
+| macOS 15+ · Apple Silicon | `framely-0.4.8-darwin-arm64.dmg` |
+| macOS 15+ · Intel | `framely-0.4.8-darwin-amd64.dmg` |
+| Ubuntu / Debian x64 | `framely-0.4.8-linux-amd64.deb` |
+| Arch Linux x64 | `framely-0.4.8-1-x86_64.pkg.tar.zst` |
+| 其他 Linux x64 | `framely-0.4.8-linux-amd64-portable.tar.gz` |
 
 - **Windows**：运行安装器，或将便携 ZIP 完整解压后启动应用。
 - **macOS**：打开 DMG，将 `Framely.app` 复制到「应用程序」。
-- **Ubuntu / Debian**：执行 `sudo apt install ./framely-0.4.7-linux-amd64.deb`。
-- **Arch Linux**：执行 `sudo pacman -U ./framely-0.4.7-1-x86_64.pkg.tar.zst`。
+- **Ubuntu / Debian**：执行 `sudo apt install ./framely-0.4.8-linux-amd64.deb`。
+- **Arch Linux**：执行 `sudo pacman -U ./framely-0.4.8-1-x86_64.pkg.tar.zst`。
 - **Linux 便携版**：解压后执行 `./install.sh`，之后从应用菜单或 `framely` 启动。
 
 ### 升级后仍显示旧版？
