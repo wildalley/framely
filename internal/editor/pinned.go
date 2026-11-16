@@ -33,7 +33,7 @@ func (a *App) pinnedView(c *ui.Context) {
 		Annotations: a.history.Present(),
 		CornerRatio: a.history.ImageCornerRatio(),
 	}
-	root := ui.Box(c.Key("pinned")).Label("钉住的图片").Fill().DragWindow().ContextMenu(a.contextMenu)
+	root := ui.Box(c.Key("pinned")).Label("钉住的图片").Tooltip("Tab 显示操作；菜单键或 Shift+F10 打开菜单").Focusable().FocusRingOffset(-2).Fill().DragWindow().ContextMenu(a.contextMenu)
 	root.HandleInput(func(ev ui.InputEvent) bool {
 		switch ev.Kind {
 		case ui.InputPointerDown:
@@ -66,7 +66,7 @@ func (a *App) pinnedView(c *ui.Context) {
 		p.Stroke(r, brand.Signal.Alpha(.85), 0, 1)
 	})
 	root.Children(func() {
-		if root.Hovered() && ww >= capsuleMinWidth && wh >= 48 {
+		if (root.Hovered() || root.FocusWithin()) && ww >= capsuleMinWidth && wh >= 48 {
 			a.pinCapsule(c)
 		}
 	})

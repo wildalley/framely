@@ -918,8 +918,32 @@ func drawMagnifier(p *ui.Painter, r ui.Rect, bm *ui.Bitmap, origin, pixel image.
 func (s *pick) actionBar(c *ui.Context, v *pickView, sel doc.Rect, w, h float32) {
 	const barHeight = 44
 	t := c.Theme()
+	tools := []toolItem{toolItems[1], toolItems[3], toolItems[4], toolItems[7], toolItems[8]}
+	actions := []struct {
+		key, label string
+		action     PickAction
+		enabled    bool
+	}{{"pick-scroll", "长截图", PickScroll, s.opts.Scroll}, {"pick-record", "录屏", PickRecord, s.opts.Record},
+		{"pick-text", "取字", PickText, s.opts.Text}, {"pick-translate", "翻译", PickTranslate, s.opts.Translate}}
+	textWidth := func(label string, padding float32) float32 {
+		width, _ := c.MeasureText(0, ui.Span{Text: label, Size: 13, Weight: 500})
+		return float32(math.Ceil(float64(width))) + padding
+	}
+	copyWidth := textWidth("复制", 30)
+	// Give every child its measured width; clamping only the container leaves
+	// non-shrinking buttons beyond the display's edge.
+	barWidth := float32(10+9*32+2*9+11*2) + copyWidth
+	for _, action := range actions {
+		if action.enabled {
+			barWidth += textWidth(action.label, 18) + 2
+		}
+	}
+	compact := barWidth > w-16
+	if compact {
+		barWidth = 10 + 2*32 + copyWidth + textWidth("更多", 18) + 3*2
+	}
 	bar := ui.Row(c.Key("pick-actions")).Role(ui.RoleToolbar).FocusGroup(ui.Horizontal).Label("选区操作").
-		Absolute().Height(barHeight).Padding(4).Gap(2).AlignItems(ui.Center).Radius(12).
+		Absolute().Size(barWidth, barHeight).Padding(4).Gap(2).AlignItems(ui.Center).Radius(12).
 		Background(t.Background).Border(1, t.Border).Shadow(0, 8, 24, 0, ui.RGBA(0, 0, 0, .3))
 	top := float32(sel.Y+sel.H) + 8
 	if top+barHeight > h-8 {
@@ -928,66 +952,77 @@ func (s *pick) actionBar(c *ui.Context, v *pickView, sel doc.Rect, w, h float32)
 			top = float32(sel.Y+sel.H) - 8 - barHeight
 		}
 	}
-	bar.Top(max(8, top))
-	if right := w - float32(sel.X+sel.W); float32(sel.X+sel.W) > 560 {
-		bar.Right(max(8, right))
-	} else {
-		bar.Left(max(8, float32(sel.X)))
-	}
+	bar.Top(max(8, min(top, h-barHeight-8))).Left(max(8, min(float32(sel.X), w-barWidth-8)))
 	choose := func(choice Pick) { s.finish(v, &s.sel, choice) }
 	bar.Children(func() {
-		for _, it := range []toolItem{toolItems[1], toolItems[3], toolItems[4], toolItems[7], toolItems[8]} {
-			if iconButton(c, "pick-tool-"+string(it.tool), it.icon, it.label, false).Clicked() {
-				choose(Pick{Action: PickEdit, Tool: it.tool})
+		if !compact {
+			for _, it := range tools {
+				if iconButton(c, "pick-tool-"+string(it.tool), it.icon, it.label, false).Clicked() {
+					choose(Pick{Action: PickEdit, Tool: it.tool})
+					return
+				}
+			}
+			toolbarDivider(c, "pick-div-tools")
+			text := func(key, label string, action PickAction) bool {
+				b := ui.Button(c.Key(key), label).Size(textWidth(label, 18), 34).Padding(0, 9).Radius(8).FontSize(13).Shrink(0).
+					Border(0, ui.Transparent).Label(label)
+				bg := ui.Transparent
+				if b.Pressed() {
+					bg = t.SurfacePressed
+				} else if b.Hovered() {
+					bg = t.SurfaceHover
+				}
+				if b.Background(bg).Clicked() {
+					choose(Pick{Action: action})
+					return true
+				}
+				return false
+			}
+			for _, action := range actions {
+				if action.enabled && text(action.key, action.label, action.action) {
+					return
+				}
+			}
+			toolbarDivider(c, "pick-div-actions")
+			if iconButton(c, "pick-pin", iconPin, "钉在屏幕上（双击选区）", false).Clicked() {
+				choose(Pick{Action: PickPin})
 				return
 			}
-		}
-		toolbarDivider(c, "pick-div-tools")
-		text := func(key, label string, action PickAction) bool {
-			b := ui.Button(c.Key(key), label).Height(34).Padding(0, 9).Radius(8).FontSize(13).Shrink(0).
-				Border(0, ui.Transparent).Label(label)
-			bg := ui.Transparent
-			if b.Pressed() {
-				bg = t.SurfacePressed
-			} else if b.Hovered() {
-				bg = t.SurfaceHover
+			if iconButton(c, "pick-edit", iconFit, "打开编辑窗口", false).Clicked() {
+				choose(Pick{Action: PickEdit})
+				return
 			}
-			if b.Background(bg).Clicked() {
-				choose(Pick{Action: action})
-				return true
-			}
-			return false
-		}
-		if s.opts.Scroll && text("pick-scroll", "长截图", PickScroll) {
-			return
-		}
-		if s.opts.Record && text("pick-record", "录屏", PickRecord) {
-			return
-		}
-		if s.opts.Text && text("pick-text", "取字", PickText) {
-			return
-		}
-		if s.opts.Translate && text("pick-translate", "翻译", PickTranslate) {
-			return
-		}
-		toolbarDivider(c, "pick-div-actions")
-		if iconButton(c, "pick-pin", iconPin, "钉在屏幕上（双击选区）", false).Clicked() {
-			choose(Pick{Action: PickPin})
-			return
+		} else {
+			ui.Button(c.Key("pick-more"), "更多").Size(textWidth("更多", 18), 34).Padding(0, 9).Radius(8).FontSize(13).Border(0, ui.Transparent).Label("更多选区操作").Menu(func(m *ui.Menu) {
+				for _, it := range tools {
+					if m.Item(it.label).Chosen() {
+						choose(Pick{Action: PickEdit, Tool: it.tool})
+					}
+				}
+				m.Separator()
+				for _, action := range actions {
+					if action.enabled && m.Item(action.label).Chosen() {
+						choose(Pick{Action: action.action})
+					}
+				}
+				m.Separator()
+				if m.Item("钉在屏幕上").Chosen() {
+					choose(Pick{Action: PickPin})
+				}
+				if m.Item("打开编辑窗口").Chosen() {
+					choose(Pick{Action: PickEdit})
+				}
+			})
 		}
 		if iconButton(c, "pick-save", iconDownload, "保存", false).Clicked() {
 			choose(Pick{Action: PickSave})
-			return
-		}
-		if iconButton(c, "pick-edit", iconFit, "打开编辑窗口", false).Clicked() {
-			choose(Pick{Action: PickEdit})
 			return
 		}
 		if iconButton(c, "pick-cancel", iconClose, "取消 (Esc)", false).Clicked() {
 			s.cancel()
 			return
 		}
-		if ui.PrimaryButton(c.Key("pick-copy"), "复制").Disabled(s.copying).Height(34).Padding(0, 14).Radius(8).Shrink(0).
+		if ui.PrimaryButton(c.Key("pick-copy"), "复制").Disabled(s.copying).Size(copyWidth, 34).FontSize(13).Padding(0, 14).Radius(8).Shrink(0).
 			Tooltip("复制到剪贴板 (Enter)").Clicked() {
 			choose(Pick{Action: PickCopy})
 		}

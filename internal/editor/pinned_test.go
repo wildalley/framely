@@ -59,3 +59,43 @@ func TestTinyPinnedImageLeavesActionsToItsMenu(t *testing.T) {
 		t.Fatal("a tiny pinned image has no menu")
 	}
 }
+
+func TestPinnedActionsStayAvailableFromKeyboard(t *testing.T) {
+	a, _ := textApp()
+	defer a.release()
+	a.pinned, a.selected = true, ""
+	tt := ui.NewTester(a.view, 500, 300)
+	tt.Key(0, ui.KeyTab)
+	if !tt.Focused("钉住的图片") {
+		t.Fatal("pinned image cannot receive keyboard focus")
+	}
+	if r, ok := tt.Find("钉图操作"); !ok || r.W <= 0 {
+		t.Fatal("keyboard focus did not reveal actions")
+	}
+	tt.Key(0, ui.KeyTab)
+	if !tt.Focused("编辑（双击图片）") {
+		t.Fatal("Tab could not reach the revealed toolbar")
+	}
+	tt.Move(-10, -10)
+	if r, ok := tt.Find("钉图操作"); !ok || r.W <= 0 {
+		t.Fatal("pointer leaving removed focused actions")
+	}
+}
+
+func TestTinyPinnedImageOpensMenuFromKeyboard(t *testing.T) {
+	a, _ := textApp()
+	defer a.release()
+	a.pinned, a.selected = true, ""
+	tt := ui.NewTester(a.view, 100, 40)
+	tt.Key(0, ui.KeyTab)
+	tt.Key(ui.Shift, ui.KeyF10)
+	if len(tt.Menu()) == 0 {
+		t.Fatal("tiny pinned image has no keyboard menu")
+	}
+	if err := tt.ChooseMenuItem("关闭图片"); err != nil {
+		t.Fatal(err)
+	}
+	if !a.closed {
+		t.Fatal("keyboard menu did not close the image")
+	}
+}

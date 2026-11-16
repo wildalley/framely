@@ -81,6 +81,46 @@ func TestReleasedRegionStaysAdjustableUntilAnActionIsChosen(t *testing.T) {
 	}
 }
 
+func TestPickerEveryActionStaysInsideDisplay(t *testing.T) {
+	for _, region := range [][4]float32{{380, 140, 500, 300}, {380, 20, 500, 80}, {680, 480, 770, 590}, {20, 140, 100, 300}} {
+		for _, scale := range []float32{1, 2} {
+			s, _, tt := actionPicker()
+			tt.SetScale(scale)
+			dragPick(tt, region[0], region[1], region[2], region[3])
+			for _, label := range []string{"保存", "复制", "取消 (Esc)", "箭头", "长截图", "录屏", "取字", "翻译", "打开编辑窗口"} {
+				r, ok := tt.Find(label)
+				if !ok || r.W <= 0 || r.H <= 0 || r.X < 8 || r.Y < 8 || r.X+r.W > 792 || r.Y+r.H > 592 {
+					t.Fatalf("region=%v scale=%v %s clipped: %+v", region, scale, label, r)
+				}
+			}
+			if s.done {
+				t.Fatal("positioning confirmed the region")
+			}
+		}
+	}
+}
+
+func TestNarrowPickerKeepsPrimaryActionsAndOffersOverflow(t *testing.T) {
+	s, _, tt := actionPicker()
+	tt.SetSize(320, 240)
+	dragPick(tt, 100, 50, 200, 150)
+	for _, label := range []string{"保存", "复制", "取消 (Esc)", "更多选区操作"} {
+		r, ok := tt.Find(label)
+		if !ok || r.W <= 0 || r.H <= 0 || r.X < 8 || r.X+r.W > 312 || r.Y+r.H > 232 {
+			t.Fatalf("%s clipped: %+v", label, r)
+		}
+	}
+	if err := tt.Click("更多选区操作"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.ChooseMenuItem("翻译"); err != nil {
+		t.Fatal(err)
+	}
+	if result := waitPick(t, s); result.Action != PickTranslate {
+		t.Fatalf("overflow action=%v", result.Action)
+	}
+}
+
 func TestPickerWaitsForCopyBeforeClosing(t *testing.T) {
 	s, _, tt := actionPicker()
 	var complete func(error)
@@ -256,6 +296,13 @@ func TestPickerPreview(t *testing.T) {
 		dragPick(tt, 380, 140, 720, 400)
 		tt.Move(600, 300)
 		save("picker-actions")
+		s.sel = doc.Rect{X: 380, Y: 140, W: 120, H: 160}
+		tt.Frame()
+		save("picker-edge")
+		tt.SetSize(320, 240)
+		s.sel = doc.Rect{X: 100, Y: 50, W: 100, H: 100}
+		tt.Frame()
+		save("picker-compact")
 	}
 }
 
