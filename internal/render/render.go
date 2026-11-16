@@ -27,6 +27,9 @@ type Scene struct {
 	// Hidden is the ID of an annotation not to draw, the text being edited.
 	Hidden      string
 	CornerRatio float64
+	// Dimmer reuses the highlight geometry across editor frames. Exports can
+	// leave it nil; a cache belongs to one renderer and is not shared with workers.
+	Dimmer *DimmerCache
 }
 
 // TextFont is the family of text annotations; "" is the system's.
@@ -62,7 +65,7 @@ func drawScene(p *ui.Painter, s *Scene) {
 		drawAnnotation(p, s, a)
 	}
 	if len(areas) > 0 && dim > 0 {
-		p.FillPath(dimmerPath(areas, s.Width, s.Height), ui.RGBA(0, 0, 0, float32(dim)))
+		p.FillPath(s.Dimmer.pathFor(areas, s.Width, s.Height), ui.RGBA(0, 0, 0, float32(dim)))
 	}
 }
 
@@ -196,37 +199,76 @@ func RoundedRect(x, y, w, h, r float64) *ui.Path {
 	return &p
 }
 
-// dimmerPath covers the image apart from the highlighted areas. The areas
-// may overlap, which an even-odd or winding hole cannot cut out once each,
-// so the complement is split along every area's edges into cells, and the
-// cells no area covers are filled: all of them in one path, so that
-// neighboring cells meet without a seam.
-func dimmerPath(areas []doc.Rect, width, height int) *ui.Path {
-	xs := []float64{0, float64(width)}
-	ys := []float64{0, float64(height)}
-	for _, r := range areas {
-		xs = append(xs, clamp(r.X, 0, float64(width)), clamp(r.X+r.W, 0, float64(width)))
-		ys = append(ys, clamp(r.Y, 0, float64(height)), clamp(r.Y+r.H, 0, float64(height)))
+// DimmerCache retains only the current highlight geometry, never image pixels
+// or annotation history. Compare copied rectangles so an in-place drag also
+// invalidates the path while hover, zoom and opacity changes can reuse it.
+type DimmerCache struct {
+	areas         []doc.Rect
+	width, height int
+	path          *ui.Path
+}
+
+func (c *DimmerCache) pathFor(areas []doc.Rect, width, height int) *ui.Path {
+	if c == nil {
+		return dimmerPath(areas, width, height)
 	}
-	slices.Sort(xs)
+	if c.path == nil || c.width != width || c.height != height || !slices.Equal(c.areas, areas) {
+		c.path = dimmerPath(areas, width, height)
+		c.areas = append(c.areas[:0], areas...)
+		c.width, c.height = width, height
+	}
+	return c.path
+}
+
+// Sweep horizontal bands and merge their covered X intervals. This avoids
+// testing every rectangle against every cell of a Cartesian edge grid.
+// All uncovered spans form one path, so overlaps never dim twice and adjacent
+// spans meet without an antialiasing seam.
+func dimmerPath(areas []doc.Rect, width, height int) *ui.Path {
+	ys := []float64{0, float64(height)}
+	clipped := make([]doc.Rect, 0, len(areas))
+	for _, r := range areas {
+		x0, x1 := clamp(math.Min(r.X, r.X+r.W), 0, float64(width)), clamp(math.Max(r.X, r.X+r.W), 0, float64(width))
+		y0, y1 := clamp(math.Min(r.Y, r.Y+r.H), 0, float64(height)), clamp(math.Max(r.Y, r.Y+r.H), 0, float64(height))
+		if x0 < x1 && y0 < y1 {
+			clipped = append(clipped, doc.Rect{X: x0, Y: y0, W: x1 - x0, H: y1 - y0})
+			ys = append(ys, y0, y1)
+		}
+	}
 	slices.Sort(ys)
-	xs, ys = slices.Compact(xs), slices.Compact(ys)
+	ys = slices.Compact(ys)
+	type interval struct{ lo, hi float64 }
+	spans := make([]interval, 0, len(clipped))
 	var p ui.Path
+	add := func(x0, y0, x1, y1 float64) {
+		p.MoveTo(f(x0), f(y0)).LineTo(f(x1), f(y0)).
+			LineTo(f(x1), f(y1)).LineTo(f(x0), f(y1)).Close()
+	}
 	for j := 0; j+1 < len(ys); j++ {
-		for i := 0; i+1 < len(xs); i++ {
-			cx, cy := (xs[i]+xs[i+1])/2, (ys[j]+ys[j+1])/2
-			covered := false
-			for _, r := range areas {
-				if cx > r.X && cx < r.X+r.W && cy > r.Y && cy < r.Y+r.H {
-					covered = true
-					break
-				}
+		spans = spans[:0]
+		for _, r := range clipped {
+			if r.Y < ys[j+1] && r.Y+r.H > ys[j] {
+				spans = append(spans, interval{r.X, r.X + r.W})
 			}
-			if covered {
-				continue
+		}
+		slices.SortFunc(spans, func(a, b interval) int {
+			if a.lo < b.lo {
+				return -1
 			}
-			p.MoveTo(f(xs[i]), f(ys[j])).LineTo(f(xs[i+1]), f(ys[j])).
-				LineTo(f(xs[i+1]), f(ys[j+1])).LineTo(f(xs[i]), f(ys[j+1])).Close()
+			if a.lo > b.lo {
+				return 1
+			}
+			return 0
+		})
+		x := 0.0
+		for _, span := range spans {
+			if span.lo > x {
+				add(x, ys[j], span.lo, ys[j+1])
+			}
+			x = math.Max(x, span.hi)
+		}
+		if x < float64(width) {
+			add(x, ys[j], float64(width), ys[j+1])
 		}
 	}
 	return &p

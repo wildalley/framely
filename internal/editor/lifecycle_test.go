@@ -11,6 +11,7 @@ import (
 	"github.com/wildalley/framely/internal/capture"
 	"github.com/wildalley/framely/internal/config"
 	"github.com/wildalley/framely/internal/doc"
+	"github.com/wildalley/framely/internal/render"
 )
 
 func TestClosingImageReleasesStateAndRejectsPendingWork(t *testing.T) {
@@ -27,6 +28,16 @@ func TestClosingImageReleasesStateAndRejectsPendingWork(t *testing.T) {
 	a.editingID, a.editingText, a.slidingKey = annotation.ID, "temporary text", "opacity"
 	a.toasts = []string{"pending message"}
 	a.OnPaste = func() { t.Fatal("a closed image kept its actions") }
+	highlight := doc.New(doc.ToolAreaHighlight, doc.Point{X: 5, Y: 5}, doc.DefaultStyle(doc.ToolAreaHighlight))
+	highlight.Width, highlight.Height = 10, 10
+	ui.Render(func(c *ui.Context) {
+		ui.Box(c).Size(32, 32).Draw(func(p *ui.Painter, _ ui.Rect) {
+			render.Draw(p, &render.Scene{Width: 32, Height: 32, Annotations: []doc.Annotation{highlight}, Dimmer: &a.dimmer})
+		})
+	}, 32, 32, 1)
+	if reflect.DeepEqual(a.dimmer, render.DimmerCache{}) {
+		t.Fatal("test did not populate highlight cache")
+	}
 	calls := 0
 	a.OnClosed = func() { calls++ }
 	pending := a.snapshot()
@@ -37,7 +48,7 @@ func TestClosingImageReleasesStateAndRejectsPendingWork(t *testing.T) {
 	}
 	if a.image != nil || a.pixels != nil || a.mosaicPx != nil || a.bitmap != nil || a.mosaic != nil || a.drag != nil ||
 		a.styles != nil || a.toasts != nil || a.OnPaste != nil || a.OnClosed != nil || a.editingText != "" ||
-		!reflect.DeepEqual(a.history, doc.History{}) {
+		!reflect.DeepEqual(a.history, doc.History{}) || !reflect.DeepEqual(a.dimmer, render.DimmerCache{}) {
 		t.Fatal("a closed image retained its data or history")
 	}
 	applied := false

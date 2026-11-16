@@ -53,6 +53,7 @@ type App struct {
 	mosaic   *ui.Bitmap
 	title    string
 	history  doc.History
+	dimmer   render.DimmerCache
 	lease    *imagelimit.Lease
 
 	tool          doc.Tool
@@ -167,6 +168,7 @@ func (a *App) release() {
 	a.lease.Release()
 	a.lease = nil
 	a.history = doc.History{}
+	a.dimmer = render.DimmerCache{}
 	a.drag, a.styles, a.toasts = nil, nil, nil
 	a.selected, a.editingID, a.editingText, a.slidingKey, a.title = "", "", "", "", ""
 	a.annotationText, a.styleText = ui.Handle{}, ui.Handle{}

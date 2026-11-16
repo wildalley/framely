@@ -341,6 +341,7 @@ func (a *App) canvas(c *ui.Context, zoom float64) ui.Element {
 		Annotations: a.history.Present(),
 		Hidden:      a.editingID,
 		CornerRatio: a.history.ImageCornerRatio(),
+		Dimmer:      &a.dimmer,
 	}
 	box := ui.Box(c.Key("canvas")).Label("图片画布").Size(w, h).Cursor(a.hoverCursor).ContextMenu(a.contextMenu)
 	if a.drag != nil {
