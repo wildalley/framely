@@ -16,11 +16,16 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/wildalley/framely/internal/translationurl"
 )
 
 func post(ctx context.Context, o Options, service, endpoint string, body io.Reader, header http.Header, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, body)
 	if err != nil {
+		return fmt.Errorf("%s：%w", service, err)
+	}
+	if err := translationurl.ValidateURL(req.URL); err != nil {
 		return fmt.Errorf("%s：%w", service, err)
 	}
 	req.Header = header

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func pinned(name, content string) ModelFile {
@@ -132,5 +134,192 @@ func TestPublishedModelsArePinned(t *testing.T) {
 				t.Fatalf("%s lacks %s", m.Direction, need)
 			}
 		}
+	}
+}
+
+type modelTestTransport func(*http.Request) (*http.Response, error)
+
+func (f modelTestTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+type interruptedModelBody struct {
+	first   bool
+	release <-chan struct{}
+	failed  bool
+}
+
+func (b *interruptedModelBody) Read(p []byte) (int, error) {
+	if !b.first {
+		b.first = true
+		return copy(p, "enc"), nil
+	}
+	<-b.release
+	if b.failed {
+		return 0, context.Canceled
+	}
+	return copy(p, "oder"), io.EOF
+}
+
+func (*interruptedModelBody) Close() error { return nil }
+
+func modelTestClient(body io.ReadCloser, started func()) *http.Client {
+	return &http.Client{Transport: modelTestTransport(func(*http.Request) (*http.Response, error) {
+		if started != nil {
+			started()
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: body}, nil
+	})}
+}
+
+func TestCancelledFetchDoesNotRemoveAnotherAttemptsStagingFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "model.onnx")
+	f := pinned("model.onnx", "encoder")
+	releaseOld, releaseNew := make(chan struct{}), make(chan struct{})
+	startedOld, startedNew := make(chan struct{}, 1), make(chan struct{}, 1)
+	oldDone, newDone := make(chan error, 1), make(chan error, 1)
+	go func() {
+		oldDone <- fetch(context.Background(), modelTestClient(&interruptedModelBody{release: releaseOld, failed: true}, nil), "https://example.invalid/model", path, f, func(int64) {
+			select {
+			case startedOld <- struct{}{}:
+			default:
+			}
+		})
+	}()
+	<-startedOld
+	go func() {
+		newDone <- fetch(context.Background(), modelTestClient(&interruptedModelBody{release: releaseNew}, nil), "https://example.invalid/model", path, f, func(int64) {
+			select {
+			case startedNew <- struct{}{}:
+			default:
+			}
+		})
+	}()
+	<-startedNew
+	close(releaseOld)
+	if err := <-oldDone; !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	close(releaseNew)
+	if err := <-newDone; err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || string(data) != "encoder" {
+		t.Fatalf("retry corrupted: %q %v", data, err)
+	}
+	files, err := os.ReadDir(dir)
+	if err != nil || len(files) != 1 {
+		t.Fatalf("left staging files: %v %v", files, err)
+	}
+}
+
+func TestQueuedModelDownloadCanBeCancelledAndRetryWaitsForCleanup(t *testing.T) {
+	root := t.TempDir()
+	m := Model{Direction: "en-zh", Files: []ModelFile{pinned("a.onnx", "encoder")}}
+	release := make(chan struct{})
+	started := make(chan struct{}, 1)
+	oldDone := make(chan error, 1)
+	go func() {
+		oldDone <- Download(context.Background(), modelTestClient(&interruptedModelBody{release: release, failed: true}, nil), root, m, func(done, total int64) {
+			select {
+			case started <- struct{}{}:
+			default:
+			}
+		})
+	}()
+	<-started
+	ctx, cancel := context.WithCancel(context.Background())
+	waitDone := make(chan error, 1)
+	go func() { waitDone <- Download(ctx, nil, root, m, nil) }()
+	select {
+	case err := <-waitDone:
+		t.Fatalf("queued download returned before cancellation: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	cancel()
+	select {
+	case err := <-waitDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("queued cancellation waited for active download")
+	}
+	retryStarted := make(chan struct{}, 1)
+	retryDone := make(chan error, 1)
+	go func() {
+		retryDone <- Download(context.Background(), modelTestClient(io.NopCloser(strings.NewReader("encoder")), func() { retryStarted <- struct{}{} }), root, m, nil)
+	}()
+	select {
+	case <-retryStarted:
+		t.Fatal("retry overlapped active download")
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(release)
+	if err := <-oldDone; !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	if err := <-retryDone; err != nil {
+		t.Fatal(err)
+	}
+	if !Installed(root, m) {
+		t.Fatal("retry not installed")
+	}
+	key, _ := filepath.Abs(filepath.Join(root, m.Direction))
+	modelOperations.mu.Lock()
+	left := modelOperations.active[key]
+	modelOperations.mu.Unlock()
+	if left != nil {
+		t.Fatal("unused model operation retained")
+	}
+}
+
+func TestQueuedModelRemovalCanBeCancelled(t *testing.T) {
+	root := t.TempDir()
+	m := Model{Direction: "en-zh"}
+	dir := filepath.Join(root, m.Direction)
+	if err := os.Mkdir(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "model.onnx"), []byte("model"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := lockModel(context.Background(), root, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if unlock != nil {
+			unlock()
+		}
+	}()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- RemoveContext(ctx, root, m) }()
+	select {
+	case err := <-done:
+		t.Fatalf("removal did not wait for the active download: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("removal cancellation: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("cancelled removal waited for the active download")
+	}
+	if _, err := os.Stat(dir); err != nil {
+		t.Fatalf("cancelled removal deleted the model: %v", err)
+	}
+	unlock()
+	unlock = nil
+	if err := RemoveContext(context.Background(), root, m); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("model not removed: %v", err)
 	}
 }

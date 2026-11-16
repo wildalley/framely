@@ -71,6 +71,69 @@ class ProtocolTests(unittest.TestCase):
 
 
 class TranslateTests(unittest.TestCase):
+    def marian(self, direction="zh-en"):
+        model = worker.Marian.__new__(worker.Marian)
+        model.direction = direction
+        model.eos, model.unk = -1, -2
+        model.source = types.SimpleNamespace(encode=lambda text, out_type: text.split())
+        model.vocab = {str(i): i for i in range(2000)}
+        model.vocab[">>cmn_Hans<<"] = -3
+        return model
+
+    def test_long_lines_keep_all_tokens_in_bounded_chunks(self):
+        for direction in worker.TRANSLATE_DIRECTIONS:
+            model = self.marian(direction)
+            chunks = model.encode(" ".join(map(str, range(1200))))
+            prefix = 1 if direction == "en-zh" else 0
+            self.assertTrue(all(len(chunk) <= worker.MAX_TOKENS and chunk[-1] == model.eos for chunk in chunks))
+            if prefix:
+                self.assertTrue(all(chunk[0] == -3 for chunk in chunks))
+            self.assertEqual([token for chunk in chunks for token in chunk[prefix:-1]], list(range(1200)))
+
+    def test_chunked_translation_restores_line_and_chunk_order(self):
+        model = self.marian()
+        model.batch = lambda rows: [",".join(map(str, row[:-1])) for row in rows]
+        source = " ".join(map(str, range(1200)))
+        result = model.translate([source, "", "7 8", "  "], batch=2)
+        self.assertEqual([int(token) for chunk in result[0].split() for token in chunk.split(",")], list(range(1200)))
+        self.assertEqual(result[1:], ["", "7,8", ""])
+
+    def test_chunking_prefers_sentence_boundaries_without_losing_tokens(self):
+        model = self.marian()
+        model.vocab["."] = 2000
+        pieces = list(map(str, range(400))) + ["."] + list(map(str, range(400, 900)))
+        chunks = model.encode(" ".join(pieces))
+        self.assertEqual(len(chunks[0]), 402)
+        self.assertEqual([token for chunk in chunks for token in chunk[:-1]], list(range(400)) + [2000] + list(range(400, 900)))
+
+    def test_chinese_chunks_join_without_inventing_spaces(self):
+        model = self.marian("en-zh")
+        model.batch = lambda rows: ["译文" for row in rows]
+        result = model.translate([" ".join(map(str, range(600)))])
+        self.assertEqual(result, ["译文译文"])
+
+    @unittest.skipUnless(importlib.util.find_spec("numpy"), "decoder check needs the OCR build environment")
+    def test_decoder_reports_unfinished_output_instead_of_truncating(self):
+        import numpy as np
+        model = self.marian()
+        model.np, model.eos, model.pad = np, 2, 0
+        model.encoder = types.SimpleNamespace(run=lambda *args: [np.zeros((1, 1, 1))])
+        model.decoder = types.SimpleNamespace(run=lambda _, feeds: [np.array([[[0., 1., 0.]]])])
+        with self.assertRaisesRegex(ValueError, "译文超过模型长度"):
+            model.batch([[1, model.eos]])
+
+    @unittest.skipUnless(importlib.util.find_spec("numpy"), "decoder check needs the OCR build environment")
+    def test_decoder_stops_when_all_rows_reach_eos(self):
+        import numpy as np
+        model = self.marian()
+        model.np, model.eos, model.pad = np, 2, 0
+        model.encoder = types.SimpleNamespace(run=lambda *args: [np.zeros((1, 1, 1))])
+        model.decoder = Mock()
+        model.decoder.run.return_value = [np.array([[[0., 0., 1.]]])]
+        model.decode = lambda ids: "done"
+        self.assertEqual(model.batch([[1, model.eos]]), ["done"])
+        model.decoder.run.assert_called_once()
+
     def test_chinese_output_loses_sentencepiece_spaces(self):
         self.assertEqual(worker.tidy_chinese("框架 支持本地识别、 选字和全文编辑 。"), "框架支持本地识别、选字和全文编辑。")
         self.assertEqual(worker.tidy_chinese("单击 Save 以保留, 好吗?"), "单击Save以保留，好吗？")

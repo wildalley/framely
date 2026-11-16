@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -13,6 +12,7 @@ import (
 
 	"github.com/wildalley/framely/internal/apppaths"
 	"github.com/wildalley/framely/internal/shortcutkey"
+	"github.com/wildalley/framely/internal/translationurl"
 )
 
 // DefaultShortcut is the global capture shortcut until the user records
@@ -83,7 +83,9 @@ func Load() (c Config, repaired bool) {
 		c.RecordDir = ""
 		repaired = true
 	}
-	if c.Validate() != nil {
+	// Preserve an old endpoint for correction; never switch its credentials
+	// to another service or discard unrelated shortcuts because of its URL.
+	if c.validateShortcuts() != nil {
 		c.ScrollShortcut = ""
 		c.RecordShortcut = ""
 		repaired = true
@@ -92,34 +94,63 @@ func Load() (c Config, repaired bool) {
 }
 
 func (c Config) Validate() error {
-	capture, err := shortcutkey.Parse(c.CaptureShortcut, runtime.GOOS)
-	if err != nil {
-		return err
+	if issues := c.ValidationErrors(); len(issues) > 0 {
+		return issues[0]
 	}
+	return nil
+}
+
+// ValidationError identifies the setting to correct without parsing messages.
+type ValidationError struct {
+	Field string
+	Err   error
+}
+
+func (e ValidationError) Error() string { return e.Err.Error() }
+func (e ValidationError) Unwrap() error { return e.Err }
+
+func (c Config) ValidationErrors() []ValidationError {
+	var issues []ValidationError
 	if c.RecordDir != "" && !filepath.IsAbs(c.RecordDir) {
-		return errors.New("录屏保存位置必须是完整路径")
+		issues = append(issues, ValidationError{"recordDir", errors.New("录屏保存位置必须是完整路径")})
 	}
-	if c.TranslateBaseURL != "" {
-		u, err := url.Parse(c.TranslateBaseURL)
-		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
-			return errors.New("大模型接口地址必须是完整的 http(s) 地址")
+	if c.TranslateProvider == "openai" && c.TranslateBaseURL != "" {
+		if err := translationurl.Validate(c.TranslateBaseURL); err != nil {
+			issues = append(issues, ValidationError{"translateBaseURL", err})
 		}
 	}
-	seen := map[string]bool{capture.Canonical(): true}
-	for _, action := range []struct{ key, name string }{{c.ScrollShortcut, "长截图"}, {c.RecordShortcut, "录屏"}} {
-		if action.key == "" {
+	return append(issues, c.shortcutErrors()...)
+}
+
+func (c Config) validateShortcuts() error {
+	if issues := c.shortcutErrors(); len(issues) > 0 {
+		return issues[0]
+	}
+	return nil
+}
+
+func (c Config) shortcutErrors() []ValidationError {
+	var issues []ValidationError
+	seen := map[string]string{}
+	for _, action := range []struct{ key, name, field string }{{c.CaptureShortcut, "", "captureShortcut"}, {c.ScrollShortcut, "长截图", "scrollShortcut"}, {c.RecordShortcut, "录屏", "recordShortcut"}} {
+		if action.key == "" && action.field != "captureShortcut" {
 			continue
 		}
 		key, err := shortcutkey.Parse(action.key, runtime.GOOS)
 		if err != nil {
-			return fmt.Errorf("%s：%w", action.name, err)
+			if action.name != "" {
+				err = fmt.Errorf("%s：%w", action.name, err)
+			}
+			issues = append(issues, ValidationError{action.field, err})
+			continue
 		}
-		if seen[key.Canonical()] {
-			return errors.New("截图、长截图与录屏不能使用同一个快捷键")
+		if previous := seen[key.Canonical()]; previous != "" {
+			err := errors.New("截图、长截图与录屏不能使用同一个快捷键")
+			issues = append(issues, ValidationError{action.field, err}, ValidationError{previous, err})
 		}
-		seen[key.Canonical()] = true
+		seen[key.Canonical()] = action.field
 	}
-	return nil
+	return issues
 }
 
 // Save writes the configuration, replacing the file in one step so a crash

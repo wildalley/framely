@@ -185,27 +185,50 @@ class Marian:
 
     def encode(self, text):
         tag = TARGET_TAGS.get(self.direction)
-        ids = ([self.vocab[tag]] if tag else []) + [self.vocab.get(p, self.unk) for p in self.source.encode(text, out_type=str)]
-        return ids[: MAX_TOKENS - 1] + [self.eos]
+        prefix = [self.vocab[tag]] if tag else []
+        pieces = self.source.encode(text, out_type=str)
+        limit = MAX_TOKENS - len(prefix) - 1
+        chunks, start = [], 0
+        while start < len(pieces):
+            end = min(start + limit, len(pieces))
+            # Prefer a nearby sentence boundary while keeping every token.
+            # Feed the original IDs directly: decode/re-encode can otherwise
+            # change token boundaries or lose characters at a split.
+            if end < len(pieces):
+                for i in range(end - 1, start + limit // 2 - 1, -1):
+                    if pieces[i].endswith((".", "!", "?", "。", "！", "？", ";", "；")):
+                        end = i + 1
+                        break
+            ids = [self.vocab.get(p, self.unk) for p in pieces[start:end]]
+            chunks.append(prefix + ids + [self.eos])
+            start = end
+        return chunks or [prefix + [self.eos]]
 
     def decode(self, ids):
         text = self.target.decode_pieces([self.tokens[i] for i in ids if i not in (self.eos, self.pad) and i in self.tokens]).strip()
         return tidy_chinese(text) if self.direction.endswith("-zh") else text
 
     def translate(self, lines, batch=16):
-        out = [""] * len(lines)
-        todo = [i for i, line in enumerate(lines) if line.strip()]
+        out = [[] for _ in lines]
+        todo = []
+        for i, line in enumerate(lines):
+            if line.strip():
+                chunks = self.encode(line.strip())
+                out[i] = [""] * len(chunks)
+                todo.extend((i, j, ids) for j, ids in enumerate(chunks))
+        # Similar lengths avoid padding short lines to a long chunk's width.
+        todo.sort(key=lambda row: len(row[2]))
         for start in range(0, len(todo), batch):
             rows = todo[start:start + batch]
-            for i, text in zip(rows, self.batch([lines[i].strip() for i in rows])):
-                out[i] = text
-        return out
+            for (i, j, _), text in zip(rows, self.batch([row[2] for row in rows])):
+                out[i][j] = text
+        separator = "" if self.direction.endswith("-zh") else " "
+        return [separator.join(chunks) for chunks in out]
 
-    def batch(self, lines):
+    def batch(self, encoded):
         """Greedy decoding of a batch, never choosing <pad>, as the model's
         bad_words_ids asks."""
         np = self.np
-        encoded = [self.encode(line) for line in lines]
         width = max(len(ids) for ids in encoded)
         input_ids = np.full((len(encoded), width), self.pad, dtype=np.int64)
         mask = np.zeros((len(encoded), width), dtype=np.int64)
@@ -215,7 +238,7 @@ class Marian:
         hidden = self.encoder.run(None, {"input_ids": input_ids, "attention_mask": mask})[0]
         tokens = np.full((len(encoded), 1), self.pad, dtype=np.int64)
         done = np.zeros(len(encoded), dtype=bool)
-        for _ in range(min(MAX_TOKENS, 2 * width + 16)):
+        for _ in range(MAX_TOKENS):
             logits = self.decoder.run(None, {"input_ids": tokens, "encoder_attention_mask": mask, "encoder_hidden_states": hidden})[0]
             step = logits[:, -1, :]
             step[:, self.pad] = -np.inf
@@ -224,6 +247,8 @@ class Marian:
             done |= following == self.eos
             if done.all():
                 break
+        if not done.all():
+            raise ValueError("离线译文超过模型长度限制，请缩短原文后重试")
         return [self.decode(row[1:].tolist()) for row in tokens]
 
 

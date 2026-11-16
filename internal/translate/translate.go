@@ -13,6 +13,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/wildalley/framely/internal/translationurl"
 )
 
 // Provider names a translation service.
@@ -109,9 +111,7 @@ func Translate(ctx context.Context, o Options, text string) (Result, error) {
 	if o.Provider == OpenAI && strings.TrimSpace(o.Model) == "" {
 		return Result{}, errors.New("请填写大模型名称")
 	}
-	if o.Client == nil {
-		o.Client = &http.Client{Timeout: 30 * time.Second}
-	}
+	o.Client = translationClient(o.Client)
 	if o.now == nil {
 		o.now = time.Now
 	}
@@ -138,6 +138,32 @@ func Translate(ctx context.Context, o Options, text string) (Result, error) {
 		out = append(out, strings.TrimSpace(got))
 	}
 	return Result{Text: strings.Join(out, "\n"), Target: target}, nil
+}
+
+// Preserve custom transports/timeouts without changing the caller's client.
+// Every redirect passes the same policy as an initial request; even a local
+// HTTP target cannot receive credentials replayed from an HTTPS request.
+func translationClient(client *http.Client) *http.Client {
+	if client == nil {
+		client = &http.Client{Timeout: 30 * time.Second}
+	}
+	copy := *client
+	copy.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if err := translationurl.ValidateURL(req.URL); err != nil {
+			return err
+		}
+		if len(via) > 0 && via[0].URL.Scheme == "https" && req.URL.Scheme != "https" {
+			return errors.New("已阻止翻译接口跳转到 HTTP，以保护密钥和文字")
+		}
+		if client.CheckRedirect != nil {
+			return client.CheckRedirect(req, via)
+		}
+		if len(via) >= 10 {
+			return errors.New("翻译接口跳转次数过多")
+		}
+		return nil
+	}
+	return &copy
 }
 
 // offline translates line by line with a downloaded model.

@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -29,6 +30,60 @@ func server(t *testing.T, handle func(*http.Request, []byte) (int, string)) *htt
 }
 
 var fixed = func() time.Time { return time.Date(2026, 11, 11, 23, 30, 0, 0, time.FixedZone("CST", 8*3600)) }
+
+func TestTranslationBlocksHTTPSDowngradeBeforeSendingSecrets(t *testing.T) {
+	var hits atomic.Int32
+	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		_, _ = io.WriteString(w, `{"translations":[{"text":"unsafe"}]}`)
+	}))
+	defer plain.Close()
+	secure := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, plain.URL, http.StatusTemporaryRedirect)
+	}))
+	defer secure.Close()
+	client := secure.Client()
+	_, err := Translate(context.Background(), Options{Provider: DeepL, Key: "test-key", Endpoint: secure.URL, Client: client}, "private text")
+	if err == nil || !strings.Contains(err.Error(), "HTTP") || hits.Load() != 0 {
+		t.Fatalf("downgrade sent secrets: error=%v HTTP requests=%d", err, hits.Load())
+	}
+	if client.CheckRedirect != nil {
+		t.Fatal("translation modified the supplied client")
+	}
+}
+
+func TestTranslationRetainsSafeRedirectsAndCustomPolicy(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/start" {
+			http.Redirect(w, r, "/done", http.StatusTemporaryRedirect)
+			return
+		}
+		if r.Header.Get("Authorization") != "DeepL-Auth-Key test-key" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_, _ = io.WriteString(w, `{"translations":[{"text":"safe"}]}`)
+	}))
+	defer srv.Close()
+	client := srv.Client()
+	got, err := Translate(context.Background(), Options{Provider: DeepL, Key: "test-key", Endpoint: srv.URL + "/start", Client: client}, "text")
+	if err != nil || got.Text != "safe" {
+		t.Fatalf("safe redirect: %+v %v", got, err)
+	}
+	blocked := errors.New("custom redirect policy")
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return blocked }
+	_, err = Translate(context.Background(), Options{Provider: DeepL, Key: "test-key", Endpoint: srv.URL + "/start", Client: client}, "text")
+	if !errors.Is(err, blocked) {
+		t.Fatalf("custom policy ignored: %v", err)
+	}
+}
+
+func TestTranslationRejectsRemoteHTTPBeforeConnecting(t *testing.T) {
+	_, err := Translate(context.Background(), Options{Provider: OpenAI, Key: "test-key", Model: "m", BaseURL: "http://example.invalid/v1"}, "private text")
+	if err == nil || !strings.Contains(err.Error(), "必须使用 HTTPS") {
+		t.Fatalf("remote HTTP not rejected by transport policy: %v", err)
+	}
+}
 
 func TestDeepLSendsTheKeyAndTarget(t *testing.T) {
 	srv := server(t, func(r *http.Request, body []byte) (int, string) {

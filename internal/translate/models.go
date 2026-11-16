@@ -92,18 +92,33 @@ func Installed(root string, m Model) bool {
 
 // Remove deletes m from root.
 func Remove(root string, m Model) error {
+	return RemoveContext(context.Background(), root, m)
+}
+
+// RemoveContext cancels waiting for an active download before deleting m.
+func RemoveContext(ctx context.Context, root string, m Model) error {
 	if m.Direction == "" || strings.ContainsAny(m.Direction, `/\.`) {
 		return errors.New("模型名称无效")
 	}
+	unlock, err := lockModel(ctx, root, m)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	return os.RemoveAll(filepath.Join(root, m.Direction))
 }
 
 // Download fetches m into root, only when the user asks. Each file is
-// written beside its place as .part, hashed as it arrives, and moved into
+// written to its own temporary file, hashed as it arrives, and moved into
 // place only when its size and SHA-256 match, so a cancelled or corrupted
 // download never looks installed. Files already in place are kept.
 // progress gets the bytes done and the total.
 func Download(ctx context.Context, client *http.Client, root string, m Model, progress func(done, total int64)) error {
+	unlock, err := lockModel(ctx, root, m)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	if client == nil {
 		// A whole model takes minutes on a slow link; the context cancels it.
 		client = &http.Client{Timeout: 30 * time.Minute}
@@ -154,17 +169,15 @@ func fetch(ctx context.Context, client *http.Client, url, path string, f ModelFi
 	if res.StatusCode != http.StatusOK {
 		return fmt.Errorf("下载模型失败：%s HTTP %d", f.Name, res.StatusCode)
 	}
-	part := path + ".part"
-	out, err := os.OpenFile(part, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	out, err := os.CreateTemp(filepath.Dir(path), ".model-*.part")
 	if err != nil {
 		return err
 	}
+	part := out.Name()
+	defer os.Remove(part)
 	defer func() {
 		if out != nil {
 			out.Close()
-		}
-		if err != nil {
-			os.Remove(part)
 		}
 	}()
 	hash := sha256.New()
@@ -179,6 +192,9 @@ func fetch(ctx context.Context, client *http.Client, url, path string, f ModelFi
 	}
 	if n != f.Size || hex.EncodeToString(hash.Sum(nil)) != f.SHA256 {
 		return fmt.Errorf("模型文件 %s 校验失败，已删除，请重试", f.Name)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if err = out.Sync(); err != nil {
 		return err
