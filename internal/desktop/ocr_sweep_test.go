@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 )
@@ -134,4 +135,44 @@ func TestOCRSweepAfterScrollingUsesCommittedGeometry(t *testing.T) {
 	if chosen == "" || v.preview != chosen {
 		t.Fatalf("scroll selected stale token: wanted %q got %q", chosen, v.preview)
 	}
+}
+
+func TestOCRSweepScrollsAtBothEdgesAndStops(t *testing.T) {
+	v := newOCRWindow()
+	v.setText(strings.Repeat("one two three four\n", 100), false)
+	var viewport ui.Rect
+	tt := ui.NewTester(func(c *ui.Context) { v.view(c); viewport = v.list.Bounds(c) }, 400, 500)
+	tt.Frame()
+	a := wordCenter(t, tt, "文字块 1：one")
+	tt.Press(a.X, a.Y)
+	tt.Move(a.X, viewport.Y+viewport.H-2)
+	before := v.selected
+	tt.Advance(800 * time.Millisecond)
+	if v.wordScroll.Y < 100 || v.selected <= before {
+		t.Fatalf("auto scroll=%v selected=%d before=%d", v.wordScroll.Y, v.selected, before)
+	}
+	down := v.wordScroll.Y
+	tt.Move(a.X, viewport.Y+2)
+	tt.Advance(250 * time.Millisecond)
+	if v.wordScroll.Y >= down {
+		t.Fatal("top edge did not reverse scrolling")
+	}
+	tt.Release(a.X, viewport.Y+2)
+	stopped := v.wordScroll.Y
+	tt.Advance(time.Second)
+	if v.sweep.pressed || v.wordScroll.Y != stopped {
+		t.Fatal("released sweep kept scrolling")
+	}
+	// A tab switch and closing also stop any pending animation frame.
+	tt.Press(a.X, viewport.Y+20)
+	tt.Move(a.X, viewport.Y+viewport.H-2)
+	v.tab = 1
+	tt.Frame()
+	stopped = v.wordScroll.Y
+	tt.Advance(time.Second)
+	if v.wordScroll.Y != stopped {
+		t.Fatal("hidden list kept scrolling")
+	}
+	v.release()
+	tt.Advance(time.Second)
 }

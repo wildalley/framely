@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/wildalley/framely/internal/brand"
 	"image"
+	"slices"
 	"strings"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
+	"github.com/wildalley/framely/internal/brand"
+	"github.com/wildalley/framely/internal/config"
 	"github.com/wildalley/framely/internal/editor"
 	"github.com/wildalley/framely/internal/ocr"
 	"github.com/wildalley/framely/internal/ocrtext"
@@ -37,6 +39,7 @@ func (s *application) recognize(picture editor.Picture, translate bool) {
 
 type ocrWindow struct {
 	win             *mygo.Window
+	ctx             context.Context
 	cancel          context.CancelFunc
 	closed, running bool
 	status, text    string
@@ -45,6 +48,7 @@ type ocrWindow struct {
 	selection       *ocrtext.Selection
 	rows            [][2]int
 	list            ui.ListState
+	wordScroll      ui.ScrollState
 	anchor          int
 	preview         string
 	selected        int
@@ -64,19 +68,26 @@ type ocrWindow struct {
 	autoTranslate bool   // switch to the translation once text is recognized
 	target        string // translate.Auto, Chinese or English
 	tr            ocrTranslation
+	trConfig      config.Config
+	trGeneration  uint64 // identifies the request allowed to update the window
 }
 
 // ocrTranslation is the translation of source, or its progress or error.
 type ocrTranslation struct {
-	running bool
-	cancel  context.CancelFunc
-	source  string
-	text    string
-	err     string
+	running                    bool
+	cancel                     context.CancelFunc
+	source                     string
+	text                       string
+	err                        string
+	canceled                   bool
+	resultSource, resultTarget string
+	showSource                 bool
+	hint, action               string
+	details                    bool
 }
 
 func newOCRWindow() *ocrWindow {
-	return &ocrWindow{selection: ocrtext.New("", false), anchor: -1, copyText: func(text string) error { mygo.Clipboard.WriteText(text); return nil }}
+	return &ocrWindow{ctx: context.Background(), selection: ocrtext.New("", false), anchor: -1, copyText: func(text string) error { mygo.Clipboard.WriteText(text); return nil }}
 }
 
 func (s *application) openOCR() *ocrWindow {
@@ -84,59 +95,107 @@ func (s *application) openOCR() *ocrWindow {
 		s.scroll.show()
 	}
 	v := newOCRWindow()
+	v.ctx = s.ctx
 	s.operations++
 	v.win = mygo.NewWindow(mygo.WindowOptions{Title: brand.Title("文字识别"), Width: 760, Height: 620, MinWidth: 400, MinHeight: 400, UseContentSize: true, Content: ui.View(v.view)})
 	v.closeWindow = func() { v.win.Close() }
-	v.win.OnClosed(func() { v.release(); s.operations--; s.maybeQuit() })
-	v.provider = translate.Provider(s.cfg.TranslateProvider).Label()
-	if s.cfg.TranslateProvider == "" {
-		v.provider = ""
-	}
-	v.target = s.cfg.TranslateTarget
-	v.offline = s.cfg.TranslateProvider == string(translate.Offline)
-	cfg := s.cfg
-	v.translator = func(ctx context.Context, text, target string) (translate.Result, error) {
-		return translateWith(ctx, cfg, text, target)
-	}
+	s.ocrWindows = append(s.ocrWindows, v)
+	v.win.OnClosed(func() {
+		v.release()
+		s.ocrWindows = slices.DeleteFunc(s.ocrWindows, func(window *ocrWindow) bool { return window == v })
+		s.operations--
+		s.maybeQuit()
+	})
+	v.setTranslationConfig(s.cfg)
 	v.run = s.worker
 	v.later = func(fn func()) {
-		mygo.RunOnMain(func() {
-			if !v.closed && s.ctx.Err() == nil {
+		s.dispatch(func() {
+			if !v.closed {
 				fn()
 				v.win.Invalidate()
 			}
 		})
 	}
-	v.openSettings = func() { s.showSettings("") }
+	v.openSettings = s.showTranslationSettings
 	return v
 }
 
-// startTranslate translates the recognized text, replacing a translation
-// still running.
-func (v *ocrWindow) startTranslate() {
-	text := strings.TrimSpace(v.text)
-	if v.closed || text == "" || v.translator == nil {
+// setTranslationConfig replaces the request's immutable configuration on the
+// main thread. A changed service invalidates pending/results from the old one;
+// saving settings alone must not send text to the newly selected service.
+func (v *ocrWindow) setTranslationConfig(next config.Config) {
+	if v.closed {
 		return
 	}
+	previous := v.trConfig
+	changed := previous.TranslateProvider != next.TranslateProvider ||
+		previous.TranslateBaseURL != next.TranslateBaseURL ||
+		previous.TranslateModel != next.TranslateModel ||
+		previous.TranslateTarget != next.TranslateTarget
+	if changed {
+		v.resetTranslation()
+		v.autoTranslate = false
+	}
+	if previous.TranslateTarget != next.TranslateTarget {
+		v.target = next.TranslateTarget
+	}
+	v.trConfig = next
+	p := translate.Provider(next.TranslateProvider)
+	v.provider = ""
+	if p != translate.None {
+		v.provider = p.Label()
+	}
+	v.offline = p == translate.Offline
+	v.translator = func(ctx context.Context, text, target string) (translate.Result, error) {
+		return translateWith(ctx, next, text, target)
+	}
+}
+
+func (v *ocrWindow) resetTranslation() {
 	if v.tr.cancel != nil {
 		v.tr.cancel()
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	v.tr = ocrTranslation{running: true, cancel: cancel, source: v.text}
+	v.trGeneration++
+	v.tr = ocrTranslation{}
+}
+
+// cancelTranslation invalidates late callbacks while preserving the last
+// successful result and the source/direction that produced it.
+func (v *ocrWindow) cancelTranslation() {
+	if v.tr.cancel != nil {
+		v.tr.cancel()
+	}
+	v.trGeneration++
+	v.tr.running, v.tr.cancel, v.tr.canceled = false, nil, true
+	v.tr.err, v.tr.hint, v.tr.action = "", "", ""
+}
+
+// startTranslate keeps the last successful result until its replacement arrives.
+func (v *ocrWindow) startTranslate() {
+	text := strings.TrimSpace(v.text)
+	if v.closed || v.ctx.Err() != nil || text == "" || v.translator == nil {
+		return
+	}
+	v.cancelTranslation()
+	generation := v.trGeneration
+	ctx, cancel := context.WithCancel(v.ctx)
+	v.tr.running, v.tr.cancel, v.tr.source, v.tr.canceled, v.tr.details = true, cancel, v.text, false, false
+	source := v.text
 	translator, target, later := v.translator, v.target, v.later
 	v.run(func() {
+		defer cancel()
 		result, err := translator(ctx, text, target)
 		later(func() {
-			if v.tr.cancel == nil || ctx.Err() != nil {
+			if v.closed || generation != v.trGeneration || v.ctx.Err() != nil {
 				return // Replaced, cancelled or closed.
 			}
-			cancel()
 			v.tr.running, v.tr.cancel = false, nil
 			if err != nil {
 				v.tr.err = err.Error()
+				v.tr.hint, v.tr.action = translationRecovery(err)
 				return
 			}
-			v.tr.text = result.Text
+			v.tr.text, v.tr.resultSource, v.tr.resultTarget = result.Text, source, result.Target
 		})
 	})
 }
@@ -155,14 +214,7 @@ func (s *application) startOCRWith(cancel context.CancelFunc, translate bool) (f
 	v.cancel = cancel
 	v.running = true
 	v.status = "等待识别…"
-	dispatch := func(fn func()) {
-		mygo.RunOnMain(func() {
-			if !v.closed && s.ctx.Err() == nil {
-				fn()
-				v.win.Invalidate()
-			}
-		})
-	}
+	dispatch := v.later
 	// Merge and segment on the OCR goroutine; dispatch only prepared text to
 	// the UI, so model progress cannot stall selection or window movement.
 	var lines []ocr.Line
@@ -198,13 +250,12 @@ func (v *ocrWindow) release() {
 	v.preview = ""
 	v.selection = nil
 	v.list = ui.ListState{}
+	v.wordScroll = ui.ScrollState{}
 	v.copyText = nil
 	v.closeWindow = nil
 	v.hits, v.hitUsed, v.sweep = nil, 0, ocrSweep{}
-	if v.tr.cancel != nil {
-		v.tr.cancel()
-	}
-	v.tr = ocrTranslation{}
+	v.resetTranslation()
+	v.trConfig = config.Config{}
 	v.translator, v.run, v.later, v.openSettings = nil, nil, nil, nil
 }
 
@@ -309,6 +360,9 @@ func (v *ocrWindow) view(c *ui.Context) {
 		return
 	}
 	panelTheme(c)
+	if v.tab != 0 {
+		v.sweep = ocrSweep{}
+	}
 	if c.Shortcut(0, ui.KeyEscape) || c.Shortcut(ui.Cmd, ui.KeyW) {
 		if v.closeWindow != nil {
 			v.closeWindow()
@@ -387,6 +441,7 @@ func (v *ocrWindow) view(c *ui.Context) {
 					ui.Text(c, "识别完成一部分，即可开始选词").FontSize(12).TextColor(c.Theme().TextMuted)
 				})
 			} else {
+				v.sweepFrame(c)
 				v.hitUsed = 0
 				ui.List(c.Key("ocr-words"), &v.list, len(v.rows), func(row int) {
 					rangeRow := v.rows[row]
@@ -416,9 +471,9 @@ func (v *ocrWindow) view(c *ui.Context) {
 							}
 						}
 					})
-				}).Grow(1).MinHeight(50).FillWidth().HandleInput(func(ev ui.InputEvent) bool { return v.sweepInput(c, ev) })
+				}).TrackScroll(&v.wordScroll).Grow(1).MinHeight(50).FillWidth().HandleInput(func(ev ui.InputEvent) bool { return v.sweepInput(c, ev) })
 			}
-			ui.Text(c, "点选 / 拖动扫选 / Shift 连选 · 方向键与空格").FontSize(12).MaxLines(2).TextColor(c.Theme().TextMuted)
+			ui.Text(c, "拖动扫选（边缘自动滚动） / Shift 连选 · 方向键与空格").FontSize(12).MaxLines(2).TextColor(c.Theme().TextMuted)
 			ui.Column(c).FillWidth().Padding(10).Gap(5).Radius(8).Background(c.Theme().Surface).Border(1, c.Theme().Border).Children(func() {
 				ui.Text(c, fmt.Sprintf("已选 %d 块", v.selected)).FontSize(12).FontWeight(600)
 				preview := v.preview
@@ -437,7 +492,7 @@ func (v *ocrWindow) view(c *ui.Context) {
 				if ui.Button(c, "复制原文").Disabled(strings.TrimSpace(v.text) == "").Clicked() {
 					v.copy(c, v.text)
 				}
-				if ui.PrimaryButton(c, "复制译文").Disabled(v.tr.text == "" || v.tr.running).Clicked() {
+				if ui.PrimaryButton(c, "复制译文").Disabled(v.tr.text == "").Clicked() {
 					v.copy(c, v.tr.text)
 				}
 				return
@@ -462,7 +517,7 @@ func (v *ocrWindow) translationView(c *ui.Context) {
 	if v.provider == "" {
 		ui.Column(c).Grow(1).FillWidth().Justify(ui.Center).AlignItems(ui.Center).Gap(10).Children(func() {
 			ui.Text(c, "还没有设置翻译服务").FontSize(16)
-			ui.Text(c, "选择 DeepL、百度、腾讯或兼容 OpenAI 的大模型，填写自己的密钥。只发送识别出的文字。").FontSize(12).TextColor(t.TextMuted).MaxLines(3)
+			ui.Text(c, "可下载离线模型在本机翻译，无需密钥；也可设置 DeepL、百度、腾讯或兼容 OpenAI 的服务，只发送文字。").FontSize(12).TextColor(t.TextMuted).MaxLines(4)
 			if ui.PrimaryButton(c, "设置翻译服务").Clicked() && v.openSettings != nil {
 				v.openSettings()
 			}
@@ -491,7 +546,9 @@ func (v *ocrWindow) translationView(c *ui.Context) {
 		case v.tr.running:
 			status = "正在翻译…"
 		case v.tr.err != "":
-			status = "翻译失败：" + v.tr.err
+			status = v.tr.hint
+		case v.tr.canceled:
+			status = "已取消翻译"
 		case v.tr.source != "" && v.tr.source != v.text:
 			status = "原文已修改，可重新翻译"
 		}
@@ -500,15 +557,65 @@ func (v *ocrWindow) translationView(c *ui.Context) {
 			color = t.Danger
 		}
 		ui.Text(c, status).FontSize(12).TextColor(color).MaxLines(2).Grow(1).MinWidth(0).Selectable()
-		if ui.Button(c.Key("translate-again"), "重新翻译").Disabled(v.running || strings.TrimSpace(v.text) == "").Clicked() {
+		if v.tr.running {
+			if ui.Button(c.Key("translate-cancel"), "取消翻译").Clicked() {
+				v.cancelTranslation()
+			}
+		} else if ui.Button(c.Key("translate-again"), "重新翻译").Disabled(v.running || strings.TrimSpace(v.text) == "").Clicked() {
 			v.startTranslate()
 		}
 	})
-	w, _ := c.Size()
+	if v.tr.err != "" && !v.tr.running {
+		ui.Row(c).Wrap().Gap(8).Children(func() {
+			if ui.Button(c.Key("translate-recover"), v.tr.action).Clicked() && v.openSettings != nil {
+				v.openSettings()
+			}
+			label := "查看错误详情"
+			if v.tr.details {
+				label = "收起错误详情"
+			}
+			if ui.Button(c.Key("translate-details"), label).Clicked() {
+				v.tr.details = !v.tr.details
+			}
+			if v.tr.details && ui.Button(c.Key("translate-copy-error"), "复制错误详情").Clicked() {
+				v.copy(c, v.tr.err)
+			}
+		})
+		if v.tr.details {
+			ui.Text(c, v.tr.err).FontSize(12).MaxLines(4).Tooltip(v.tr.err).Selectable()
+		}
+	}
+	w, height := c.Size()
+	compactPanes := w < 560 && height < 460
 	pane := func(key, caption, text, empty string) {
-		ui.Column(c.Key(key)).Grow(1).Basis(0).MinWidth(0).MinHeight(60).FillHeight().Padding(10).Gap(6).Radius(8).Background(t.Surface).Border(1, t.Border).Children(func() {
-			ui.Text(c, caption).FontSize(11).FontWeight(600).TextColor(t.TextMuted)
+		box := ui.Column(c.Key(key)).MinWidth(0).Padding(10).Gap(6).Radius(8).Background(t.Surface).Border(1, t.Border)
+		if compactPanes {
+			box.Height(130).Shrink(0).FillWidth()
+		} else {
+			box.Grow(1).Basis(0).MinHeight(60).FillHeight()
+		}
+		box.Children(func() {
+			previousSource := key == "translate-result" && v.tr.text != "" && v.tr.resultSource != v.text
+			ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
+				heading := ui.Text(c, caption).FontSize(11).FontWeight(600).TextColor(t.TextMuted).Grow(1).MinWidth(0).MaxLines(2)
+				if key == "translate-result" {
+					heading.Tooltip(v.tr.resultSource)
+				}
+				if previousSource {
+					label := "查看对应原文"
+					if v.tr.showSource {
+						label = "收起对应原文"
+					}
+					if ui.Button(c.Key("translate-result-source"), label).Height(24).FontSize(12).Padding(0, 6).Shrink(0).Clicked() {
+						v.tr.showSource = !v.tr.showSource
+					}
+				}
+			})
 			ui.Scroll(c.Key(key + "-scroll")).Grow(1).MinHeight(0).FillWidth().Children(func() {
+				if previousSource && v.tr.showSource {
+					ui.Text(c, v.tr.resultSource).FontSize(12).Selectable().FillWidth()
+					ui.Box(c).Height(1).Margin(6, 0).FillWidth().Background(t.Border)
+				}
 				if text == "" {
 					ui.Text(c, empty).FontSize(13).TextColor(t.TextMuted)
 				} else {
@@ -517,16 +624,35 @@ func (v *ocrWindow) translationView(c *ui.Context) {
 			})
 		})
 	}
-	body := ui.Row(c.Key("translation")).Grow(1).MinHeight(0).FillWidth().Gap(10).AlignItems(ui.Stretch)
-	if w < 560 {
+	var body ui.Element
+	if compactPanes {
+		body = ui.Scroll(c.Key("translation")).Grow(1).MinHeight(0).FillWidth().Gap(10)
+	} else if w < 560 {
 		body = ui.Column(c.Key("translation")).Grow(1).MinHeight(0).FillWidth().Gap(10).AlignItems(ui.Stretch)
+	} else {
+		body = ui.Row(c.Key("translation")).Grow(1).MinHeight(0).FillWidth().Gap(10).AlignItems(ui.Stretch)
 	}
 	body.Children(func() {
-		pane("translate-source", "原文", v.text, "识别出的文字会出现在这里")
-		translated := v.tr.text
-		if v.tr.running {
-			translated = ""
+		if !compactPanes {
+			pane("translate-source", "原文", v.text, "识别出的文字会出现在这里")
 		}
-		pane("translate-result", "译文", translated, "译文会出现在这里")
+		caption := "译文"
+		if v.tr.text != "" {
+			if v.tr.running || v.tr.err != "" || v.tr.canceled || v.tr.resultSource != v.text {
+				caption = "上次译文"
+			}
+			if v.tr.resultTarget == translate.Chinese {
+				caption += " · 中文"
+			} else if v.tr.resultTarget == translate.English {
+				caption += " · 英文"
+			}
+			if v.tr.resultSource != v.text {
+				caption += " · 原文已修改"
+			}
+		}
+		pane("translate-result", caption, v.tr.text, "译文会出现在这里")
+		if compactPanes {
+			pane("translate-source", "原文", v.text, "识别出的文字会出现在这里")
+		}
 	})
 }

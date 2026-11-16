@@ -1,6 +1,9 @@
 package desktop
 
-import "github.com/egoist/mygo/ui"
+import (
+	"github.com/egoist/mygo/ui"
+	"time"
+)
 
 type ocrWordHit struct {
 	index  int
@@ -13,6 +16,8 @@ type ocrSweep struct {
 	start, last                 ui.Point
 	previousAnchor              int
 	changed                     []int
+	tick                        time.Time
+	scrollY                     float32
 }
 
 // Capture on the list, keeping each chip's native toggle keyboard semantics.
@@ -54,6 +59,7 @@ func (v *ocrWindow) sweepInput(c *ui.Context, ev ui.InputEvent) bool {
 			return false
 		}
 		v.sweep = ocrSweep{pressed: true, first: i, selectOn: !v.selection.Tokens[i].Selected, shift: ev.Mods&ui.Shift != 0, start: p, last: p, previousAnchor: v.anchor}
+		v.sweep.scrollY = v.wordScroll.Y
 		return true
 	case ui.InputPointerMove, ui.InputPointerUp:
 		if !v.sweep.pressed {
@@ -82,6 +88,10 @@ func (v *ocrWindow) sweepInput(c *ui.Context, ev ui.InputEvent) bool {
 			v.refreshSelection()
 		}
 		d.last = p
+		d.tick = c.Now()
+		if d.dragging && sweepVelocity(viewport, p) != 0 {
+			c.AnimationFrame()
+		}
 		if ev.Kind == ui.InputPointerUp {
 			if !d.dragging && hitAt(p) == d.first {
 				v.selection.Tokens[d.first].Selected = d.selectOn
@@ -96,6 +106,71 @@ func (v *ocrWindow) sweepInput(c *ui.Context, ev ui.InputEvent) bool {
 		return true
 	}
 	return false
+}
+
+// Each requested frame uses committed chip bounds before rebuilding the list.
+// No timer or worker survives release, tab changes, replacement or closing.
+func (v *ocrWindow) sweepFrame(c *ui.Context) {
+	d := &v.sweep
+	if v.closed || v.tab != 0 || !d.pressed || !d.dragging {
+		return
+	}
+	viewport := v.list.Bounds(c)
+	velocity := sweepVelocity(viewport, d.last)
+	elapsed := min(c.Now().Sub(d.tick).Seconds(), .05)
+	// A consumed input can rebuild the view before committing its layout.
+	// Process geometry once per display time, never from that interim pass.
+	if elapsed <= 0 {
+		if velocity != 0 && (velocity < 0 && v.wordScroll.Y > 0 || velocity > 0 && v.wordScroll.Y < v.wordScroll.MaxY) {
+			c.AnimationFrame()
+		}
+		return
+	}
+	delta := v.wordScroll.Y - d.scrollY
+	if delta != 0 {
+		changed := false
+		p := d.last
+		p.Y = max(viewport.Y+.5, min(p.Y, viewport.Y+viewport.H-.5))
+		a := p
+		a.Y -= delta
+		for _, hit := range v.hits[:v.hitUsed] {
+			if hit.index >= len(v.selection.Tokens) || !segmentHitsRect(a, p, clipOCRRect(hit.handle.Bounds(c), viewport)) {
+				continue
+			}
+			if v.selection.Tokens[hit.index].Selected != d.selectOn {
+				d.changed = append(d.changed, hit.index)
+				v.selection.Tokens[hit.index].Selected = d.selectOn
+				changed = true
+			}
+		}
+		if changed {
+			v.refreshSelection()
+		}
+	}
+	d.scrollY = v.wordScroll.Y
+	d.tick = c.Now()
+	if velocity == 0 || velocity < 0 && v.wordScroll.Y <= 0 || velocity > 0 && v.wordScroll.Y >= v.wordScroll.MaxY {
+		return
+	}
+	c.AnimationFrame()
+	next := max(float32(0), min(v.wordScroll.MaxY, v.wordScroll.Y+velocity*float32(elapsed)))
+	if next != v.wordScroll.Y {
+		v.wordScroll.Y = next
+	}
+}
+
+func sweepVelocity(r ui.Rect, p ui.Point) float32 {
+	if r.W <= 0 || r.H <= 0 || p.X < r.X || p.X >= r.X+r.W {
+		return 0
+	}
+	edge := min(float32(28), r.H/3)
+	if p.Y < r.Y+edge {
+		return -420 * min(float32(1), (r.Y+edge-p.Y)/edge)
+	}
+	if p.Y > r.Y+r.H-edge {
+		return 420 * min(float32(1), (p.Y-(r.Y+r.H-edge))/edge)
+	}
+	return 0
 }
 
 func pointIn(r ui.Rect, p ui.Point) bool {

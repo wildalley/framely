@@ -34,6 +34,7 @@ type application struct {
 	readyDone                 bool
 	pendingFiles              []string
 	images                    []*editor.App
+	ocrWindows                []*ocrWindow
 	settings                  *settingsWindow
 	shortcuts                 *shortcuts.Manager
 	shortcutDescription       string
@@ -898,15 +899,27 @@ func (s *application) applySettings(ctx context.Context, next config.Config, app
 		description := s.shortcuts.Description()
 		s.dispatch(func() {
 			if err == nil {
-				s.cfg = next
-				for _, image := range s.images {
-					image.SetConfig(next)
-				}
+				s.setConfig(next)
 			}
 			s.bindingResult(description, err)
 			done(err)
 		})
 	})
+}
+
+// setConfig publishes a successful settings change to every open document.
+// Configuration and window state are owned by the main thread.
+func (s *application) setConfig(next config.Config) {
+	s.cfg = next
+	for _, image := range s.images {
+		image.SetConfig(next)
+	}
+	for _, window := range s.ocrWindows {
+		window.setTranslationConfig(next)
+		if window.win != nil {
+			window.win.Invalidate()
+		}
+	}
 }
 
 // Errors from tray actions use a native dialog; they never manufacture an

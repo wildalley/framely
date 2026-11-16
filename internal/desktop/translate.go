@@ -17,7 +17,41 @@ import (
 	"github.com/wildalley/framely/internal/config"
 	"github.com/wildalley/framely/internal/ocr"
 	"github.com/wildalley/framely/internal/translate"
+	"github.com/wildalley/framely/internal/translationurl"
 )
+
+type translationSetupError struct {
+	message string
+	model   bool
+	field   string
+}
+
+func (e *translationSetupError) Error() string { return e.message }
+
+func translationRecovery(err error) (string, string) {
+	var setup *translationSetupError
+	switch {
+	case errors.As(err, &setup):
+		if setup.model {
+			return setup.message, "下载离线模型"
+		}
+		return setup.message, "设置翻译服务"
+	case errors.Is(err, translate.ErrNotConfigured):
+		return "请先设置翻译服务和密钥，或选择离线模型。", "设置翻译服务"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "翻译超时，请重试或检查服务设置。", "设置翻译服务"
+	default:
+		return "翻译未完成，请重试或检查服务设置。", "设置翻译服务"
+	}
+}
+
+func (s *application) showTranslationSettings() {
+	s.showSettings("")
+	if s.settings != nil {
+		s.settings.tab = 4
+		s.settings.win.Invalidate()
+	}
+}
 
 // secrets keeps translation keys under the product's name, the same for a
 // development run and the installed app.
@@ -71,19 +105,44 @@ var saveCredentials = func(p translate.Provider, c credentials) error {
 // translateWith translates text with the service in cfg. Call it off the
 // main thread: it reads the credential store and waits on the network.
 func translateWith(ctx context.Context, cfg config.Config, text, target string) (translate.Result, error) {
+	return translateConfigured(ctx, cfg, text, target, credentials{})
+}
+
+// translateConfigured is shared by document translations and the settings
+// sample. Entered credentials override stored fields only when nonblank;
+// offline translation never opens the system credential store.
+func translateConfigured(ctx context.Context, cfg config.Config, text, target string, entered credentials) (translate.Result, error) {
 	p := translate.Provider(cfg.TranslateProvider)
 	if p == translate.None {
 		return translate.Result{}, translate.ErrNotConfigured
 	}
-	if p == translate.Offline {
-		return translate.Translate(ctx, translate.Options{Provider: p, Target: target, Offline: translateOffline}, text)
+	if p == translate.OpenAI {
+		if cfg.TranslateBaseURL != "" {
+			if err := translationurl.Validate(cfg.TranslateBaseURL); err != nil {
+				return translate.Result{}, &translationSetupError{message: err.Error(), field: "translateBaseURL"}
+			}
+		}
+		if strings.TrimSpace(cfg.TranslateModel) == "" {
+			return translate.Result{}, &translationSetupError{message: "请在翻译设置中填写模型名称。", field: "translateModel"}
+		}
 	}
-	c, err := loadCredentials(p)
-	if err != nil {
-		return translate.Result{}, err
+	var c credentials
+	if p != translate.Offline {
+		var err error
+		c, err = loadCredentials(p)
+		if err != nil {
+			return translate.Result{}, err
+		}
+		if strings.TrimSpace(entered.ID) != "" {
+			c.ID = entered.ID
+		}
+		if strings.TrimSpace(entered.Key) != "" {
+			c.Key = entered.Key
+		}
 	}
 	return translate.Translate(ctx, translate.Options{
 		Provider: p, ID: c.ID, Key: c.Key, BaseURL: cfg.TranslateBaseURL, Model: cfg.TranslateModel, Target: target,
+		Offline: translateOffline,
 	}, text)
 }
 
@@ -119,7 +178,7 @@ var translateOffline = func(ctx context.Context, direction string, lines []strin
 			continue
 		}
 		if !translate.Installed(root, m) {
-			return nil, fmt.Errorf("请先在「设置与快捷键 › 翻译」下载「%s」离线模型", m.Label)
+			return nil, &translationSetupError{message: fmt.Sprintf("请先下载「%s」离线模型。", m.Label), model: true, field: "offlineModel"}
 		}
 		return ocr.Translate(ctx, filepath.Join(root, direction), direction, lines)
 	}
@@ -189,6 +248,7 @@ func (v *settingsWindow) translateSettings(c *ui.Context) {
 		if ui.Select(c.Key("translate-provider"), &choice, providerLabels).Label("选择翻译服务").Width(240).Disabled(v.saving).Changed() {
 			v.draft.TranslateProvider = string(providerOf(choice))
 			v.trID, v.trKey, v.trResult = "", "", ""
+			v.fieldErrors = nil
 		}
 	})
 	if provider == translate.None {
@@ -196,6 +256,7 @@ func (v *settingsWindow) translateSettings(c *ui.Context) {
 	}
 	if provider == translate.Offline {
 		v.offlineModels(c)
+		v.fieldError(c, "offlineModel")
 	}
 	if provider.NeedsID() {
 		label := "App ID"
@@ -207,7 +268,10 @@ func (v *settingsWindow) translateSettings(c *ui.Context) {
 			if v.trStored[string(provider)] {
 				placeholder = "已保存，留空不修改"
 			}
-			ui.TextInput(c.Key("translate-id"), &v.trID).Label(label).Placeholder(placeholder).FillWidth().Disabled(v.saving)
+			if ui.TextInput(c.Key("translate-id"), &v.trID).Label(label).Placeholder(placeholder).FillWidth().Disabled(v.saving).Invalid(v.fieldErrors["translateID"] != "").Changed() {
+				delete(v.fieldErrors, "translateID")
+			}
+			v.fieldError(c, "translateID")
 		})
 	}
 	if provider != translate.Offline {
@@ -215,10 +279,16 @@ func (v *settingsWindow) translateSettings(c *ui.Context) {
 	}
 	if provider == translate.OpenAI {
 		field("接口地址", func() {
-			ui.TextInput(c.Key("translate-base"), &v.draft.TranslateBaseURL).Label("接口地址").Placeholder("https://api.openai.com/v1").FillWidth().Disabled(v.saving)
+			if ui.TextInput(c.Key("translate-base"), &v.draft.TranslateBaseURL).Label("接口地址").Placeholder("https://api.openai.com/v1").FillWidth().Disabled(v.saving).Invalid(v.fieldErrors["translateBaseURL"] != "").Changed() {
+				delete(v.fieldErrors, "translateBaseURL")
+			}
+			v.fieldError(c, "translateBaseURL")
 		})
 		field("模型", func() {
-			ui.TextInput(c.Key("translate-model"), &v.draft.TranslateModel).Label("模型").Placeholder("例如 gpt-4o-mini、deepseek-chat、qwen-plus").FillWidth().Disabled(v.saving)
+			if ui.TextInput(c.Key("translate-model"), &v.draft.TranslateModel).Label("模型").Placeholder("例如 gpt-4o-mini、deepseek-chat、qwen-plus").FillWidth().Disabled(v.saving).Invalid(v.fieldErrors["translateModel"] != "").Changed() {
+				delete(v.fieldErrors, "translateModel")
+			}
+			v.fieldError(c, "translateModel")
 		})
 	}
 	field("默认翻译方向", func() {
@@ -252,28 +322,37 @@ func (v *settingsWindow) translateSettings(c *ui.Context) {
 // testTranslation translates a sample with what is typed, or with what is
 // stored where a field is left blank, without saving anything.
 func (v *settingsWindow) testTranslation() {
-	provider, id, key, cfg := translate.Provider(v.draft.TranslateProvider), v.trID, v.trKey, v.draft
+	if v.trTesting || v.saving {
+		return
+	}
+	entered, cfg := credentials{ID: v.trID, Key: v.trKey}, v.draft
 	v.trTesting, v.trResult = true, ""
 	v.app.worker(func() {
-		c, err := loadCredentials(provider)
-		if strings.TrimSpace(id) != "" {
-			c.ID = id
-		}
-		if strings.TrimSpace(key) != "" {
-			c.Key = key
-		}
-		var result translate.Result
-		if err == nil {
-			ctx, cancel := context.WithTimeout(v.ctx, 30*time.Second)
-			result, err = translate.Translate(ctx, translate.Options{
-				Provider: provider, ID: c.ID, Key: c.Key, BaseURL: cfg.TranslateBaseURL, Model: cfg.TranslateModel, Target: translate.Chinese,
-			}, "Screenshots, pinned and translated.")
-			cancel()
-		}
+		ctx, cancel := context.WithTimeout(v.ctx, 30*time.Second)
+		defer cancel()
+		result, err := translateConfigured(ctx, cfg, "Screenshots, pinned and translated.", translate.Chinese, entered)
 		v.later(func() {
 			v.trTesting = false
+			if v.draft.TranslateProvider != cfg.TranslateProvider || v.draft.TranslateBaseURL != cfg.TranslateBaseURL || v.draft.TranslateModel != cfg.TranslateModel || v.trID != entered.ID || v.trKey != entered.Key {
+				return
+			}
 			if err != nil {
 				v.trResult = "失败：" + err.Error()
+				if v.fieldErrors == nil {
+					v.fieldErrors = map[string]string{}
+				}
+				var setup *translationSetupError
+				if errors.As(err, &setup) {
+					v.fieldErrors[setup.field] = setup.message
+				}
+				if errors.Is(err, translate.ErrNotConfigured) && !v.trStored[cfg.TranslateProvider] {
+					if strings.TrimSpace(entered.Key) == "" {
+						v.fieldErrors["translateKey"] = "请填写密钥，或选择无需密钥的离线模型。"
+					}
+					if translate.Provider(cfg.TranslateProvider).NeedsID() && strings.TrimSpace(entered.ID) == "" {
+						v.fieldErrors["translateID"] = "请填写服务的 ID。"
+					}
+				}
 				return
 			}
 			v.trResult = "可用：" + result.Text
@@ -288,7 +367,10 @@ func (v *settingsWindow) keyField(c *ui.Context, provider translate.Provider, fi
 		if v.trStored[string(provider)] {
 			placeholder = "已保存，留空不修改"
 		}
-		ui.TextInput(c.Key("translate-key"), &v.trKey).Password().Label(keyLabel).Placeholder(placeholder).FillWidth().Disabled(v.saving)
+		if ui.TextInput(c.Key("translate-key"), &v.trKey).Password().Label(keyLabel).Placeholder(placeholder).FillWidth().Disabled(v.saving).Invalid(v.fieldErrors["translateKey"] != "").Changed() {
+			delete(v.fieldErrors, "translateKey")
+		}
+		v.fieldError(c, "translateKey")
 	})
 }
 
@@ -390,6 +472,7 @@ func (v *settingsWindow) downloadModel(m translate.Model) {
 			switch {
 			case err == nil:
 				state.installed = true
+				delete(v.fieldErrors, "offlineModel")
 			case errors.Is(err, context.Canceled):
 				state.err = ""
 			default:
@@ -404,7 +487,7 @@ func (v *settingsWindow) removeModel(m translate.Model) {
 	v.app.worker(func() {
 		root, err := modelsRoot()
 		if err == nil {
-			err = translate.Remove(root, m)
+			err = translate.RemoveContext(v.ctx, root, m)
 		}
 		v.later(func() {
 			if err != nil {

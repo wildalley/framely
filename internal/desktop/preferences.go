@@ -16,26 +16,28 @@ import (
 )
 
 type settingsWindow struct {
-	app             *application
-	win             *mygo.Window
-	ctx             context.Context
-	cancel          context.CancelFunc
-	draft           config.Config
-	autostart       bool
-	access          capture.Access
-	accessLoading   bool
-	asking          bool
-	saving          bool
-	confirming      bool
-	recording       bool
-	recordingScroll bool
-	recordingVideo  bool
-	recordingMods   ui.Modifiers
-	shortcutHint    string
-	shortcutInvalid bool
-	notice          string
-	tab             int
-	streamIssue     string
+	app                 *application
+	win                 *mygo.Window
+	ctx                 context.Context
+	cancel              context.CancelFunc
+	draft               config.Config
+	autostart           bool
+	access              capture.Access
+	accessLoading       bool
+	asking              bool
+	saving              bool
+	confirming          bool
+	recording           bool
+	recordingScroll     bool
+	recordingVideo      bool
+	recordingMods       ui.Modifiers
+	shortcutHint        string
+	shortcutInvalid     bool
+	notice              string
+	validationAttempted bool
+	fieldErrors         map[string]string
+	tab                 int
+	streamIssue         string
 
 	// Translation keys being entered; empty keeps what is stored.
 	trID, trKey string
@@ -99,6 +101,9 @@ func (v *settingsWindow) later(fn func()) {
 
 func (v *settingsWindow) view(c *ui.Context) {
 	panelTheme(c)
+	if v.validationAttempted {
+		v.updateFieldErrors()
+	}
 	if !v.recording && (c.Shortcut(0, ui.KeyEscape) || c.Shortcut(ui.Cmd, ui.KeyW)) {
 		v.win.Close()
 		return
@@ -150,7 +155,7 @@ func (v *settingsWindow) view(c *ui.Context) {
 						})
 					} else {
 						ui.Text(c, "截图快捷键").FontWeight(600)
-						ui.Column(c.Key("capture-shortcut")).Gap(8).Children(func() { v.shortcutEntry(c, false, false) })
+						ui.Column(c.Key("capture-shortcut")).Gap(8).Children(func() { v.shortcutEntry(c, false, false); v.fieldError(c, "captureShortcut") })
 						current := s.shortcutDescription
 						if current == "" {
 							current = "未绑定"
@@ -158,11 +163,11 @@ func (v *settingsWindow) view(c *ui.Context) {
 						ui.Text(c, "当前按键："+current).FontSize(12).TextColor(c.Theme().TextMuted)
 						if capture.ScrollingSupported() {
 							ui.Text(c, "长截图快捷键").FontWeight(600)
-							ui.Column(c.Key("scroll-shortcut")).Gap(8).Children(func() { v.shortcutEntry(c, true, false) })
+							ui.Column(c.Key("scroll-shortcut")).Gap(8).Children(func() { v.shortcutEntry(c, true, false); v.fieldError(c, "scrollShortcut") })
 							ui.Text(c, "留空不绑定。按下开始长截图，再次按下完成。").FontSize(12).TextColor(c.Theme().TextMuted)
 						}
 						ui.Text(c, "录屏快捷键").FontWeight(600)
-						ui.Column(c.Key("record-shortcut")).Gap(8).Children(func() { v.shortcutEntry(c, false, true) })
+						ui.Column(c.Key("record-shortcut")).Gap(8).Children(func() { v.shortcutEntry(c, false, true); v.fieldError(c, "recordShortcut") })
 						ui.Text(c, "留空不绑定。开始录屏并沿用上次区域，再次按下结束。").FontSize(12).TextColor(c.Theme().TextMuted)
 					}
 
@@ -211,6 +216,7 @@ func (v *settingsWindow) view(c *ui.Context) {
 							v.draft.RecordDir = ""
 						}
 					})
+					v.fieldError(c, "recordDir")
 					ui.Checkbox(c.Key("ask-record-path"), &v.draft.AskRecordPath, "每次录屏和导出 GIF 时询问保存位置").Disabled(v.saving)
 				})
 				ui.Row(c).Gap(8).Children(func() {
@@ -343,7 +349,7 @@ func (v *settingsWindow) save() {
 		return
 	}
 	if err := v.draft.Validate(); err != nil {
-		v.notice = err.Error()
+		v.showValidationErrors(err)
 		return
 	}
 	if niribind.Current() && niribind.Installed() && (v.draft.CaptureShortcut != v.app.cfg.CaptureShortcut || v.draft.ScrollShortcut != v.app.cfg.ScrollShortcut || v.draft.RecordShortcut != v.app.cfg.RecordShortcut) {
@@ -390,6 +396,46 @@ func (v *settingsWindow) save() {
 	})
 }
 
+func (v *settingsWindow) updateFieldErrors() {
+	if v.fieldErrors == nil {
+		v.fieldErrors = map[string]string{}
+	}
+	for _, field := range []string{"recordDir", "translateBaseURL", "captureShortcut", "scrollShortcut", "recordShortcut"} {
+		delete(v.fieldErrors, field)
+	}
+	for _, issue := range v.draft.ValidationErrors() {
+		v.fieldErrors[issue.Field] = issue.Error()
+	}
+	if len(v.fieldErrors) == 0 && v.notice == "请修正标出的设置后再保存。" {
+		v.notice = "已修正，可保存设置。"
+	}
+}
+
+func (v *settingsWindow) showValidationErrors(err error) {
+	v.validationAttempted = true
+	v.updateFieldErrors()
+	v.notice = "请修正标出的设置后再保存。"
+	for _, issue := range v.draft.ValidationErrors() {
+		switch issue.Field {
+		case "recordDir":
+			v.tab = 2
+		case "translateBaseURL":
+			v.tab = 4
+		default:
+			v.tab = 0
+		}
+		return
+	}
+	v.notice = err.Error()
+}
+
+func (v *settingsWindow) fieldError(c *ui.Context, field string) {
+	if message := v.fieldErrors[field]; message != "" {
+		label := map[string]string{"recordDir": "录屏保存位置错误", "translateBaseURL": "接口地址错误", "captureShortcut": "截图快捷键错误", "scrollShortcut": "长截图快捷键错误", "recordShortcut": "录屏快捷键错误", "translateModel": "模型名称错误", "translateID": "翻译服务 ID 错误", "translateKey": "翻译密钥错误", "offlineModel": "离线模型错误"}[field]
+		ui.Text(c.Key("error-"+field), message).Label(label).FontSize(12).TextColor(c.Theme().Danger).FillWidth().Selectable()
+	}
+}
+
 // setupNiri is an application configuration confirmation, not a simulated
 // system permission dialog. The user sees the key, command and files first.
 func (v *settingsWindow) setupNiri() {
@@ -398,7 +444,7 @@ func (v *settingsWindow) setupNiri() {
 	}
 	next := v.draft
 	if err := next.Validate(); err != nil {
-		v.notice = err.Error()
+		v.showValidationErrors(err)
 		return
 	}
 	v.recording, v.saving, v.confirming, v.notice = false, true, true, ""
