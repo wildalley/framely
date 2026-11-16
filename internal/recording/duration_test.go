@@ -73,7 +73,10 @@ func TestDurationProbePreservesProcessErrors(t *testing.T) {
 	}
 	ctx := context.Background()
 	_, err := runDurationProbe(ctx, exec.CommandContext(ctx, filepath.Join(t.TempDir(), "missing-ffmpeg")))
-	if !errors.Is(err, os.ErrNotExist) || !strings.Contains(err.Error(), "启动视频时长探测失败") {
+	// Windows resolves PATHEXT before starting and reports exec.ErrNotFound;
+	// Unix starts the absolute path and reports os.ErrNotExist. Keep both causes.
+	missing := errors.Is(err, os.ErrNotExist) || errors.Is(err, exec.ErrNotFound)
+	if !missing || !strings.Contains(err.Error(), "启动视频时长探测失败") {
 		t.Fatalf("start failure lost its cause: %v", err)
 	}
 }
