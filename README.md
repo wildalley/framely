@@ -2,6 +2,8 @@
 
 # Framely · 取景
 
+[![Listed on Awesome MyGo](https://awesomemygo.dev/badge.svg)](https://awesomemygo.dev/apps/framely)
+
 截图、标注、钉图、长截图、录屏、取字与翻译，一个驻留托盘的桌面工具。
 
 使用 **Go + MyGo 原生 UI** 构建，支持 Windows、Linux 与 macOS。框选一次，即可复制、保存、标注、钉住、录屏或识别文字；每张图片独立开窗，关闭后释放图片和编辑历史。
@@ -12,7 +14,7 @@ Framely is an open-source desktop tool for screenshots, annotations, image pinni
 
 ![Framely 原生截图编辑器，画布使用生成的示例内容](docs/images/framely.png)
 
-**v0.4.6** 修复 Windows 安装器在未配置开机自启动时中断迁移的问题，保留自启动未配置或已禁用的状态。详见 [发布说明](docs/releases/v0.4.6.md)；此前的预览与内存测量见 [资源检查](docs/AUDIT_2026-11-12.md)。
+**v0.4.7** 改进翻译取消与错误恢复、GIF 画面选段、OCR 连续扫选和键盘操作，修复选区工具栏越界，并加强翻译安全与录屏稳定性。详见 [发布说明](docs/releases/v0.4.7.md) 和 [检查记录](docs/AUDIT_2026-11-16.md)。
 
 ## 功能
 
@@ -20,35 +22,35 @@ Framely is an open-source desktop tool for screenshots, annotations, image pinni
 | --- | --- |
 | 截图 | 框选后拖动、拉伸或用方向键微调；直接复制、保存，或进入标注。支持打开图片与粘贴图片。 |
 | 标注 | 画笔、荧光笔、矩形、椭圆、箭头、文字与马赛克；支持颜色、粗细、透明度、圆角及撤销重做。 |
-| 钉图 | 图片置顶显示，拖动移动、滚轮缩放；悬停显示操作栏，双击回到编辑。 |
+| 钉图 | 图片置顶显示，拖动移动、滚轮缩放；悬停或 Tab 聚焦显示操作栏，小图可用 Shift+F10 打开菜单，双击回到编辑。 |
 | 长截图 | Windows / Linux 支持滚动拼接、暂停、撤回与完成；自动滚动取决于系统授权能力。 |
 | 录屏 | 沿用截图选区或上次录制区域，支持 30/60 fps 无声 MP4、暂停与继续，以及视频转 GIF。 |
-| 离线取字 | 内置中英文 OCR 模型；长图分块识别，支持中文分词、单字选择、拖动选词和组合复制。 |
-| 翻译 | 取字后对照原文与译文；支持按需下载的离线中英模型，以及使用个人密钥的在线翻译服务。 |
+| 离线取字 | 内置中英文 OCR 模型；长图分块识别，支持中文分词、单字选择、拖动选词、边缘自动滚动和组合复制。 |
+| 翻译 | 取字后对照原文与译文；可取消，重试及失败保留旧译文；支持按需下载的离线中英模型，以及使用个人密钥的在线翻译服务。 |
 | 取色 | 放大镜查看像素与颜色，复制 `#RRGGBB`；Windows / Linux 可使用独立取色器。 |
 | 导出 | 复制到剪贴板，或保存为 PNG、JPEG、WebP；PNG / WebP 支持透明度。 |
 
-录屏默认保存到系统「视频」目录下的 `Framely` 文件夹，可在设置中修改。录制控制条与托盘显示计时，结束后可导出 GIF。当前不采集系统声音或麦克风，平台实测范围见 [录屏说明](docs/RECORDING.md)。
+录屏默认保存到系统「视频」目录下的 `Framely` 文件夹，可在设置中修改。录制控制条与托盘显示计时，结束后可通过画面预览与起止时间轴导出 GIF。当前不采集系统声音或麦克风，平台实测范围见 [录屏说明](docs/RECORDING.md)。
 
 ## 下载与安装
 
-当前版本为 **v0.4.6**，完整发行包包含屏幕采集、录屏和离线 OCR 组件，使用时无需另装 Go、Python 或 FFmpeg。离线翻译模型需在设置中单独下载。
+当前版本为 **v0.4.7**，完整发行包包含屏幕采集、录屏和离线 OCR 组件，使用时无需另装 Go、Python 或 FFmpeg。离线翻译模型需在设置中单独下载。
 
 从 [GitHub Releases](https://github.com/wildalley/framely/releases/latest) 下载对应平台的附件；发布页提供 `SHA256SUMS` 用于校验。
 
 | 平台 | 附件 |
 | --- | --- |
-| Windows x64 | `framely-0.4.6-windows-amd64-setup.exe` 或 `framely-0.4.6-windows-amd64-portable.zip` |
-| macOS 15+ · Apple Silicon | `framely-0.4.6-darwin-arm64.dmg` |
-| macOS 15+ · Intel | `framely-0.4.6-darwin-amd64.dmg` |
-| Ubuntu / Debian x64 | `framely-0.4.6-linux-amd64.deb` |
-| Arch Linux x64 | `framely-0.4.6-1-x86_64.pkg.tar.zst` |
-| 其他 Linux x64 | `framely-0.4.6-linux-amd64-portable.tar.gz` |
+| Windows x64 | `framely-0.4.7-windows-amd64-setup.exe` 或 `framely-0.4.7-windows-amd64-portable.zip` |
+| macOS 15+ · Apple Silicon | `framely-0.4.7-darwin-arm64.dmg` |
+| macOS 15+ · Intel | `framely-0.4.7-darwin-amd64.dmg` |
+| Ubuntu / Debian x64 | `framely-0.4.7-linux-amd64.deb` |
+| Arch Linux x64 | `framely-0.4.7-1-x86_64.pkg.tar.zst` |
+| 其他 Linux x64 | `framely-0.4.7-linux-amd64-portable.tar.gz` |
 
 - **Windows**：运行安装器，或将便携 ZIP 完整解压后启动应用。
 - **macOS**：打开 DMG，将 `Framely.app` 复制到「应用程序」。
-- **Ubuntu / Debian**：执行 `sudo apt install ./framely-0.4.6-linux-amd64.deb`。
-- **Arch Linux**：执行 `sudo pacman -U ./framely-0.4.6-1-x86_64.pkg.tar.zst`。
+- **Ubuntu / Debian**：执行 `sudo apt install ./framely-0.4.7-linux-amd64.deb`。
+- **Arch Linux**：执行 `sudo pacman -U ./framely-0.4.7-1-x86_64.pkg.tar.zst`。
 - **Linux 便携版**：解压后执行 `./install.sh`，之后从应用菜单或 `framely` 启动。
 
 ### 升级后仍显示旧版？
@@ -97,7 +99,7 @@ Linux Wayland 的截图、屏幕共享和快捷键由系统分别授权。niri �
 截图、标注和 OCR 在本机处理，不上传图片。OCR 中英文模型随安装包提供，无需运行时下载。
 
 - **离线翻译**：在设置中主动下载中英互译模型，每个方向约 110 MB，下载时校验文件；安装后在本机推理，翻译时无需联网。译文质量通常低于在线服务。
-- **在线翻译**：支持 DeepL、百度翻译、腾讯翻译君或兼容 OpenAI 的大模型接口。使用你填写的密钥，只向所选服务发送识别出的文字，不发送图片；未设置服务时不发送内容。
+- **在线翻译**：支持 DeepL、百度翻译、腾讯翻译君或兼容 OpenAI 的大模型接口。使用你填写的密钥，只向所选服务发送识别出的文字，不发送图片；未设置服务时不发送内容。远端接口必须使用 HTTPS，本机 `localhost` / 回环地址可使用 HTTP；已有远端 HTTP 地址需改为 HTTPS。
 - **密钥与设置**：密钥保存在系统密钥库，普通设置保存在系统应用配置目录。Linux 保存密钥需要可用的 Secret Service，例如 GNOME Keyring 或 KWallet。
 
 配置目录为 Linux 的 `~/.config/framely`（支持 `XDG_CONFIG_HOME`）、Windows 的 `%APPDATA%\Framely`、macOS 的 `~/Library/Application Support/Framely`。建议通过设置面板修改；卸载应用不会删除设置。
