@@ -9,12 +9,12 @@ require (
 	github.com/egoist/mygo v0.8.3
 	github.com/gen2brain/webp v0.6.4
 	github.com/godbus/dbus/v5 v5.2.4
-	golang.org/x/image v0.47.0
+	golang.org/x/image v0.48.0
 )
 
 require (
 	github.com/go-text/typesetting v0.3.5 // indirect
 	golang.org/x/net v0.59.0 // indirect
-	golang.org/x/sys v0.49.0 // indirect
-	golang.org/x/text v0.43.0 // indirect
+	golang.org/x/sys v0.50.0 // indirect
+	golang.org/x/text v0.44.0 // indirect
 )
