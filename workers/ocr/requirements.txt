@@ -9,7 +9,7 @@ numpy==2.5.4
 pyclipper==1.4.0
 shapely==2.2.0
 six==1.17.0
-PyYAML==6.0.3
+PyYAML==6.0.4
 pillow==13.0.0
 # Tokenizer for the downloadable offline translation models (OPUS-MT).
 sentencepiece==0.2.3 ; sys_platform != 'darwin' or platform_machine != 'x86_64'
